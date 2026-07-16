@@ -29,9 +29,11 @@ async def lifespan(app: FastAPI):
         automation_armed=settings.automation_armed,
     )
     try:
+        from fastapi.concurrency import run_in_threadpool
+
         from app.db.session import create_all
 
-        await create_all()
+        await run_in_threadpool(create_all)
     except Exception as exc:  # DB may be unavailable in some dev flows
         log.warning("db_init_skipped", error=str(exc))
     yield

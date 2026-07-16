@@ -25,15 +25,15 @@ async def _make_candidates() -> list:
     return await engine.run()
 
 
-async def test_scan_and_candidate_roundtrip(db_session) -> None:
+async def test_scan_and_candidate_roundtrip() -> None:
     cands = await _make_candidates()
     scan_id = cands[0].scan_id
-    await repository.save_scan(db_session, scan_id, ["SPY", "AAPL", "NVDA"], cands)
+    repository.save_scan(scan_id, ["SPY", "AAPL", "NVDA"], cands)
 
-    scans = await repository.list_scans(db_session, limit=5)
+    scans = repository.list_scans(limit=5)
     assert any(s.scan_id == scan_id for s in scans)
 
-    loaded = await repository.get_scan_candidates(db_session, scan_id)
+    loaded = repository.get_scan_candidates(scan_id)
     assert len(loaded) == len(cands)
     # Sorted by score desc, and payloads deserialize back to full candidates.
     scores = [c.composite_score for c in loaded]
@@ -41,18 +41,18 @@ async def test_scan_and_candidate_roundtrip(db_session) -> None:
     assert loaded[0].thesis.why_now  # rich payload preserved
 
 
-async def test_proposal_roundtrip_and_update(db_session) -> None:
+async def test_proposal_roundtrip_and_update() -> None:
     cands = await _make_candidates()
     actionable = next((c for c in cands if c.is_actionable), None)
     scan_id = cands[0].scan_id
-    await repository.save_scan(db_session, scan_id, ["SPY", "AAPL", "NVDA"], cands)
+    repository.save_scan(scan_id, ["SPY", "AAPL", "NVDA"], cands)
     if actionable is None:
         return  # nothing actionable this run; roundtrip covered elsewhere
 
     prop = create_proposal(actionable)
-    await repository.save_proposal(db_session, prop)
+    repository.save_proposal(prop)
 
-    loaded = await repository.get_proposal(db_session, prop.id)
+    loaded = repository.get_proposal(prop.id)
     assert loaded is not None and loaded.symbol == actionable.symbol
 
     # Update status and confirm merge persists.
@@ -60,22 +60,22 @@ async def test_proposal_roundtrip_and_update(db_session) -> None:
 
     loaded.status = ProposalStatus.APPROVED
     loaded.approved_by = "tester"
-    await repository.save_proposal(db_session, loaded)
-    again = await repository.get_proposal(db_session, prop.id)
+    repository.save_proposal(loaded)
+    again = repository.get_proposal(prop.id)
     assert again is not None and again.status == ProposalStatus.APPROVED
     assert again.approved_by == "tester"
 
 
-async def test_paper_trade_roundtrip(db_session) -> None:
+async def test_paper_trade_roundtrip() -> None:
     cands = await _make_candidates()
     actionable = next((c for c in cands if c.is_actionable), None)
     if actionable is None or actionable.trade_plan is None:
         return
     entry = plan_entry_net_per_share(actionable.trade_plan)
     trade = open_paper_trade(actionable.trade_plan, actionable.scan_id, entry_mid=entry)
-    await repository.save_paper_trade(db_session, trade)
+    repository.save_paper_trade(trade)
 
-    loaded = await repository.get_paper_trade(db_session, trade.id)
+    loaded = repository.get_paper_trade(trade.id)
     assert loaded is not None and loaded.symbol == actionable.symbol
-    trades = await repository.list_paper_trades(db_session, limit=10)
+    trades = repository.list_paper_trades(limit=10)
     assert any(t.id == trade.id for t in trades)

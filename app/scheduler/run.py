@@ -14,7 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.alerts.service import alert_candidates
 from app.db import repository
-from app.db.session import SessionLocal, create_all
+from app.db.session import create_all
 from app.engine.universe import UniverseConfig
 from app.logging_config import configure_logging, get_logger
 from app.services.scan_service import run_scan
@@ -29,13 +29,12 @@ async def scheduled_scan() -> None:
         candidates = await run_scan()
         actionable = sum(c.is_actionable for c in candidates)
         if candidates:
-            async with SessionLocal() as session:
-                await repository.save_scan(
-                    session,
-                    candidates[0].scan_id,
-                    UniverseConfig().normalized_symbols(),
-                    candidates,
-                )
+            await asyncio.to_thread(
+                repository.save_scan,
+                candidates[0].scan_id,
+                UniverseConfig().normalized_symbols(),
+                candidates,
+            )
             await alert_candidates(candidates)
         log.info("scheduled_scan_ok", total=len(candidates), actionable=actionable)
     except Exception as exc:
@@ -45,7 +44,7 @@ async def scheduled_scan() -> None:
 async def main() -> None:
     configure_logging()
     try:
-        await create_all()
+        await asyncio.to_thread(create_all)
     except Exception as exc:
         log.warning("db_init_skipped", error=str(exc))
     scheduler = AsyncIOScheduler(timezone="America/New_York")

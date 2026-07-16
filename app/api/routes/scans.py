@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repository
-from app.db.session import get_session
 from app.domain.candidates import TradeCandidate
 from app.engine.universe import UniverseConfig
 from app.services.scan_service import run_scan
@@ -37,13 +36,14 @@ class ScanSummary(BaseModel):
 async def create_scan(
     req: ScanRequest,
     actionable_only: bool = Query(default=False),
-    session: AsyncSession = Depends(get_session),
 ) -> ScanResponse:
     universe = UniverseConfig(symbols=req.symbols) if req.symbols else UniverseConfig()
     candidates = await run_scan(universe=universe)
     scan_id = candidates[0].scan_id if candidates else None
     if candidates:
-        await repository.save_scan(session, scan_id, universe.normalized_symbols(), candidates)
+        await run_in_threadpool(
+            repository.save_scan, scan_id, universe.normalized_symbols(), candidates
+        )
 
     shown = [c for c in candidates if c.is_actionable] if actionable_only else candidates
     return ScanResponse(
@@ -57,9 +57,8 @@ async def create_scan(
 @router.get("", response_model=list[ScanSummary])
 async def list_scans(
     limit: int = Query(default=20, ge=1, le=100),
-    session: AsyncSession = Depends(get_session),
 ) -> list[ScanSummary]:
-    rows = await repository.list_scans(session, limit=limit)
+    rows = await run_in_threadpool(repository.list_scans, limit)
     return [
         ScanSummary(
             scan_id=r.scan_id,
@@ -75,9 +74,8 @@ async def list_scans(
 async def scan_candidates(
     scan_id: str,
     actionable_only: bool = Query(default=False),
-    session: AsyncSession = Depends(get_session),
 ) -> list[TradeCandidate]:
-    cands = await repository.get_scan_candidates(session, scan_id)
+    cands = await run_in_threadpool(repository.get_scan_candidates, scan_id)
     if not cands:
         raise HTTPException(404, "Scan not found or has no candidates.")
     return [c for c in cands if c.is_actionable] if actionable_only else cands

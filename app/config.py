@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     postgres_user: str = "atb"
     postgres_password: str = "change_me"
     database_url: str | None = None
+    # Turso / libSQL (durable cloud SQLite). When set, it takes precedence.
+    turso_database_url: str | None = None  # libsql://<db>.turso.io
+    turso_auth_token: str | None = None
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"

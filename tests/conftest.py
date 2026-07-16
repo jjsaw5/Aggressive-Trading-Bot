@@ -1,7 +1,9 @@
 """Shared test fixtures.
 
 IMPORTANT: the database URL is set to a temp SQLite file BEFORE any `app` import
-so the cached settings + global async engine bind to SQLite, not Postgres.
+so the cached settings + global (synchronous) engine bind to a local SQLite
+file, never Postgres or the durable Turso backend. Any TURSO_* values from a
+local .env are cleared here so the suite can never touch the cloud database.
 """
 
 from __future__ import annotations
@@ -11,7 +13,10 @@ import tempfile
 
 # --- Must run before importing anything under `app` ---
 _DB_FD, _DB_PATH = tempfile.mkstemp(suffix=".db", prefix="atb_test_")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_DB_PATH}"
+os.environ["DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
+# Never let a real Turso config bleed into tests — DATABASE_URL must win.
+os.environ.pop("TURSO_DATABASE_URL", None)
+os.environ.pop("TURSO_AUTH_TOKEN", None)
 
 # Pin ALL providers to mock during tests so the suite never makes live API
 # calls, regardless of any local .env that enables real providers (e.g. FMP).
@@ -43,22 +48,13 @@ def policy() -> RiskPolicy:
 
 
 @pytest.fixture(autouse=True)
-async def _ensure_tables():
+def _ensure_tables():
     """Ensure DB tables exist for every test (the module-level TestClient does
     not trigger the app lifespan that would otherwise create them)."""
     from app.db.session import create_all
 
-    await create_all()
+    create_all()
     yield
-
-
-@pytest.fixture
-async def db_session():
-    """A committed-to SQLite session with tables ensured to exist."""
-    from app.db.session import SessionLocal
-
-    async with SessionLocal() as session:
-        yield session
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:

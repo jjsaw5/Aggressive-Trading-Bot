@@ -7,12 +7,11 @@ the database.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repository
-from app.db.session import get_session
 from app.domain.trades import OrderProposal
 from app.modes.execution_guard import ExecutionGuard
 from app.modes.proposals import (
@@ -40,69 +39,64 @@ class RejectRequest(BaseModel):
 
 
 @router.post("", response_model=OrderProposal)
-async def create(
-    req: CreateProposalRequest, session: AsyncSession = Depends(get_session)
-) -> OrderProposal:
-    candidate = await repository.get_candidate(session, req.scan_id, req.symbol)
+async def create(req: CreateProposalRequest) -> OrderProposal:
+    candidate = await run_in_threadpool(
+        repository.get_candidate, req.scan_id, req.symbol
+    )
     if candidate is None:
         raise HTTPException(404, "Candidate not found for that scan_id/symbol.")
     try:
         proposal = create_proposal(candidate, ttl_minutes=req.ttl_minutes)
     except ProposalError as exc:
         raise HTTPException(409, str(exc)) from exc
-    await repository.save_proposal(session, proposal)
+    await run_in_threadpool(repository.save_proposal, proposal)
     return proposal
 
 
 @router.get("", response_model=list[OrderProposal])
 async def list_all(
     limit: int = Query(default=50, ge=1, le=200),
-    session: AsyncSession = Depends(get_session),
 ) -> list[OrderProposal]:
-    return await repository.list_proposals(session, limit=limit)
+    return await run_in_threadpool(repository.list_proposals, limit)
 
 
 @router.get("/{proposal_id}", response_model=OrderProposal)
-async def get(proposal_id: str, session: AsyncSession = Depends(get_session)) -> OrderProposal:
-    p = await repository.get_proposal(session, proposal_id)
+async def get(proposal_id: str) -> OrderProposal:
+    p = await run_in_threadpool(repository.get_proposal, proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found.")
     return p
 
 
 @router.post("/{proposal_id}/approve", response_model=OrderProposal)
-async def approve(
-    proposal_id: str, req: ApproveRequest, session: AsyncSession = Depends(get_session)
-) -> OrderProposal:
-    p = await repository.get_proposal(session, proposal_id)
+async def approve(proposal_id: str, req: ApproveRequest) -> OrderProposal:
+    p = await run_in_threadpool(repository.get_proposal, proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found.")
     try:
         approve_proposal(p, req.approver)
     except ProposalError as exc:
         raise HTTPException(409, str(exc)) from exc
-    await repository.save_proposal(session, p)
+    await run_in_threadpool(repository.save_proposal, p)
     return p
 
 
 @router.post("/{proposal_id}/reject", response_model=OrderProposal)
-async def reject(
-    proposal_id: str, req: RejectRequest, session: AsyncSession = Depends(get_session)
-) -> OrderProposal:
-    p = await repository.get_proposal(session, proposal_id)
+async def reject(proposal_id: str, req: RejectRequest) -> OrderProposal:
+    p = await run_in_threadpool(repository.get_proposal, proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found.")
     reject_proposal(p, req.note)
-    await repository.save_proposal(session, p)
+    await run_in_threadpool(repository.save_proposal, p)
     return p
 
 
 @router.post("/{proposal_id}/execute")
-async def execute(proposal_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def execute(proposal_id: str) -> dict:
     """Attempt execution — passes through the guard. With automation disabled by
     default this ALWAYS returns authorized=false; the endpoint makes the safety
     gate observable and testable. No broker order is placed."""
-    p = await repository.get_proposal(session, proposal_id)
+    p = await run_in_threadpool(repository.get_proposal, proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found.")
     decision = ExecutionGuard().authorize(p)

@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "sqlalchemy>=2.0",
+    "sqlalchemy-libsql>=0.1.0",  # Turso / libSQL durable backend (sync dialect)
     "alembic>=1.13",
     "psycopg[binary]>=3.1",
     "redis>=5.0",
@@ -32,7 +33,6 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "freezegun>=1.5",
-    "aiosqlite>=0.20",
 ]
 # Robinhood runtime integration (unofficial API). Install with:
 #   pip install -e ".[robinhood]"

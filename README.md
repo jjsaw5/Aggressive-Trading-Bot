@@ -46,10 +46,12 @@ For every symbol, a scan answers the 14 platform questions:
 
 A concrete finding from the risk engine: at quality deltas (0.30–0.60), a
 single long option on this mega-cap universe costs **$130–$450 per contract**,
-which exceeds a $2,000 account's per-trade risk cap (2% = $40) on every name.
-The engine therefore prefers **defined-risk debit vertical spreads**, whose
-per-contract risk is the (much smaller) net debit — the only structure that
-makes these names tradeable within a disciplined cap. See
+so the engine prefers **defined-risk debit vertical spreads**, whose
+per-contract risk is the (much smaller) net debit. A second finding followed:
+even spreads on $500+ names cannot be sized under a 2% ($40) per-trade cap, so
+the default risk profile is **"aggressive but defined-risk"** — 5% ($100) per
+trade, 15% account heat, matching the $100 absolute cap. Run tighter caps only
+with a lower-priced universe (`AFFORDABLE_UNIVERSE`). See
 [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md).
 
 ## Architecture at a glance

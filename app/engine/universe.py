@@ -13,6 +13,14 @@ DEFAULT_UNIVERSE: list[str] = [
     "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "TSLA", "NFLX",
 ]
 
+# Opt-in lower-priced, liquid, actively-optioned names. Useful when running
+# tighter per-trade caps where mega-cap spreads are unaffordable (see
+# docs/RISK_POLICY.md). Not enabled by default — the primary universe above is
+# the specified target set.
+AFFORDABLE_UNIVERSE: list[str] = [
+    "F", "SOFI", "PLTR", "INTC", "T", "PFE", "BAC", "CCL", "NIO", "RIVN",
+]
+
 
 class UniverseConfig(BaseModel):
     """Configurable universe + hard gating toggles for excluded categories.

@@ -3,20 +3,31 @@
 Capital preservation is the first objective. Aggressive growth is pursued
 *within* hard limits — never by loosening them.
 
-## Default limits (≈ $2,000 account)
+## Default limits (≈ $2,000 account) — "aggressive but defined-risk"
 
 | Limit | Env var | Default | Meaning |
 |---|---|---|---|
 | Account equity | `ACCOUNT_EQUITY_USD` | 2000 | Basis for all % caps |
-| Max risk / trade | `MAX_TRADE_RISK_PCT` | 0.02 | 2% of equity = **$40** |
+| Max risk / trade | `MAX_TRADE_RISK_PCT` | 0.05 | 5% of equity = **$100** |
 | Absolute risk / trade | `MAX_DEFINED_RISK_PER_TRADE_USD` | 100 | Hard $ ceiling |
-| Max account risk | `MAX_ACCOUNT_RISK_PCT` | 0.06 | 6% of equity = **$120** aggregate heat |
+| Max account risk | `MAX_ACCOUNT_RISK_PCT` | 0.15 | 15% of equity = **$300** aggregate heat |
 | Max concurrent positions | `MAX_CONCURRENT_POSITIONS` | 4 | Diversification / attention |
 | Max contracts / trade | `MAX_CONTRACTS_PER_TRADE` | 20 | Concentration / fill-risk cap |
 
-**Per-trade risk cap = min(2% of equity, $100) = $40** at $2,000. Sizing never
-rounds up past this. The account-heat cap ($120) is checked against *open*
-defined risk before admitting a new trade.
+**Per-trade risk cap = min(5% of equity, $100) = $100** at $2,000. Sizing never
+rounds up past this. The account-heat cap ($300, ~3 full-size trades) is checked
+against *open* defined risk before admitting a new trade.
+
+### Why not 2% ($40)?
+
+A 2% per-trade cap is the textbook-conservative default, but the risk engine
+demonstrated (and the historical backtester confirmed with **0 trades**) that a
+$40 budget cannot size *any* defined-risk spread on the mega-cap universe — a
+$1-wide spread on a $560 SPY already risks ~$50. For the stated "aggressive
+growth" goal on this universe, 5% per trade (matching the $100 absolute cap) is
+the smallest budget that makes the universe tradeable while staying fully
+defined-risk. **To run tighter caps, switch to a lower-priced universe**
+(`UniverseConfig(symbols=AFFORDABLE_UNIVERSE)` — see `engine/universe.py`).
 
 ## Why defined-risk spreads are the default structure
 

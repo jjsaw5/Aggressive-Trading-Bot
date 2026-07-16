@@ -45,9 +45,14 @@ class Settings(BaseSettings):
     automation_enabled: bool = False
 
     # --- Account / risk policy ---
+    # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
+    # account. This aligns the % cap with the $100 absolute per-trade cap and
+    # makes the mega-cap universe tradeable with defined-risk spreads. A $2k
+    # account cannot size these spreads at a 2% ($40) cap. Tighten via env for a
+    # more conservative stance (and pair it with a lower-priced universe).
     account_equity_usd: float = 2_000.0
-    max_account_risk_pct: float = 0.06
-    max_trade_risk_pct: float = 0.02
+    max_account_risk_pct: float = 0.15
+    max_trade_risk_pct: float = 0.05
     max_concurrent_positions: int = 4
     max_defined_risk_per_trade_usd: float = 100.0
     max_contracts_per_trade: int = 20  # concentration / fill-risk cap

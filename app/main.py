@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import backtest, health, proposals, scans
+from app.api.routes import backtest, health, paper, proposals, scans
 from app.api.routes import config as config_routes
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
@@ -28,6 +28,12 @@ async def lifespan(app: FastAPI):
         trading_mode=settings.trading_mode.value,
         automation_armed=settings.automation_armed,
     )
+    try:
+        from app.db.session import create_all
+
+        await create_all()
+    except Exception as exc:  # DB may be unavailable in some dev flows
+        log.warning("db_init_skipped", error=str(exc))
     yield
     log.info("shutdown")
 
@@ -47,4 +53,5 @@ app.include_router(health.router)
 app.include_router(config_routes.router)
 app.include_router(scans.router)
 app.include_router(proposals.router)
+app.include_router(paper.router)
 app.include_router(backtest.router)

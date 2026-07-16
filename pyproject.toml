@@ -32,6 +32,7 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "freezegun>=1.5",
+    "aiosqlite>=0.20",
 ]
 # Robinhood runtime integration (unofficial API). Install with:
 #   pip install -e ".[robinhood]"
@@ -58,8 +59,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4"]
-# UP042: `(str, Enum)` is retained deliberately for portability/clarity.
-ignore = ["E501", "UP042"]
+# UP042: `(str, Enum)` retained for portability. B008: FastAPI's Depends() in
+# argument defaults is the intended idiom.
+ignore = ["E501", "UP042", "B008"]
 
 [tool.mypy]
 python_version = "3.11"

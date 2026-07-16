@@ -1,0 +1,43 @@
+"""Trading universe definition and configuration.
+
+The default universe is the liquid mega-cap / index-ETF set requested for the
+initial build. It is fully configurable — override via `UniverseConfig`.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+DEFAULT_UNIVERSE: list[str] = [
+    "SPY", "QQQ", "IWM",
+    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "TSLA", "NFLX",
+]
+
+
+class UniverseConfig(BaseModel):
+    """Configurable universe + hard gating toggles for excluded categories.
+
+    The excluded categories default to disabled, matching the requirement to
+    exclude/heavily penalize illiquid, penny, low-float, and binary-event names
+    unless specifically enabled.
+    """
+
+    symbols: list[str] = Field(default_factory=lambda: list(DEFAULT_UNIVERSE))
+    allow_low_float: bool = False
+    allow_binary_biotech: bool = False
+    allow_penny_stocks: bool = False
+
+    # Minimum quality thresholds (underlying-level).
+    min_price: float = 5.0
+    min_avg_dollar_volume: float = 20_000_000.0  # $20M/day
+    min_market_cap: float = 2_000_000_000.0  # $2B
+
+    def normalized_symbols(self) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for s in self.symbols:
+            u = s.strip().upper()
+            if u and u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out

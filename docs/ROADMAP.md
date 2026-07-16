@@ -51,11 +51,18 @@ proxy from real price history (labeled `hv_proxy`, lower signal confidence). The
 `IVContext.iv_rank_source` tag makes every rank auditable, and the mock's price
 path was made vol-coherent with its option IV. `PROVIDER_IV_HISTORY` routes it.
 
+### Robinhood provider — built (pending live verification)
+Real options chains + greeks/IV, quotes, historicals, account equity, and open
+option positions via robin_stocks 3.4.0 (grounded on the library source). Lazy
+threaded session with headless pyotp MFA; pure, unit-tested response mapping.
+`meta.verified=False` until a live auth + field smoke test is run against a real
+account. Order placement intentionally omitted. See the provider doc.
+
 ## Next (sequenced)
 
-### 1. Build & verify the Robinhood provider
-Options chains + Greeks + account state via a verified `robin_stocks` surface
-(or alternative). Confirm ToS, auth/MFA, and field mapping. See the provider doc.
+### 1. Live-verify Robinhood + real end-to-end run
+Smoke-test auth/MFA and field mapping against a real account; confirm quote
+freshness and option-chain greeks/IV populate; then set `meta.verified=True`.
 
 ### 2. Persistence repository + history API
 Replace the in-memory store with the DB repository (models/migrations exist);

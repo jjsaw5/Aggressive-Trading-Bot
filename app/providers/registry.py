@@ -35,6 +35,15 @@ def _mock() -> MockProvider:
     return MockProvider()
 
 
+@lru_cache
+def _robinhood():
+    # Cached so a single authenticated session is shared across the market-data,
+    # options-chain, and brokerage capabilities (one login, not three).
+    from app.providers.robinhood.client import RobinhoodProvider
+
+    return RobinhoodProvider()
+
+
 def _build(name: ProviderName, capability: str):
     if name == ProviderName.MOCK:
         return _mock()
@@ -54,9 +63,7 @@ def _build(name: ProviderName, capability: str):
         return UnusualWhalesProvider()
 
     if name == ProviderName.ROBINHOOD:
-        from app.providers.robinhood.client import RobinhoodProvider
-
-        return RobinhoodProvider()
+        return _robinhood()
 
     raise ProviderConfigError(f"Unknown provider {name!r} for {capability}")
 

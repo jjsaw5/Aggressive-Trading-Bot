@@ -108,9 +108,9 @@ lives behind the provider abstraction. Before switching a capability off
 `mock`, read the corresponding provider doc — it records confirmed endpoints,
 auth, rate limits, data delay, tier, and licensing:
 
-- [`docs/providers/FINANCIAL_MODELING_PREP.md`](docs/providers/FINANCIAL_MODELING_PREP.md)
-- [`docs/providers/UNUSUAL_WHALES.md`](docs/providers/UNUSUAL_WHALES.md)
-- [`docs/providers/ROBINHOOD.md`](docs/providers/ROBINHOOD.md)
+- [`docs/providers/FINANCIAL_MODELING_PREP.md`](docs/providers/FINANCIAL_MODELING_PREP.md) — market data, fundamentals, calendar (no options)
+- [`docs/providers/UNUSUAL_WHALES.md`](docs/providers/UNUSUAL_WHALES.md) — options flow + IV-rank history
+- [`docs/providers/ROBINHOOD.md`](docs/providers/ROBINHOOD.md) — option chains + greeks/IV, quotes, account (via robin_stocks; `[robinhood]` extra)
 
 Set the `PROVIDER_*` variables in `.env` to route each capability. A misrouted
 or unbuilt provider fails loudly at resolution time — it never silently returns

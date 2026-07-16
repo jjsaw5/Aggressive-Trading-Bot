@@ -17,6 +17,7 @@ from app.db import repository
 from app.db.session import create_all
 from app.engine.universe import UniverseConfig
 from app.logging_config import configure_logging, get_logger
+from app.services.outcomes_service import resolve_pending, warehouse_candidates
 from app.services.scan_service import run_scan
 
 log = get_logger(__name__)
@@ -35,7 +36,13 @@ async def scheduled_scan() -> None:
                 UniverseConfig().normalized_symbols(),
                 candidates,
             )
+            await warehouse_candidates(candidates)
             await alert_candidates(candidates)
+        # Resolve any decisions that have matured against current prices.
+        try:
+            await resolve_pending(min_age_days=1)
+        except Exception as exc:
+            log.warning("resolve_pending_failed", error=str(exc))
         log.info("scheduled_scan_ok", total=len(candidates), actionable=actionable)
     except Exception as exc:
         log.error("scheduled_scan_failed", error=str(exc))

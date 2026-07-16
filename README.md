@@ -65,14 +65,17 @@ providers/           external data behind capability interfaces (swappable)
 engine/              universe → liquidity gate → signals → scoring → contract → candidate
 risk/                policy · position sizing · portfolio heat · trade plans
 modes/               execution guard (kill-switch) · proposal lifecycle
-services/            scan orchestration · paper engine (MFE/MAE) · store
-api/                 FastAPI routes (health, config, scans, proposals)
-db/ alembic/         SQLAlchemy models + migrations
-scheduler/           periodic research scans (APScheduler)
+analytics/           decision snapshots · outcome resolution · calibration scorecard
+services/            scan orchestration · paper engine (MFE/MAE) · outcomes · store
+api/                 FastAPI routes (health, config, scans, proposals, outcomes)
+db/ alembic/         SQLAlchemy models + migrations (durable backend: Turso/libSQL)
+scheduler/           periodic research scans + outcome resolution (APScheduler)
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full picture and
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for what's built vs. next.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full picture,
+[`docs/OUTCOMES.md`](docs/OUTCOMES.md) for how the platform scores its own
+suggestions over time, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's built
+vs. next.
 
 ## Quick start (no API keys required)
 

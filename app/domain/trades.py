@@ -57,6 +57,9 @@ class SpreadAnalytics(BaseModel):
     net_theta: float | None = None  # $/day
     net_vega: float | None = None  # $ per 1 IV point
     is_credit: bool = False
+    # Underlying spot used when these analytics were computed. Frozen here so
+    # every decision carries its entry reference price for later outcome scoring.
+    spot_at_analysis: float | None = None
 
 
 class ExitLevel(BaseModel):

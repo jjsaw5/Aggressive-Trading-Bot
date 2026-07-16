@@ -11,7 +11,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import alerts, backtest, dashboard, health, paper, proposals, scans
+from app.api.routes import (
+    alerts,
+    backtest,
+    dashboard,
+    health,
+    outcomes,
+    paper,
+    proposals,
+    scans,
+)
 from app.api.routes import config as config_routes
 from app.config import settings
 from app.logging_config import configure_logging, get_logger
@@ -58,4 +67,5 @@ app.include_router(proposals.router)
 app.include_router(paper.router)
 app.include_router(backtest.router)
 app.include_router(alerts.router)
+app.include_router(outcomes.router)
 app.include_router(dashboard.router)

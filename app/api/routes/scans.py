@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.db import repository
 from app.domain.candidates import TradeCandidate
 from app.engine.universe import UniverseConfig
+from app.services.outcomes_service import warehouse_candidates
 from app.services.scan_service import run_scan
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -44,6 +45,8 @@ async def create_scan(
         await run_in_threadpool(
             repository.save_scan, scan_id, universe.normalized_symbols(), candidates
         )
+        # Warehouse every actionable decision for later outcome scoring.
+        await warehouse_candidates(candidates)
 
     shown = [c for c in candidates if c.is_actionable] if actionable_only else candidates
     return ScanResponse(

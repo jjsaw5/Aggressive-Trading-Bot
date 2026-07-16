@@ -133,4 +133,5 @@ def compute_analytics(
         net_theta=greeks["net_theta"],
         net_vega=greeks["net_vega"],
         is_credit=_net_per_share(plan) < 0,
+        spot_at_analysis=round(spot, 4),
     )

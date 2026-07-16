@@ -14,9 +14,11 @@ import tempfile
 # --- Must run before importing anything under `app` ---
 _DB_FD, _DB_PATH = tempfile.mkstemp(suffix=".db", prefix="atb_test_")
 os.environ["DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
-# Never let a real Turso config bleed into tests — DATABASE_URL must win.
-os.environ.pop("TURSO_DATABASE_URL", None)
-os.environ.pop("TURSO_AUTH_TOKEN", None)
+# Never let a real Turso config bleed into tests. Popping the env var is NOT
+# enough: pydantic-settings still reads TURSO_* from the .env FILE. Set them to
+# empty strings so the (falsy) env value overrides the file and Turso stays off.
+os.environ["TURSO_DATABASE_URL"] = ""
+os.environ["TURSO_AUTH_TOKEN"] = ""
 
 # Pin ALL providers to mock during tests so the suite never makes live API
 # calls, regardless of any local .env that enables real providers (e.g. FMP).

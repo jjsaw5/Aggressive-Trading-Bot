@@ -13,9 +13,17 @@ from __future__ import annotations
 
 from sqlalchemy import delete, select
 
-from app.db.models import CandidateRow, PaperTradeRow, ProposalRow, ScanRow
+from app.db.models import (
+    CandidateRow,
+    DecisionOutcomeRow,
+    DecisionSnapshotRow,
+    PaperTradeRow,
+    ProposalRow,
+    ScanRow,
+)
 from app.db.session import SessionLocal
 from app.domain.candidates import TradeCandidate
+from app.domain.outcomes import DecisionOutcome, DecisionSnapshot
 from app.domain.trades import OrderProposal, PaperTrade
 
 
@@ -144,3 +152,116 @@ def list_paper_trades(limit: int = 50) -> list[PaperTrade]:
             select(PaperTradeRow).order_by(PaperTradeRow.created_at.desc()).limit(limit)
         )
         return [PaperTrade.model_validate(r.payload) for r in res.scalars().all()]
+
+
+# --- Decision snapshots (the learning warehouse) -----------------------------
+def _snapshot_row(s: DecisionSnapshot) -> DecisionSnapshotRow:
+    return DecisionSnapshotRow(
+        decision_id=s.decision_id,
+        scan_id=s.scan_id,
+        symbol=s.symbol,
+        source=s.source.value,
+        direction=s.direction.value,
+        strategy=s.strategy.value,
+        generated_at=s.generated_at,
+        composite_score=s.composite_score,
+        probability_of_profit=s.probability_of_profit,
+        entry_spot=s.entry_spot,
+        iv_rank=s.iv_rank,
+        max_loss_usd=s.max_loss_usd,
+        expiration=s.expiration,
+        payload=s.model_dump(mode="json"),
+    )
+
+
+def save_snapshots(snapshots: list[DecisionSnapshot]) -> int:
+    """Warehouse decision snapshots. Idempotent: an existing decision_id is left
+    untouched so a re-run never resets its resolution status. Returns new count."""
+    added = 0
+    with SessionLocal() as session:
+        for s in snapshots:
+            if session.get(DecisionSnapshotRow, s.decision_id) is not None:
+                continue
+            session.add(_snapshot_row(s))
+            added += 1
+        session.commit()
+    return added
+
+
+def list_snapshots(limit: int = 100, status: str | None = None) -> list[DecisionSnapshot]:
+    with SessionLocal() as session:
+        stmt = select(DecisionSnapshotRow)
+        if status is not None:
+            stmt = stmt.where(DecisionSnapshotRow.resolution_status == status)
+        stmt = stmt.order_by(DecisionSnapshotRow.generated_at.desc()).limit(limit)
+        res = session.execute(stmt)
+        return [DecisionSnapshot.model_validate(r.payload) for r in res.scalars().all()]
+
+
+def get_snapshot(decision_id: str) -> DecisionSnapshot | None:
+    with SessionLocal() as session:
+        row = session.get(DecisionSnapshotRow, decision_id)
+        return DecisionSnapshot.model_validate(row.payload) if row else None
+
+
+def save_outcome(outcome: DecisionOutcome) -> None:
+    """Record a realized outcome and promote its snapshot to 'resolved'."""
+    with SessionLocal() as session:
+        session.add(
+            DecisionOutcomeRow(
+                decision_id=outcome.decision_id,
+                symbol=outcome.symbol,
+                horizon_label=outcome.horizon_label,
+                resolved_at=outcome.resolved_at,
+                result=outcome.result.value,
+                direction_correct=outcome.direction_correct,
+                underlying_return_pct=outcome.underlying_return_pct,
+                realized_pnl_usd=outcome.realized_pnl_usd,
+                outcome_source=outcome.outcome_source,
+                payload=outcome.model_dump(mode="json"),
+            )
+        )
+        snap = session.get(DecisionSnapshotRow, outcome.decision_id)
+        if snap is not None:
+            snap.resolution_status = "resolved"
+        session.commit()
+
+
+def list_outcomes(limit: int = 200) -> list[DecisionOutcome]:
+    with SessionLocal() as session:
+        res = session.execute(
+            select(DecisionOutcomeRow)
+            .order_by(DecisionOutcomeRow.resolved_at.desc())
+            .limit(limit)
+        )
+        return [DecisionOutcome.model_validate(r.payload) for r in res.scalars().all()]
+
+
+def get_outcomes_for(decision_id: str) -> list[DecisionOutcome]:
+    with SessionLocal() as session:
+        res = session.execute(
+            select(DecisionOutcomeRow).where(
+                DecisionOutcomeRow.decision_id == decision_id
+            )
+        )
+        return [DecisionOutcome.model_validate(r.payload) for r in res.scalars().all()]
+
+
+def fetch_calibration_data(
+    limit: int = 1000,
+) -> tuple[list[DecisionSnapshot], list[DecisionOutcome]]:
+    """All snapshots + outcomes for the scorecard, in one place."""
+    with SessionLocal() as session:
+        srows = session.execute(
+            select(DecisionSnapshotRow)
+            .order_by(DecisionSnapshotRow.generated_at.desc())
+            .limit(limit)
+        )
+        snaps = [DecisionSnapshot.model_validate(r.payload) for r in srows.scalars().all()]
+        orows = session.execute(
+            select(DecisionOutcomeRow)
+            .order_by(DecisionOutcomeRow.resolved_at.desc())
+            .limit(limit)
+        )
+        outs = [DecisionOutcome.model_validate(r.payload) for r in orows.scalars().all()]
+        return snaps, outs

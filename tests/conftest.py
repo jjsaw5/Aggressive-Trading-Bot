@@ -22,6 +22,10 @@ for _var in (
 ):
     os.environ[_var] = "mock"
 
+# Pin runtime toggles a local .env might flip, so tests stay hermetic.
+os.environ["ALERTS_ENABLED"] = "false"
+os.environ["ALERTS_CHANNEL"] = "console"
+
 import pytest  # noqa: E402
 
 from app.risk.policy import RiskPolicy  # noqa: E402

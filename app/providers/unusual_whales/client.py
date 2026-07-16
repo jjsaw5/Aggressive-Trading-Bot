@@ -1,6 +1,6 @@
-"""Unusual Whales (UW) options-flow provider.
+"""Unusual Whales (UW) provider: options flow, IV-rank history, option chains.
 
-Grounded against the CURRENT official API (verified 2026-07):
+Grounded against the CURRENT official API (verified/live-validated 2026-07):
 
   * Base URL: https://api.unusualwhales.com  (NO /v1 or /v2 version segment)
   * Auth:     Authorization: Bearer <API_KEY>   (header only; no query key)
@@ -8,6 +8,13 @@ Grounded against the CURRENT official API (verified 2026-07):
         GET /api/option-trades/flow-alerts          (market-wide flow alerts)
         GET /api/stock/{ticker}/flow-alerts         (per-ticker flow alerts)
         GET /api/stock/{ticker}/iv-rank             (daily IV + iv_rank_1y series)
+        GET /api/stock/{ticker}/stock-state         (underlying close = spot)
+        GET /api/stock/{ticker}/expiry-breakdown    (expiration list)
+        GET /api/stock/{ticker}/option-contracts    (per-contract IV/OI/NBBO)
+        GET /api/stock/{ticker}/volatility/stats    (current ATM IV)
+  * Option chains carry no greeks; delta is computed via Black-Scholes from the
+    underlying spot + per-contract IV. Contract strike/type/expiry are parsed
+    from the OCC option_symbol.
   * Rate limits are surfaced per-response via x-uw-* headers; 429 on exceed.
 
 WARNING — endpoint PATHS and AUTH are confirmed, but exact JSON RESPONSE FIELD
@@ -28,9 +35,23 @@ from typing import Any
 
 from app.config import settings
 from app.domain.enums import OptionType
-from app.domain.options import FlowAlert, IVHistory, IVHistoryPoint
+from app.domain.options import (
+    FlowAlert,
+    Greeks,
+    IVContext,
+    IVHistory,
+    IVHistoryPoint,
+    OptionChain,
+    OptionContract,
+)
 from app.providers._http import AsyncHTTP
-from app.providers.base import IVHistoryProvider, OptionsFlowProvider, ProviderMeta
+from app.providers.base import (
+    IVHistoryProvider,
+    OptionsChainProvider,
+    OptionsFlowProvider,
+    ProviderMeta,
+)
+from app.quant.pricing import black_scholes_delta
 
 _META = ProviderMeta(
     name="unusual_whales",
@@ -41,6 +62,28 @@ _META = ProviderMeta(
     docs_url="https://api.unusualwhales.com/docs",
     verified=True,
 )
+
+
+def parse_occ_symbol(occ: str) -> tuple[date, float, OptionType] | None:
+    """Parse an OCC option symbol into (expiration, strike, type).
+
+    Format: <root><yymmdd><C|P><strike*1000, 8 digits>, e.g.
+    ``AAPL260717C00335000`` -> (2026-07-17, 335.0, CALL). The root/ticker is
+    variable length, so parse from the right.
+    """
+    if not occ or len(occ) < 16:
+        return None
+    tail = occ[-15:]  # yymmdd(6) + C/P(1) + strike(8)
+    try:
+        exp = date(2000 + int(tail[0:2]), int(tail[2:4]), int(tail[4:6]))
+        cp = tail[6].upper()
+        strike = int(tail[7:15]) / 1000.0
+    except (ValueError, IndexError):
+        return None
+    otype = OptionType.CALL if cp == "C" else OptionType.PUT if cp == "P" else None
+    if otype is None or strike <= 0:
+        return None
+    return exp, strike, otype
 
 
 def _f(row: dict[str, Any], *keys: str) -> float | None:
@@ -76,7 +119,7 @@ def _parse_date(v: Any) -> date | None:
         return None
 
 
-class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
+class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChainProvider):
     meta = _META
 
     def __init__(self) -> None:
@@ -182,3 +225,102 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
                 )
             )
         return alerts[:limit]
+
+    # --- Options chain (OptionsChainProvider) ---
+    async def _stock_close(self, symbol: str) -> float | None:
+        """Current underlying price from /api/stock/{ticker}/stock-state."""
+        r = await self._http.get_json(f"/api/stock/{symbol.upper()}/stock-state")
+        d = r.get("data", r) if isinstance(r, dict) else r
+        return _f(d, "close", "prev_close") if isinstance(d, dict) else None
+
+    async def _chain_expirations(self, symbol: str, count: int, center_dte: int = 30) -> list[str]:
+        """Pick `count` expirations nearest the target DTE from expiry-breakdown."""
+        r = await self._http.get_json(f"/api/stock/{symbol.upper()}/expiry-breakdown")
+        rows = r.get("data", r) if isinstance(r, dict) else r
+        if not isinstance(rows, list):
+            return []
+        today = datetime.now(UTC).date()
+        exps = [str(x.get("expires")) for x in rows if isinstance(x, dict) and x.get("expires")]
+        future = [e for e in exps if (_parse_date(e) or today) >= today]
+        future.sort(key=lambda e: abs(((_parse_date(e) or today) - today).days - center_dte))
+        return future[:count]
+
+    async def _contracts_for_expiration(
+        self, symbol: str, exp: str, spot: float | None
+    ) -> list[OptionContract]:
+        payload = await self._http.get_json(
+            f"/api/stock/{symbol.upper()}/option-contracts", {"expiry": exp, "limit": 500}
+        )
+        rows = payload.get("data", payload) if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            return []
+        now = datetime.now(UTC)
+        out: list[OptionContract] = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            parsed = parse_occ_symbol(str(r.get("option_symbol", "")))
+            if parsed is None:
+                continue
+            expd, strike, otype = parsed
+            iv = _f(r, "implied_volatility")
+            bid = _f(r, "nbbo_bid", "bid")
+            ask = _f(r, "nbbo_ask", "ask")
+            mid = (bid + ask) / 2 if bid is not None and ask is not None else _f(r, "last_price")
+            # UW does not supply greeks; compute delta via Black-Scholes.
+            delta = None
+            if spot and iv and iv > 0:
+                dte = max(0, (expd - now.date()).days)
+                delta = round(black_scholes_delta(spot, strike, dte / 365.0, iv, otype), 3)
+            out.append(
+                OptionContract(
+                    symbol=symbol.upper(),
+                    option_symbol=str(r.get("option_symbol")),
+                    expiration=expd,
+                    strike=strike,
+                    option_type=otype,
+                    bid=bid,
+                    ask=ask,
+                    mark=round(mid, 4) if mid is not None else None,
+                    last=_f(r, "last_price"),
+                    volume=_i(r, "volume"),
+                    open_interest=_i(r, "open_interest"),
+                    implied_volatility=iv,
+                    greeks=Greeks(delta=delta),
+                    as_of=now,
+                    source="unusual_whales",
+                )
+            )
+        return out
+
+    async def get_option_chain(self, symbol: str, expirations: int = 4) -> OptionChain:
+        spot = await self._stock_close(symbol)
+        exps = await self._chain_expirations(symbol, expirations)
+        contracts: list[OptionContract] = []
+        for exp in exps:
+            contracts.extend(await self._contracts_for_expiration(symbol, exp, spot))
+        return OptionChain(
+            symbol=symbol.upper(),
+            underlying_price=spot,
+            contracts=contracts,
+            as_of=datetime.now(UTC),
+            source="unusual_whales",
+        )
+
+    async def get_iv_context(self, symbol: str) -> IVContext:
+        """Current ATM IV from /api/stock/{ticker}/volatility/stats (iv field).
+        IV rank/percentile are computed elsewhere from the IV history."""
+        iv30 = None
+        try:
+            r = await self._http.get_json(f"/api/stock/{symbol.upper()}/volatility/stats")
+            d = r.get("data", r) if isinstance(r, dict) else r
+            if isinstance(d, dict):
+                iv30 = _f(d, "iv", "implied_volatility")
+        except Exception:
+            iv30 = None
+        return IVContext(
+            symbol=symbol.upper(),
+            iv30=iv30,
+            as_of=datetime.now(UTC),
+            source="unusual_whales",
+        )

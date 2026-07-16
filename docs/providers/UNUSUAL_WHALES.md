@@ -1,7 +1,23 @@
 # Unusual Whales (UW)
 
 Research verified against the live official docs and published OpenAPI spec
-(July 2026). Capabilities implemented: **options flow** and **IV-rank history**.
+(July 2026). Capabilities implemented: **options flow**, **IV-rank history**,
+and **option chains**.
+
+> **Option chains (live-validated 2026-07-16).** UW `option-contracts` returns
+> real strikes, IV, OI, and NBBO bid/ask but **no greeks** — delta is computed
+> via Black-Scholes from the underlying spot (`stock-state.close`) + per-contract
+> IV. Strike/type/expiry are parsed from the OCC `option_symbol`. Expirations
+> come from `expiry-breakdown` (centered on ~30 DTE); `option-contracts?expiry=`
+> filters to one expiration (note: the param is `expiry`, not `expiry_date`).
+> Current ATM IV for `get_iv_context` comes from `volatility/stats.iv`.
+>
+> Enable with `PROVIDER_OPTIONS_CHAIN=unusual_whales`. Real-data finding: on a
+> $500–750 underlying, real strikes are $2.50–5 apart, so the narrowest
+> defined-risk spread often exceeds a $100 per-trade cap — most mega-caps become
+> untradeable at that budget, and the ones that fit are pushed to lower-POP OTM
+> spreads. This is the true affordability constraint (the mock's $1 strikes hid
+> it). Raise the per-trade budget or use a lower-priced universe for more setups.
 
 > **Live-validated 2026-07-16** with a real key. Field mapping was corrected
 > against the actual responses:

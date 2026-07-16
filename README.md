@@ -81,11 +81,15 @@ runs immediately:
 
 ```bash
 make install          # pip install -e ".[dev]"
-make test             # 31 tests, all green
+make test             # full suite, all green
 python -m app.cli scan            # ranked candidates in the terminal
+python -m app.cli backtest        # simulated backtest (or --historical)
 python -m app.cli providers       # configured provider status
-make run                          # FastAPI at http://localhost:8000/docs
+make run                          # FastAPI + dashboard at http://localhost:8000/
 ```
+
+Open **http://localhost:8000/** for the dashboard (ranked candidates, thesis,
+risk/POP/breakevens, proposals, paper trades); API docs at `/docs`.
 
 Example API flow:
 

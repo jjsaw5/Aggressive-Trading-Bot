@@ -58,23 +58,32 @@ threaded session with headless pyotp MFA; pure, unit-tested response mapping.
 `meta.verified=False` until a live auth + field smoke test is run against a real
 account. Order placement intentionally omitted. See the provider doc.
 
+### Persistence + history API — built
+DB-backed async repository (scans, candidates, proposals, paper trades) with
+JSON-payload replay + indexed ranking columns; history endpoints
+(`GET /scans`, `/scans/{id}/candidates`, `/proposals`, `/paper`). SQLite-tested.
+
+### Alerts — built
+Swappable `Notifier` (console/slack/noop) behind config, off by default. Fires
+on actionable candidates above a score threshold with thesis + analytics;
+scheduler dispatches after each scan. `GET /alerts/status`, `POST /alerts/test`.
+
+### Dashboard — built
+Self-contained vanilla-JS single page served by FastAPI at `/` (no build step,
+no CDNs): ranked candidates with structure/risk/POP/breakevens, expandable
+thesis, and Propose/Paper/Approve/Execute actions; proposals and paper-trade
+tabs. Theme-aware.
+
 ## Next (sequenced)
 
 ### 1. Live-verify Robinhood + real end-to-end run
 Smoke-test auth/MFA and field mapping against a real account; confirm quote
 freshness and option-chain greeks/IV populate; then set `meta.verified=True`.
 
-### 2. Persistence repository + history API
-Replace the in-memory store with the DB repository (models/migrations exist);
-add scan history, candidate/proposal history, and paper-trade P&L endpoints.
-
-### 3. Alerts
-Push notable candidates/flow to a channel (email/Slack) behind the same
-provider-style abstraction.
-
-### 4. Dashboard
-Next.js/React front end over the API: ranked candidates, thesis breakdown,
-risk plan, paper P&L, provider/licensing status.
+### 2. Credit structures in the historical backtester
+The simulated backtester scores credit structures; extend the *historical*
+replay (`app/backtest/historical.py`) to build them too, and group performance
+by IV-rank bucket.
 
 ## Guardrails that must never regress
 - Automation stays off by default; the double-gate + approval requirement stays.

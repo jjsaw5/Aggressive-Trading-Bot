@@ -21,37 +21,42 @@
   **SQLAlchemy models + Alembic**, **APScheduler** periodic scans, CLI.
 - **Tests** (31) + ruff-clean, Docker/Compose.
 
+## Recently added
+
+### Backtesting harness (Question 14) — built
+Shared Black-Scholes model (`app/quant/pricing.py`), a pure per-trade backtest
+engine (MFE/MAE + exit rules, reuses the paper engine), a performance aggregator
+(win rate / expectancy / profit factor by setup type), a Monte-Carlo runner, CLI
+`backtest`, and a `/backtest` endpoint. Validated unbiased: a zero-drift sim
+reports ~zero expectancy, so real edge shows up above that baseline. See
+[`docs/BACKTESTING.md`](BACKTESTING.md). **Next:** feed real historical option
+marks and replay stored scans (the engine already takes explicit paths).
+
 ## Next (sequenced)
 
-### 1. Backtesting & historical performance (Question 14)
-Replay stored scans against historical option marks; compute win rate,
-expectancy, MFE/MAE distributions **by setup type**, so each candidate can cite
-how its setup has performed. The mock's determinism and the paper engine's
-purity are already designed for this.
-
-### 2. Real IV-rank / IV-percentile sourcing
+### 1. Real IV-rank / IV-percentile sourcing
 `IVContext.iv_rank` currently comes from the provider. Wire a real source
 (Unusual Whales greek/vol endpoints or a computed 1-year IV history) and
 validate the direction-aware volatility scorer against it.
 
-### 3. Build & verify the Robinhood provider
+### 2. Build & verify the Robinhood provider
 Options chains + Greeks + account state via a verified `robin_stocks` surface
 (or alternative). Confirm ToS, auth/MFA, and field mapping. See the provider doc.
 
-### 4. Spread analytics & more structures
+### 3. Spread analytics & more structures
 Add credit spreads, straddles/strangles (for the vol-long/vol-short directions
 already modeled), and iron condors; richer greeks-based selection and
 probability-of-profit estimates.
 
-### 5. Persistence repository + history API
+### 4. Persistence repository + history API
 Replace the in-memory store with the DB repository (models/migrations exist);
 add scan history, candidate/proposal history, and paper-trade P&L endpoints.
 
-### 6. Alerts
+### 5. Alerts
 Push notable candidates/flow to a channel (email/Slack) behind the same
 provider-style abstraction.
 
-### 7. Dashboard
+### 6. Dashboard
 Next.js/React front end over the API: ranked candidates, thesis breakdown,
 risk plan, paper P&L, provider/licensing status.
 

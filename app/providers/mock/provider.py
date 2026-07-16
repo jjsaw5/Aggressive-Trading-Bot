@@ -39,6 +39,7 @@ from app.providers.base import (
     OptionsFlowProvider,
     ProviderMeta,
 )
+from app.quant.pricing import black_scholes_delta, black_scholes_price
 
 _META = ProviderMeta(
     name="mock",
@@ -143,23 +144,38 @@ class MockProvider(
 
     # --- Options chain / IV ---
     async def get_option_chain(self, symbol: str, expirations: int = 4) -> OptionChain:
+        """Synthetic chain priced with the SAME Black-Scholes model the engine
+        and backtester use, so entry marks, sizing, and repricing are
+        internally consistent. A ~$1-wide strike ladder gives realistic,
+        affordable defined-risk verticals."""
         s = _seed(symbol)
         spot = (await self.get_quote(symbol)).price
         iv = 0.20 + s * 0.55
         contracts: list[OptionContract] = []
         today = self._now.date()
+
+        # ~$1 strike increment (rounded), a realistic ladder for these names.
+        step = max(0.5, round(spot * 0.005 * 2) / 2)
+        n_strikes = 24
         for w in range(1, expirations + 1):
             exp = today + timedelta(days=7 * w + 2)
-            for k_off in range(-5, 6):
-                strike = round(spot * (1 + k_off * 0.01), 1)
+            dte = (exp - today).days
+            t = dte / 365.0
+            atm = round(spot / step) * step
+            for j in range(-n_strikes, n_strikes + 1):
+                strike = round(atm + j * step, 2)
+                if strike <= 0:
+                    continue
+                moneyness = abs(strike - spot) / spot
                 for otype in (OptionType.CALL, OptionType.PUT):
-                    moneyness = abs(strike - spot) / spot
-                    mid = max(0.05, spot * iv * 0.02 * math.exp(-moneyness * 8))
-                    spread = 0.02 + moneyness * 0.1  # ATM tight, wings wide
-                    half = mid * spread / 2
-                    oi = int(max(10, 5000 * math.exp(-moneyness * 10)))
+                    price = black_scholes_price(spot, strike, t, iv, otype)
+                    if price < 0.02:
+                        continue  # skip worthless far-OTM contracts
+                    delta = black_scholes_delta(spot, strike, t, iv, otype)
+                    spread_frac = 0.01 + moneyness * 0.08  # ATM tight, wings wide
+                    half = price * spread_frac / 2
+                    oi = int(max(50, 6000 * math.exp(-moneyness * 12)))
                     vol = int(oi * (0.2 + s))
-                    delta = 0.5 * math.exp(-moneyness * 6)
                     contracts.append(
                         OptionContract(
                             symbol=symbol.upper(),
@@ -169,13 +185,13 @@ class MockProvider(
                             expiration=exp,
                             strike=strike,
                             option_type=otype,
-                            bid=round(mid - half, 2),
-                            ask=round(mid + half, 2),
-                            mark=round(mid, 2),
-                            last=round(mid, 2),
+                            bid=round(max(0.01, price - half), 2),
+                            ask=round(price + half, 2),
+                            mark=round(price, 2),
+                            last=round(price, 2),
                             volume=vol,
                             open_interest=oi,
-                            implied_volatility=round(iv * (1 + moneyness), 4),
+                            implied_volatility=round(iv, 4),
                             greeks=Greeks(delta=round(delta, 3), gamma=0.01, theta=-0.03, vega=0.1),
                             as_of=self._now,
                             delayed_minutes=0,

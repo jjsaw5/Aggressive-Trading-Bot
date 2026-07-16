@@ -54,14 +54,24 @@ def analyze_volatility(iv: IVContext, stance: Direction) -> SignalScore:
         score *= 0.85
         note += f" IV/HV {ratio:.2f} rich."
 
+    # Traceability: note when rank is a realized-vol proxy vs true IV history.
+    if iv.iv_rank_source == "hv_proxy":
+        note += " [rank via realized-vol proxy]"
+        confidence = 0.45
+    elif iv.iv_rank_source == "iv_history":
+        confidence = 0.65
+    else:
+        confidence = 0.6
+
     return SignalScore(
         name="volatility",
         score=round(min(1.0, max(0.0, score)), 4),
         direction=stance,
-        confidence=0.6,
+        confidence=confidence,
         rationale=note,
         details={
             "iv_rank": round(iv_rank, 3),
+            "iv_rank_source": iv.iv_rank_source,
             "iv30": iv.iv30,
             "hv20": iv.hv20,
             "iv_hv_ratio": round(ratio, 3) if ratio is not None else None,

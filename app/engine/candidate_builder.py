@@ -21,6 +21,7 @@ from app.domain.signals import SignalBundle
 from app.engine.catalysts import analyze_catalysts
 from app.engine.contract_selection import select_long_contract, select_vertical_spread
 from app.engine.flow import analyze_flow
+from app.engine.iv_context import build_iv_context
 from app.engine.liquidity import gate_underlying
 from app.engine.price_action import analyze_price_action
 from app.engine.scoring import ScoreWeights, composite_score, resolve_direction
@@ -30,6 +31,7 @@ from app.logging_config import get_logger
 from app.providers.base import (
     CalendarProvider,
     FundamentalsProvider,
+    IVHistoryProvider,
     MarketDataProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
@@ -50,6 +52,7 @@ class ScanEngine:
         chain: OptionsChainProvider,
         flow: OptionsFlowProvider,
         calendar: CalendarProvider,
+        iv_history: IVHistoryProvider | None = None,
         policy: RiskPolicy | None = None,
         universe: UniverseConfig | None = None,
         weights: ScoreWeights | None = None,
@@ -59,6 +62,7 @@ class ScanEngine:
         self.chain = chain
         self.flow = flow
         self.calendar = calendar
+        self.iv_history = iv_history
         self.policy = policy or RiskPolicy.from_settings()
         self.universe = universe or UniverseConfig()
         self.weights = weights or ScoreWeights()
@@ -101,8 +105,25 @@ class ScanEngine:
         # Hard underlying gate.
         underlying_rejects = gate_underlying(fundamentals, quote.price, self.universe)
 
-        history = await self.market.get_price_history(symbol, lookback_days=90)
-        iv = await self.chain.get_iv_context(symbol)
+        history = await self.market.get_price_history(symbol, lookback_days=252)
+
+        # Current IV snapshot from the chain provider; IV RANK is computed from a
+        # real IV history (or a realized-vol proxy) rather than trusted opaquely.
+        current = await self.chain.get_iv_context(symbol)
+        iv_hist = None
+        if self.iv_history is not None:
+            try:
+                iv_hist = await self.iv_history.get_iv_history(symbol, lookback_days=365)
+            except Exception as exc:
+                log.warning("iv_history_failed", symbol=symbol, error=str(exc))
+        iv = build_iv_context(
+            symbol,
+            current.iv30,
+            now,
+            iv_history=iv_hist,
+            price_history=history,
+            term_structure_slope=current.term_structure_slope,
+        )
         flow_alerts = await self.flow.get_flow_alerts(symbol=symbol, unusual_only=True)
         catalysts = await self.calendar.get_catalysts(symbol)
 

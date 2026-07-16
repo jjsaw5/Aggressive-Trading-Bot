@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
-from pydantic import computed_field, model_validator
+from pydantic import computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     provider_fundamentals: ProviderName = ProviderName.MOCK
     provider_calendar: ProviderName = ProviderName.MOCK
     provider_brokerage: ProviderName = ProviderName.MOCK
+    # Optional. If unset, IV rank falls back to a realized-vol proxy from real
+    # price history rather than an opaque provider field.
+    provider_iv_history: ProviderName | None = ProviderName.MOCK
 
     # --- Provider credentials ---
     fmp_api_key: str | None = None
@@ -84,6 +87,14 @@ class Settings(BaseSettings):
     robinhood_username: str | None = None
     robinhood_password: str | None = None
     robinhood_mfa_secret: str | None = None
+
+    @field_validator("provider_iv_history", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v: object) -> object:
+        # An empty env value means "no IV-history feed" -> None (HV proxy).
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     @computed_field  # type: ignore[prop-decorator]
     @property

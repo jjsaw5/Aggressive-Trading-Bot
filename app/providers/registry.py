@@ -16,6 +16,7 @@ from app.providers.base import (
     BrokerageProvider,
     CalendarProvider,
     FundamentalsProvider,
+    IVHistoryProvider,
     MarketDataProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
@@ -88,6 +89,14 @@ def options_flow_provider() -> OptionsFlowProvider:
 
 def calendar_provider() -> CalendarProvider:
     return _resolve(settings.provider_calendar, "calendar", CalendarProvider)
+
+
+def iv_history_provider() -> IVHistoryProvider | None:
+    """Optional. Returns None when unconfigured — the IV-context builder then
+    falls back to a realized-volatility proxy from real price history."""
+    if settings.provider_iv_history is None:
+        return None
+    return _resolve(settings.provider_iv_history, "iv_history", IVHistoryProvider)
 
 
 def brokerage_provider() -> BrokerageProvider:

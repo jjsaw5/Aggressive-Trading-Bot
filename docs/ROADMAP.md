@@ -32,31 +32,35 @@ reports ~zero expectancy, so real edge shows up above that baseline. See
 [`docs/BACKTESTING.md`](BACKTESTING.md). **Next:** feed real historical option
 marks and replay stored scans (the engine already takes explicit paths).
 
+### Real IV-rank / IV-percentile sourcing — built
+IV rank and percentile are now **computed** (`app/quant/iv.py`) from a real IV
+history rather than an opaque provider field. Source priority: a real
+`IVHistoryProvider` (Unusual Whales, grounded on the confirmed
+`GET /api/stock/{ticker}/iv-rank`) → true IV rank; else a realized-volatility
+proxy from real price history (labeled `hv_proxy`, lower signal confidence). The
+`IVContext.iv_rank_source` tag makes every rank auditable, and the mock's price
+path was made vol-coherent with its option IV. `PROVIDER_IV_HISTORY` routes it.
+
 ## Next (sequenced)
 
-### 1. Real IV-rank / IV-percentile sourcing
-`IVContext.iv_rank` currently comes from the provider. Wire a real source
-(Unusual Whales greek/vol endpoints or a computed 1-year IV history) and
-validate the direction-aware volatility scorer against it.
-
-### 2. Build & verify the Robinhood provider
+### 1. Build & verify the Robinhood provider
 Options chains + Greeks + account state via a verified `robin_stocks` surface
 (or alternative). Confirm ToS, auth/MFA, and field mapping. See the provider doc.
 
-### 3. Spread analytics & more structures
+### 2. Spread analytics & more structures
 Add credit spreads, straddles/strangles (for the vol-long/vol-short directions
 already modeled), and iron condors; richer greeks-based selection and
 probability-of-profit estimates.
 
-### 4. Persistence repository + history API
+### 3. Persistence repository + history API
 Replace the in-memory store with the DB repository (models/migrations exist);
 add scan history, candidate/proposal history, and paper-trade P&L endpoints.
 
-### 5. Alerts
+### 4. Alerts
 Push notable candidates/flow to a channel (email/Slack) behind the same
 provider-style abstraction.
 
-### 6. Dashboard
+### 5. Dashboard
 Next.js/React front end over the API: ranked candidates, thesis breakdown,
 risk plan, paper P&L, provider/licensing status.
 

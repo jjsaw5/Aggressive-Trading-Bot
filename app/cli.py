@@ -112,12 +112,17 @@ def main() -> None:
             "fundamentals": registry.fundamentals_provider,
             "options_chain": registry.options_chain_provider,
             "options_flow": registry.options_flow_provider,
+            "iv_history": registry.iv_history_provider,
             "calendar": registry.calendar_provider,
             "brokerage": registry.brokerage_provider,
         }
         for cap, resolve in resolvers.items():
             try:
-                m = resolve().meta
+                provider = resolve()
+                if provider is None:
+                    print(f"  {cap:14s} -> none (realized-vol proxy)")
+                    continue
+                m = provider.meta
                 print(f"  {cap:14s} -> {m.name:16s} verified={m.verified}")
             except Exception as exc:
                 print(f"  {cap:14s} -> UNRESOLVED ({exc})")

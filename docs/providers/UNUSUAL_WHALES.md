@@ -22,6 +22,18 @@ Research verified against the live official docs and published OpenAPI spec
 |---|---|
 | Market-wide flow alerts | `GET /api/option-trades/flow-alerts` (supports `unusual=true`) |
 | Per-ticker flow alerts | `GET /api/stock/{ticker}/flow-alerts` |
+| IV history (for IV rank) | `GET /api/stock/{ticker}/iv-rank` — daily `date, close, volatility, iv_rank_1y` |
+
+### Volatility endpoints (confirmed in the OpenAPI spec — for future use)
+- `GET /api/stock/{ticker}/volatility/stats` — point-in-time `iv, iv_high, iv_low, iv_rank, rv, ...`
+- `GET /api/stock/{ticker}/volatility/realized` — daily `implied_volatility` (≈IV30) + `realized_volatility`
+- `GET /api/stock/{ticker}/volatility/term-structure` — per-expiry ATM IV
+- `GET /api/stock/{ticker}/interpolated-iv` — per-tenor IV + 1y `percentile`
+
+> IV rank is **computed by the engine** from the `volatility` series (or a
+> realized-vol proxy) rather than trusting an opaque field — so ranks are
+> consistent across providers. `volatility/stats.iv_rank` is available as a
+> cross-check.
 
 ### Other confirmed endpoints (available for future capabilities)
 - Recent flow: `GET /api/stock/{ticker}/flow-recent`

@@ -27,6 +27,8 @@ from app.domain.options import (
     FlowAlert,
     Greeks,
     IVContext,
+    IVHistory,
+    IVHistoryPoint,
     OptionChain,
     OptionContract,
 )
@@ -34,6 +36,7 @@ from app.providers.base import (
     BrokerageProvider,
     CalendarProvider,
     FundamentalsProvider,
+    IVHistoryProvider,
     MarketDataProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
@@ -65,6 +68,19 @@ def _seed(symbol: str) -> float:
     return int(h[:8], 16) / 0xFFFFFFFF
 
 
+def _u(symbol: str, i: int, k: int) -> float:
+    """Deterministic uniform in (0, 1) from (symbol, day, stream)."""
+    h = hashlib.sha256(f"{symbol}|{i}|{k}".encode()).hexdigest()
+    return (int(h[:8], 16) + 1) / (0xFFFFFFFF + 2)
+
+
+def _norm(symbol: str, i: int) -> float:
+    """Deterministic standard-normal draw via Box-Muller (reproducible)."""
+    u1 = _u(symbol, i, 1)
+    u2 = _u(symbol, i, 2)
+    return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+
+
 def _anchor(symbol: str) -> float:
     return _ANCHOR_PRICE.get(symbol.upper(), 50.0 + _seed(symbol) * 150.0)
 
@@ -74,6 +90,7 @@ class MockProvider(
     FundamentalsProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
+    IVHistoryProvider,
     CalendarProvider,
     BrokerageProvider,
 ):
@@ -102,18 +119,24 @@ class MockProvider(
         )
 
     async def get_price_history(self, symbol: str, lookback_days: int = 90) -> PriceHistory:
+        """Deterministic seeded GBM whose realized volatility matches the
+        symbol's option IV (iv = 0.20 + s*0.55), so HV, IV/HV, and the HV-proxy
+        IV rank are internally coherent."""
         s = _seed(symbol)
         base = _anchor(symbol)
-        drift = (s - 0.45) * 0.004  # slight up/down bias per symbol
-        vol = 0.008 + s * 0.02
+        iv = 0.20 + s * 0.55
+        daily_vol = iv / math.sqrt(252)
+        daily_drift = (s - 0.45) * 0.0006  # small directional bias for trend signal
         candles: list[Candle] = []
-        price = base * (1 - drift * lookback_days)
+        # Start below/above anchor so the walk ends near the anchor price.
+        price = base * math.exp(-daily_drift * lookback_days)
         for i in range(lookback_days):
             ts = self._now - timedelta(days=lookback_days - i)
-            wobble = math.sin(i / 3.0 + s * 6.28) * vol
-            price = max(1.0, price * (1 + drift + wobble * 0.3))
-            hi = price * (1 + vol / 2)
-            lo = price * (1 - vol / 2)
+            z = _norm(symbol, i)
+            ret = daily_drift + daily_vol * z
+            price = max(1.0, price * math.exp(ret))
+            hi = price * (1 + daily_vol / 2)
+            lo = price * (1 - daily_vol / 2)
             candles.append(
                 Candle(
                     ts=ts,
@@ -220,6 +243,22 @@ class MockProvider(
             as_of=self._now,
             source="mock",
         )
+
+    async def get_iv_history(self, symbol: str, lookback_days: int = 365) -> IVHistory:
+        """Deterministic daily IV series bracketing the current iv30 so the
+        computed IV rank is stable and non-degenerate for tests."""
+        s = _seed(symbol)
+        iv30 = 0.20 + s * 0.55
+        span = 0.30
+        lo = max(0.05, iv30 - s * span)
+        hi = iv30 + (1 - s) * span
+        points: list[IVHistoryPoint] = []
+        for i in range(lookback_days):
+            ts = self._now - timedelta(days=lookback_days - i)
+            frac = 0.5 + 0.5 * math.sin(i / 5.0 + s * 6.28)
+            iv = lo + (hi - lo) * frac
+            points.append(IVHistoryPoint(ts=ts, iv=round(iv, 4)))
+        return IVHistory(symbol=symbol.upper(), points=points, source="mock")
 
     # --- Options flow ---
     async def get_flow_alerts(

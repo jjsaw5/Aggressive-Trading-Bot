@@ -57,6 +57,7 @@ async def provider_status() -> list[ProviderStatus]:
         "fundamentals": registry.fundamentals_provider,
         "options_chain": registry.options_chain_provider,
         "options_flow": registry.options_flow_provider,
+        "iv_history": registry.iv_history_provider,
         "calendar": registry.calendar_provider,
         "brokerage": registry.brokerage_provider,
     }
@@ -64,6 +65,21 @@ async def provider_status() -> list[ProviderStatus]:
     for capability, resolve in resolvers.items():
         try:
             provider = resolve()
+            if provider is None:
+                # Optional capability (iv_history) not configured -> HV proxy.
+                out.append(
+                    ProviderStatus(
+                        capability=capability,
+                        provider="none (realized-vol proxy)",
+                        verified=False,
+                        requires_auth=False,
+                        typical_delay=None,
+                        rate_limit=None,
+                        licensing=None,
+                        docs_url=None,
+                    )
+                )
+                continue
             meta = provider.meta
             out.append(
                 ProviderStatus(

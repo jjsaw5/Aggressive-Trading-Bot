@@ -23,7 +23,13 @@ from app.domain.market import (
     PriceHistory,
     Quote,
 )
-from app.domain.options import FlowAlert, IVContext, OptionChain, OptionMarkPoint
+from app.domain.options import (
+    FlowAlert,
+    IVContext,
+    IVHistory,
+    OptionChain,
+    OptionMarkPoint,
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,19 @@ class HistoricalOptionsProvider(Provider):
     async def get_option_mark_series(
         self, option_symbol: str, start: date, end: date
     ) -> list[OptionMarkPoint]: ...
+
+
+class IVHistoryProvider(Provider):
+    """Historical implied-volatility series for computing true IV rank/percentile.
+
+    This is the slot a real IV-history feed plugs into. When no such feed is
+    configured, the IV-context builder falls back to a realized-volatility proxy
+    computed from real underlying price history (clearly labeled). Do not
+    fabricate an endpoint — implement only against a verified source.
+    """
+
+    @abc.abstractmethod
+    async def get_iv_history(self, symbol: str, lookback_days: int = 365) -> IVHistory: ...
 
 
 class CalendarProvider(Provider):

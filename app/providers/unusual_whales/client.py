@@ -7,6 +7,7 @@ Grounded against the CURRENT official API (verified 2026-07):
   * Confirmed endpoints used here:
         GET /api/option-trades/flow-alerts          (market-wide flow alerts)
         GET /api/stock/{ticker}/flow-alerts         (per-ticker flow alerts)
+        GET /api/stock/{ticker}/iv-rank             (daily IV + iv_rank_1y series)
   * Rate limits are surfaced per-response via x-uw-* headers; 429 on exceed.
 
 WARNING — endpoint PATHS and AUTH are confirmed, but exact JSON RESPONSE FIELD
@@ -27,9 +28,9 @@ from typing import Any
 
 from app.config import settings
 from app.domain.enums import OptionType
-from app.domain.options import FlowAlert
+from app.domain.options import FlowAlert, IVHistory, IVHistoryPoint
 from app.providers._http import AsyncHTTP
-from app.providers.base import OptionsFlowProvider, ProviderMeta
+from app.providers.base import IVHistoryProvider, OptionsFlowProvider, ProviderMeta
 
 _META = ProviderMeta(
     name="unusual_whales",
@@ -75,7 +76,7 @@ def _parse_date(v: Any) -> date | None:
         return None
 
 
-class UnusualWhalesProvider(OptionsFlowProvider):
+class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
     meta = _META
 
     def __init__(self) -> None:
@@ -87,6 +88,31 @@ class UnusualWhalesProvider(OptionsFlowProvider):
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+    async def get_iv_history(self, symbol: str, lookback_days: int = 365) -> IVHistory:
+        """Daily implied-volatility series from UW's confirmed
+        GET /api/stock/{ticker}/iv-rank (fields: date, close, volatility,
+        iv_rank_1y, updated_at). We keep the raw `volatility` series and let the
+        engine compute IV rank/percentile consistently across providers.
+
+        Field names are validated defensively; verify against the OpenAPI spec
+        before production. Alternative source: /api/stock/{ticker}/volatility/stats
+        for a point-in-time iv_rank + iv_high/iv_low."""
+        payload = await self._http.get_json(f"/api/stock/{symbol.upper()}/iv-rank")
+        rows = payload.get("data", payload) if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            return IVHistory(symbol=symbol.upper(), points=[], source="unusual_whales")
+
+        points: list[IVHistoryPoint] = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            iv = _f(r, "volatility", "implied_volatility", "iv")
+            ts = _parse_dt(r.get("date"))
+            if iv is not None and iv > 0:
+                points.append(IVHistoryPoint(ts=ts, iv=iv))
+        points.sort(key=lambda p: p.ts)
+        return IVHistory(symbol=symbol.upper(), points=points, source="unusual_whales")
 
     async def get_flow_alerts(
         self, symbol: str | None = None, unusual_only: bool = True, limit: int = 100

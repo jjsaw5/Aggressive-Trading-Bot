@@ -103,6 +103,23 @@ class OptionMarkPoint(BaseModel):
     source: str = "unknown"
 
 
+class IVHistoryPoint(BaseModel):
+    ts: datetime
+    iv: float  # ATM / 30-day implied volatility for that day
+
+
+class IVHistory(BaseModel):
+    """A daily implied-volatility series used to compute IV rank / percentile."""
+
+    symbol: str
+    points: list[IVHistoryPoint] = Field(default_factory=list)
+    source: str = "unknown"
+
+    @property
+    def ivs(self) -> list[float]:
+        return [p.iv for p in self.points]
+
+
 class IVContext(BaseModel):
     """Implied-volatility context used to judge whether IV is favorable."""
 
@@ -112,6 +129,9 @@ class IVContext(BaseModel):
     iv_percentile: float | None = None  # [0, 1]
     hv20: float | None = None  # 20-day realized vol
     term_structure_slope: float | None = None  # front-to-back IV slope
+    # How iv_rank/iv_percentile were derived: "iv_history" (true IV rank),
+    # "hv_proxy" (realized-vol proxy), or "provider" (opaque provider field).
+    iv_rank_source: str | None = None
     as_of: datetime
     source: str = "unknown"
 

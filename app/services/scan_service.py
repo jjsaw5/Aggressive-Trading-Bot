@@ -27,6 +27,7 @@ def build_scan_engine(
         chain=registry.options_chain_provider(),
         flow=registry.options_flow_provider(),
         calendar=registry.calendar_provider(),
+        iv_history=registry.iv_history_provider(),
         policy=policy or RiskPolicy.from_settings(),
         universe=universe or UniverseConfig(),
         weights=weights or ScoreWeights(),

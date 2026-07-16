@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
 
+    # --- Alerts ---
+    alerts_enabled: bool = False
+    alerts_channel: str = "console"  # console | slack | noop
+    alerts_min_score: float = 0.6  # only alert on candidates at/above this score
+    slack_webhook_url: str | None = None
+
     # --- Provider routing ---
     provider_market_data: ProviderName = ProviderName.MOCK
     provider_options_flow: ProviderName = ProviderName.MOCK

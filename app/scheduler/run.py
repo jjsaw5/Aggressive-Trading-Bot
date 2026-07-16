@@ -12,6 +12,7 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.alerts.service import alert_candidates
 from app.db import repository
 from app.db.session import SessionLocal, create_all
 from app.engine.universe import UniverseConfig
@@ -35,6 +36,7 @@ async def scheduled_scan() -> None:
                     UniverseConfig().normalized_symbols(),
                     candidates,
                 )
+            await alert_candidates(candidates)
         log.info("scheduled_scan_ok", total=len(candidates), actionable=actionable)
     except Exception as exc:
         log.error("scheduled_scan_failed", error=str(exc))

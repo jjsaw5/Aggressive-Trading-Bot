@@ -4,6 +4,18 @@ Research verified against current official docs (July 2026). Capabilities
 implemented: **market data, fundamentals, calendar**. FMP does **not** provide
 options data.
 
+> **Live-validated 2026-07-16.** Exercised against the live API with a real key:
+> `/stable/quote`, `/stable/profile`, `/stable/historical-price-eod/full`, and
+> `/stable/earnings-calendar` all returned 200 and mapped correctly. Notes from
+> the live response: `/stable/quote` carries **no bid/ask** (mapped to `None`);
+> `/stable/profile` did **not** include a float field for the sampled mega-caps
+> (`shares_float` → `None`, so the low-float gate is skipped — fine for this
+> universe); earnings `time` may be `None`. All degrade gracefully.
+>
+> Enable with `PROVIDER_MARKET_DATA=fmp`, `PROVIDER_FUNDAMENTALS=fmp`,
+> `PROVIDER_CALENDAR=fmp` and `FMP_API_KEY` in the environment. Options
+> chain/flow stay on their own providers (mock, or Robinhood/UW).
+
 ## Base URL & versioning
 - Base: `https://financialmodelingprep.com`
 - Current family: **`/stable/...`** (actively documented). Legacy `/api/v3`,

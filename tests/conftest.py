@@ -12,7 +12,15 @@ import tempfile
 # --- Must run before importing anything under `app` ---
 _DB_FD, _DB_PATH = tempfile.mkstemp(suffix=".db", prefix="atb_test_")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_DB_PATH}"
-os.environ.setdefault("PROVIDER_IV_HISTORY", "mock")
+
+# Pin ALL providers to mock during tests so the suite never makes live API
+# calls, regardless of any local .env that enables real providers (e.g. FMP).
+for _var in (
+    "PROVIDER_MARKET_DATA", "PROVIDER_FUNDAMENTALS", "PROVIDER_CALENDAR",
+    "PROVIDER_OPTIONS_CHAIN", "PROVIDER_OPTIONS_FLOW", "PROVIDER_BROKERAGE",
+    "PROVIDER_IV_HISTORY",
+):
+    os.environ[_var] = "mock"
 
 import pytest  # noqa: E402
 

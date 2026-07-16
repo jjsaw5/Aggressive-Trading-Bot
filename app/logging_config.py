@@ -24,6 +24,11 @@ def configure_logging() -> None:
         level=level,
     )
 
+    # httpx/httpcore log the full request URL at INFO, which would leak API keys
+    # passed as query params (e.g. FMP's ?apikey=). Keep them at WARNING.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     shared_processors: list = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,

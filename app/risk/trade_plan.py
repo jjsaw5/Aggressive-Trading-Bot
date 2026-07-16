@@ -16,7 +16,7 @@ from datetime import date
 from app.domain.enums import Direction, OptionAction, OptionType, StrategyType
 from app.domain.options import OptionContract
 from app.domain.trades import ContractLeg, RiskPlan, TradePlan
-from app.engine.contract_selection import SpreadChoice
+from app.engine.contract_selection import SpreadChoice, StructureChoice
 from app.risk.policy import RiskPolicy
 from app.risk.position_sizing import size_by_defined_risk
 
@@ -182,5 +182,87 @@ def build_vertical_spread_plan(
             f"short {otype} {short_leg.strike} exp {long_leg.expiration}, "
             f"{sizing.contracts} lot(s), defined risk ${sizing.max_loss_usd:.0f} "
             f"({sizing.account_risk_pct:.1%}), R:R {spread.reward_to_risk}."
+        ),
+    )
+
+
+def build_structure_plan(
+    choice: StructureChoice,
+    policy: RiskPolicy,
+    as_of: date,
+    *,
+    open_risk_usd: float = 0.0,
+) -> TradePlan | None:
+    """Size any multi-leg `StructureChoice` (credit vertical, straddle, strangle,
+    iron condor) by its defined per-contract risk. Returns None if not sizeable.
+
+    For credit structures the profit-target/stop percentages are interpreted as
+    a fraction of the credit captured/lost; the invalidation note records this.
+    """
+    sizing = size_by_defined_risk(
+        choice.max_loss_per_contract, policy, open_risk_usd=open_risk_usd
+    )
+    if not sizing.is_tradeable:
+        return None
+
+    legs = [
+        ContractLeg(
+            symbol=sl.contract.symbol,
+            option_symbol=sl.contract.option_symbol,
+            action=sl.action,
+            option_type=sl.contract.option_type,
+            strike=sl.contract.strike,
+            expiration=sl.contract.expiration,
+            quantity=sizing.contracts,
+            entry_price=sl.contract.mid or 0.0,
+        )
+        for sl in choice.legs
+    ]
+
+    is_credit = choice.net_debit_per_share < 0
+    max_profit_usd = (
+        round(choice.max_profit_per_contract * sizing.contracts, 2)
+        if choice.max_profit_per_contract is not None
+        else None
+    )
+    reward_to_risk = (
+        round(choice.max_profit_per_contract / choice.max_loss_per_contract, 3)
+        if choice.max_profit_per_contract and choice.max_loss_per_contract > 0
+        else None
+    )
+
+    kind = "credit" if is_credit else "debit"
+    invalidation = (
+        f"Manage at {int(policy.default_profit_target_pct * 100)}% of "
+        f"{'credit captured' if is_credit else 'debit'} / "
+        f"{int(policy.default_stop_loss_pct * 100)}% adverse; exit if the "
+        f"underlying breaches the structure's breakeven or DTE < "
+        f"{policy.default_time_stop_dte}."
+    )
+
+    risk = RiskPlan(
+        max_loss_usd=sizing.max_loss_usd,
+        max_profit_usd=max_profit_usd,
+        breakeven=None,  # populated as a list in SpreadAnalytics
+        account_risk_pct=sizing.account_risk_pct,
+        reward_to_risk=reward_to_risk,
+        profit_target_pct=policy.default_profit_target_pct,
+        stop_loss_pct=policy.default_stop_loss_pct,
+        time_stop_dte=policy.default_time_stop_dte,
+        invalidation_note=invalidation,
+    )
+
+    return TradePlan(
+        symbol=choice.legs[0].contract.symbol,
+        direction=choice.stance,
+        strategy=choice.strategy,
+        legs=legs,
+        net_debit=round(choice.net_debit_per_share * 100, 2),
+        contracts=sizing.contracts,
+        risk=risk,
+        rationale=(
+            f"{choice.strategy.value.replace('_', ' ')} ({kind}), "
+            f"{sizing.contracts} lot(s), defined risk ${sizing.max_loss_usd:.0f} "
+            f"({sizing.account_risk_pct:.1%}), R:R {reward_to_risk}."
         ),
     )

@@ -32,6 +32,14 @@ reports ~zero expectancy, so real edge shows up above that baseline. See
 [`docs/BACKTESTING.md`](BACKTESTING.md). **Next:** feed real historical option
 marks and replay stored scans (the engine already takes explicit paths).
 
+### Spread analytics & more structures — built
+The engine selects among long options, debit/credit verticals, straddles,
+strangles, and iron condors, choosing debit vs credit by IV rank (and vol
+structures for neutral theses with the right IV/catalyst setup). Every plan
+carries computed analytics — probability of profit, net greeks, breakeven(s),
+is_credit — via `app/quant/analytics.py`. See [`docs/STRATEGIES.md`](STRATEGIES.md).
+**Next:** credit-aware exits so the backtester can score credit structures too.
+
 ### Real IV-rank / IV-percentile sourcing — built
 IV rank and percentile are now **computed** (`app/quant/iv.py`) from a real IV
 history rather than an opaque provider field. Source priority: a real
@@ -47,10 +55,10 @@ path was made vol-coherent with its option IV. `PROVIDER_IV_HISTORY` routes it.
 Options chains + Greeks + account state via a verified `robin_stocks` surface
 (or alternative). Confirm ToS, auth/MFA, and field mapping. See the provider doc.
 
-### 2. Spread analytics & more structures
-Add credit spreads, straddles/strangles (for the vol-long/vol-short directions
-already modeled), and iron condors; richer greeks-based selection and
-probability-of-profit estimates.
+### 2. Credit-aware paper/backtest exits
+Extend the paper engine and backtester to score credit structures (manage at a
+% of credit captured), so iron condors and credit verticals get historical
+performance too — the last gap from the structures work.
 
 ### 3. Persistence repository + history API
 Replace the in-memory store with the DB repository (models/migrations exist);

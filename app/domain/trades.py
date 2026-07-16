@@ -46,6 +46,19 @@ class RiskPlan(BaseModel):
     invalidation_note: str = ""
 
 
+class SpreadAnalytics(BaseModel):
+    """Structure analytics computed at plan time from the legs + market state."""
+
+    breakevens: list[float] = Field(default_factory=list)
+    probability_of_profit: float | None = None  # [0, 1], risk-neutral estimate
+    expected_value_usd: float | None = None  # POP-weighted EV (rough)
+    net_delta: float | None = None  # position greeks (x100 x contracts)
+    net_gamma: float | None = None
+    net_theta: float | None = None  # $/day
+    net_vega: float | None = None  # $ per 1 IV point
+    is_credit: bool = False
+
+
 class TradePlan(BaseModel):
     """A concrete, sized, defined-risk expression of a thesis."""
 
@@ -56,6 +69,7 @@ class TradePlan(BaseModel):
     net_debit: float  # per-1-lot net debit (negative = credit) in dollars
     contracts: int = Field(ge=1)
     risk: RiskPlan
+    analytics: SpreadAnalytics | None = None
     rationale: str = ""
 
     @property

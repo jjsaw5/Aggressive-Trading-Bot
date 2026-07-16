@@ -65,6 +65,53 @@ def black_scholes_delta(
     return norm_cdf(d1) - 1.0
 
 
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def black_scholes_greeks(
+    spot: float,
+    strike: float,
+    t_years: float,
+    vol: float,
+    option_type: OptionType,
+    rate: float = 0.04,
+) -> dict[str, float]:
+    """Per-share greeks. vega/theta are scaled to practical units:
+    vega per 1 IV *point* (0.01), theta per calendar day."""
+    if t_years <= 0 or vol <= 0 or spot <= 0:
+        return {
+            "delta": black_scholes_delta(spot, strike, max(t_years, 0.0), max(vol, 1e-9), option_type, rate),
+            "gamma": 0.0,
+            "theta": 0.0,
+            "vega": 0.0,
+        }
+    d1, d2 = _d1_d2(spot, strike, t_years, vol, rate)
+    pdf = _norm_pdf(d1)
+    sqrt_t = math.sqrt(t_years)
+    gamma = pdf / (spot * vol * sqrt_t)
+    vega = spot * pdf * sqrt_t / 100.0  # per 1 vol point
+    disc = math.exp(-rate * t_years)
+    if option_type == OptionType.CALL:
+        theta_yr = -(spot * pdf * vol) / (2 * sqrt_t) - rate * strike * disc * norm_cdf(d2)
+        delta = norm_cdf(d1)
+    else:
+        theta_yr = -(spot * pdf * vol) / (2 * sqrt_t) + rate * strike * disc * norm_cdf(-d2)
+        delta = norm_cdf(d1) - 1.0
+    return {"delta": delta, "gamma": gamma, "theta": theta_yr / 365.0, "vega": vega}
+
+
+def prob_below(spot: float, level: float, t_years: float, vol: float, rate: float = 0.04) -> float:
+    """Risk-neutral P(S_T <= level) under lognormal dynamics. Used for
+    probability-of-profit from a structure's breakeven(s)."""
+    if level <= 0 or spot <= 0:
+        return 0.0
+    if t_years <= 0 or vol <= 0:
+        return 1.0 if spot <= level else 0.0
+    d2 = (math.log(spot / level) + (rate - 0.5 * vol * vol) * t_years) / (vol * math.sqrt(t_years))
+    return norm_cdf(-d2)
+
+
 def net_position_price(
     plan: TradePlan,
     spot: float,

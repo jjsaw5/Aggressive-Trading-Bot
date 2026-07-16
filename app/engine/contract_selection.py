@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from app.domain.enums import Direction, OptionType
+from app.domain.enums import Direction, OptionAction, OptionType, StrategyType
 from app.domain.options import OptionChain, OptionContract
 from app.engine.liquidity import (
     OptionLiquidityConfig,
@@ -202,3 +202,276 @@ def select_vertical_spread(
                 )
 
     return best
+
+
+# ---------------------------------------------------------------------------
+# Multi-leg structures (credit verticals, straddles/strangles, iron condors)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StructureLeg:
+    contract: OptionContract
+    action: OptionAction
+
+
+@dataclass(frozen=True)
+class StructureChoice:
+    """A generic, sized-later multi-leg structure.
+
+    net_debit_per_share is positive for a net debit, negative for a net credit.
+    max_profit_per_contract is None when upside is uncapped (straddle/strangle).
+    """
+
+    strategy: StrategyType
+    stance: Direction
+    legs: list[StructureLeg]
+    net_debit_per_share: float
+    max_loss_per_contract: float
+    max_profit_per_contract: float | None
+    fit_score: float
+
+
+def _choose_expiration(chain: OptionChain, as_of: date, sel: SelectionConfig) -> date | None:
+    exps = {c.expiration for c in chain.contracts if sel.min_dte <= c.dte(as_of) <= sel.max_dte}
+    if not exps:
+        return None
+    mid = (sel.min_dte + sel.max_dte) / 2
+    return min(exps, key=lambda e: abs((e - as_of).days - mid))
+
+
+def _liquid_by_delta(
+    chain: OptionChain,
+    otype: OptionType,
+    exp: date,
+    target_delta: float,
+    liq: OptionLiquidityConfig,
+) -> OptionContract | None:
+    cands = [
+        c
+        for c in chain.contracts
+        if c.option_type == otype
+        and c.expiration == exp
+        and c.greeks.delta is not None
+        and c.mid
+        and not gate_option(c, liq)
+    ]
+    if not cands:
+        return None
+    return min(cands, key=lambda c: abs(abs(c.greeks.delta) - target_delta))
+
+
+def select_credit_vertical(
+    chain: OptionChain,
+    direction: Direction,
+    as_of: date,
+    *,
+    max_risk_usd: float,
+    short_delta: float = 0.30,
+    long_delta: float = 0.15,
+    sel: SelectionConfig | None = None,
+    liq: OptionLiquidityConfig | None = None,
+) -> StructureChoice | None:
+    """Sell a ~short_delta option, buy a further-OTM wing for defined risk.
+
+    Bullish -> bull PUT spread (sell higher put, buy lower put).
+    Bearish -> bear CALL spread (sell lower call, buy higher call).
+    Credit is collected up front; max loss = (width - credit).
+    """
+    sel = sel or SelectionConfig()
+    liq = liq or OptionLiquidityConfig()
+    exp = _choose_expiration(chain, as_of, sel)
+    if exp is None:
+        return None
+
+    if direction == Direction.BULLISH:
+        otype, strategy = OptionType.PUT, StrategyType.BULL_PUT_SPREAD
+    elif direction == Direction.BEARISH:
+        otype, strategy = OptionType.CALL, StrategyType.BEAR_CALL_SPREAD
+    else:
+        return None
+
+    short = _liquid_by_delta(chain, otype, exp, short_delta, liq)
+    long = _liquid_by_delta(chain, otype, exp, long_delta, liq)
+    if not short or not long or short.mid is None or long.mid is None:
+        return None
+    # The long (protective) wing must be further OTM than the short.
+    if otype == OptionType.PUT and long.strike >= short.strike:
+        return None
+    if otype == OptionType.CALL and long.strike <= short.strike:
+        return None
+
+    width = abs(short.strike - long.strike)
+    credit = short.mid - long.mid
+    if credit <= 0 or width <= 0:
+        return None
+    max_loss = round((width - credit) * 100, 2)
+    if max_loss <= 0 or max_loss > max_risk_usd:
+        return None
+
+    rr = (credit * 100) / max_loss if max_loss > 0 else 0.0
+    return StructureChoice(
+        strategy=strategy,
+        stance=direction,
+        legs=[
+            StructureLeg(short, OptionAction.SELL_TO_OPEN),
+            StructureLeg(long, OptionAction.BUY_TO_OPEN),
+        ],
+        net_debit_per_share=round(-credit, 4),
+        max_loss_per_contract=max_loss,
+        max_profit_per_contract=round(credit * 100, 2),
+        fit_score=round(min(1.0, rr), 4),
+    )
+
+
+def select_straddle(
+    chain: OptionChain,
+    as_of: date,
+    *,
+    max_debit_usd: float,
+    sel: SelectionConfig | None = None,
+    liq: OptionLiquidityConfig | None = None,
+) -> StructureChoice | None:
+    """Long ATM call + ATM put (same strike) — a long-volatility structure."""
+    sel = sel or SelectionConfig()
+    liq = liq or OptionLiquidityConfig()
+    exp = _choose_expiration(chain, as_of, sel)
+    if exp is None or not chain.underlying_price:
+        return None
+    spot = chain.underlying_price
+
+    calls = [
+        c
+        for c in chain.contracts
+        if c.option_type == OptionType.CALL
+        and c.expiration == exp
+        and c.mid
+        and not gate_option(c, liq)
+    ]
+    if not calls:
+        return None
+    atm = min(calls, key=lambda c: abs(c.strike - spot)).strike
+    call = next((c for c in calls if c.strike == atm), None)
+    put = next(
+        (
+            c
+            for c in chain.contracts
+            if c.option_type == OptionType.PUT
+            and c.expiration == exp
+            and c.strike == atm
+            and c.mid
+            and not gate_option(c, liq)
+        ),
+        None,
+    )
+    if not call or not put or call.mid is None or put.mid is None:
+        return None
+
+    debit = call.mid + put.mid
+    max_loss = round(debit * 100, 2)
+    if max_loss <= 0 or max_loss > max_debit_usd:
+        return None
+    return StructureChoice(
+        strategy=StrategyType.LONG_STRADDLE,
+        stance=Direction.VOL_LONG,
+        legs=[
+            StructureLeg(call, OptionAction.BUY_TO_OPEN),
+            StructureLeg(put, OptionAction.BUY_TO_OPEN),
+        ],
+        net_debit_per_share=round(debit, 4),
+        max_loss_per_contract=max_loss,
+        max_profit_per_contract=None,  # uncapped
+        fit_score=0.5,
+    )
+
+
+def select_strangle(
+    chain: OptionChain,
+    as_of: date,
+    *,
+    max_debit_usd: float,
+    wing_delta: float = 0.30,
+    sel: SelectionConfig | None = None,
+    liq: OptionLiquidityConfig | None = None,
+) -> StructureChoice | None:
+    """Long ~wing_delta OTM call + OTM put — cheaper long-vol than a straddle."""
+    sel = sel or SelectionConfig()
+    liq = liq or OptionLiquidityConfig()
+    exp = _choose_expiration(chain, as_of, sel)
+    if exp is None:
+        return None
+    call = _liquid_by_delta(chain, OptionType.CALL, exp, wing_delta, liq)
+    put = _liquid_by_delta(chain, OptionType.PUT, exp, wing_delta, liq)
+    if not call or not put or call.mid is None or put.mid is None:
+        return None
+    debit = call.mid + put.mid
+    max_loss = round(debit * 100, 2)
+    if max_loss <= 0 or max_loss > max_debit_usd:
+        return None
+    return StructureChoice(
+        strategy=StrategyType.LONG_STRANGLE,
+        stance=Direction.VOL_LONG,
+        legs=[
+            StructureLeg(call, OptionAction.BUY_TO_OPEN),
+            StructureLeg(put, OptionAction.BUY_TO_OPEN),
+        ],
+        net_debit_per_share=round(debit, 4),
+        max_loss_per_contract=max_loss,
+        max_profit_per_contract=None,
+        fit_score=0.5,
+    )
+
+
+def select_iron_condor(
+    chain: OptionChain,
+    as_of: date,
+    *,
+    max_risk_usd: float,
+    short_delta: float = 0.20,
+    long_delta: float = 0.10,
+    sel: SelectionConfig | None = None,
+    liq: OptionLiquidityConfig | None = None,
+) -> StructureChoice | None:
+    """Sell an OTM put spread + an OTM call spread — a defined-risk short-vol,
+    range-bound structure. Max loss = wider wing width - net credit."""
+    sel = sel or SelectionConfig()
+    liq = liq or OptionLiquidityConfig()
+    exp = _choose_expiration(chain, as_of, sel)
+    if exp is None:
+        return None
+
+    sp = _liquid_by_delta(chain, OptionType.PUT, exp, short_delta, liq)
+    lp = _liquid_by_delta(chain, OptionType.PUT, exp, long_delta, liq)
+    sc = _liquid_by_delta(chain, OptionType.CALL, exp, short_delta, liq)
+    lc = _liquid_by_delta(chain, OptionType.CALL, exp, long_delta, liq)
+    if not (sp and lp and sc and lc):
+        return None
+    if not (lp.strike < sp.strike < sc.strike < lc.strike):
+        return None
+    if sp.mid is None or lp.mid is None or sc.mid is None or lc.mid is None:
+        return None
+
+    credit = (sp.mid + sc.mid) - (lp.mid + lc.mid)
+    put_width = sp.strike - lp.strike
+    call_width = lc.strike - sc.strike
+    width = max(put_width, call_width)
+    if credit <= 0:
+        return None
+    max_loss = round((width - credit) * 100, 2)
+    if max_loss <= 0 or max_loss > max_risk_usd:
+        return None
+    rr = (credit * 100) / max_loss if max_loss > 0 else 0.0
+    return StructureChoice(
+        strategy=StrategyType.IRON_CONDOR,
+        stance=Direction.VOL_SHORT,
+        legs=[
+            StructureLeg(sp, OptionAction.SELL_TO_OPEN),
+            StructureLeg(lp, OptionAction.BUY_TO_OPEN),
+            StructureLeg(sc, OptionAction.SELL_TO_OPEN),
+            StructureLeg(lc, OptionAction.BUY_TO_OPEN),
+        ],
+        net_debit_per_share=round(-credit, 4),
+        max_loss_per_contract=max_loss,
+        max_profit_per_contract=round(credit * 100, 2),
+        fit_score=round(min(1.0, rr), 4),
+    )

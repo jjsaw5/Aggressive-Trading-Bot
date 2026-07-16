@@ -37,6 +37,7 @@ from app.providers.base import (
     OptionsFlowProvider,
 )
 from app.quant.analytics import compute_analytics
+from app.risk.exit_plan import for_trade_plan
 from app.risk.policy import RiskPolicy
 from app.risk.portfolio import PortfolioState, evaluate_admission
 
@@ -182,11 +183,14 @@ class ScanEngine:
                     reject_reasons.extend(admission.reasons)
                     status = CandidateStatus.REJECTED
                 else:
-                    # Attach structure analytics (POP, net greeks, breakevens).
+                    # Attach structure analytics (POP, net greeks, breakevens)
+                    # and the mechanical exit plan (take-profit / stop / time-stop
+                    # net prices).
                     vol_for_pricing = iv.iv30 or 0.4
                     plan.analytics = compute_analytics(
                         plan, quote.price, vol_for_pricing, now.date()
                     )
+                    plan.exit_plan = for_trade_plan(plan)
                     trade_plan = plan
                     final_direction = plan.direction  # vol structures set VOL_*
                     thesis.direction = final_direction

@@ -60,6 +60,25 @@ Attached to every actionable plan as `TradePlan.analytics`:
 
 Greeks use the shared Black-Scholes model (`app/quant/pricing.py`).
 
+## Exit plans (mechanical take-profit / stop / time-stop)
+
+Every actionable plan carries an `ExitPlan` (`app/risk/exit_plan.py`) with the
+concrete **net prices** to close at — not just percentages:
+
+- **Debit verticals** — take profit at 50% / 75% of *max* profit; stop at −50%
+  of the debit; time-stop by 7 DTE. Close by SELLING the spread.
+- **Credit verticals / iron condors** — take profit at 50% / 75% of the *credit*
+  captured; stop at a multiple of the credit. Close by BUYING it back.
+- **Long options / straddles / strangles** — take profit at +50% / +100% of the
+  premium; stop trailing back toward cost.
+
+The engine encodes the key discipline: **you do not hold a spread to expiration.**
+Capturing 50–75% of max and leaving beats chasing the last scraps through the
+high-gamma final week. `for_trade_plan()` builds the plan from any generated
+`TradePlan`; the primitive builders (`debit_vertical_exit`, etc.) also price
+exits for existing broker positions. Levels surface in the dashboard candidate
+detail.
+
 ## Backtesting credit structures
 
 The paper engine and backtester price positions by **signed net** (debit > 0,

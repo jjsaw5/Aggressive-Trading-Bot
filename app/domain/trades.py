@@ -59,6 +59,31 @@ class SpreadAnalytics(BaseModel):
     is_credit: bool = False
 
 
+class ExitLevel(BaseModel):
+    """One concrete exit trigger with the net price to close at and its P&L."""
+
+    kind: str  # take_profit | stop | time_stop
+    label: str
+    net_price: float | None  # per-share net price of the structure to close at
+    pnl_usd: float | None  # position P&L (all contracts) if closed here
+    note: str = ""
+
+
+class ExitPlan(BaseModel):
+    """Mechanical exit plan: concrete take-profit / stop / time-stop levels so a
+    trade never needs a judgment call at management time."""
+
+    method: str  # debit_vertical | credit_vertical | long_option
+    action: str  # sell_to_close | buy_to_close
+    entry_net_per_share: float  # debit (>0) or credit magnitude
+    contracts: int
+    max_profit_usd: float | None
+    max_loss_usd: float
+    breakevens: list[float] = Field(default_factory=list)
+    time_stop_dte: int | None = None
+    levels: list[ExitLevel] = Field(default_factory=list)
+
+
 class TradePlan(BaseModel):
     """A concrete, sized, defined-risk expression of a thesis."""
 
@@ -70,6 +95,7 @@ class TradePlan(BaseModel):
     contracts: int = Field(ge=1)
     risk: RiskPlan
     analytics: SpreadAnalytics | None = None
+    exit_plan: ExitPlan | None = None
     rationale: str = ""
 
     @property

@@ -146,6 +146,20 @@
       </tr>`;
     }
 
+    function exitPlanHtml(c) {
+      const ep = c.trade_plan && c.trade_plan.exit_plan;
+      if (!ep) return "";
+      const act = ep.action === "buy_to_close" ? "Buy-to-close" : "Sell-to-close";
+      const rows = ep.levels.map(l => {
+        const price = l.net_price == null ? "—" : ("$" + fmt(l.net_price));
+        const pnl = l.pnl_usd == null ? "" : `<span class="${l.pnl_usd >= 0 ? "pos" : "neg"}">${l.pnl_usd >= 0 ? "+" : ""}$${fmt(l.pnl_usd, 0)}</span>`;
+        return `<tr><td>${l.label}</td><td class="num">${price}</td><td class="num">${pnl}</td><td class="muted">${l.note}</td></tr>`;
+      }).join("");
+      return `<div style="margin-top:10px"><b>Exit plan</b> <span class="muted">(${act}, ${ep.contracts} lot; time stop ${ep.time_stop_dte} DTE)</span>
+        <table style="margin-top:4px"><thead><tr><th>Trigger</th><th class="num">Net price</th><th class="num">P&L</th><th>Note</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+
     function detailRow(c) {
       const t = c.thesis;
       const sig = (c.signals || []).map(s => `${s.name} ${fmt(s.score)}`).join(" · ");
@@ -157,7 +171,7 @@
         <div>IV favorable</div><div>${t.iv_favorable} — ${t.iv_note || ""}</div>
         <div>Invalidation</div><div>${t.invalidation}</div>
         <div>Signals</div><div>${sig}</div>
-      </div></td></tr>`;
+      </div>${exitPlanHtml(c)}</td></tr>`;
     }
 
     function renderCandidates() {

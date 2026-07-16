@@ -98,7 +98,11 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
         Field names are validated defensively; verify against the OpenAPI spec
         before production. Alternative source: /api/stock/{ticker}/volatility/stats
         for a point-in-time iv_rank + iv_high/iv_low."""
-        payload = await self._http.get_json(f"/api/stock/{symbol.upper()}/iv-rank")
+        # timespan=1Y returns a full year (~251 rows); the default returns only
+        # the last few days (validated against the live endpoint 2026-07-16).
+        payload = await self._http.get_json(
+            f"/api/stock/{symbol.upper()}/iv-rank", {"timespan": "1Y"}
+        )
         rows = payload.get("data", payload) if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
             return IVHistory(symbol=symbol.upper(), points=[], source="unusual_whales")
@@ -144,12 +148,22 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
                 if raw_type.startswith("p")
                 else None
             )
-            at_ask = r.get("at_ask")
-            sentiment = _f(r, "sentiment")
-            if sentiment is None and otype is not None:
-                # Derive a coarse sentiment when UW doesn't supply one.
+            # Aggression: which side of the book the premium hit (validated
+            # against live fields total_ask_side_prem / total_bid_side_prem).
+            ask_prem = _f(r, "total_ask_side_prem") or 0.0
+            bid_prem = _f(r, "total_bid_side_prem") or 0.0
+            at_ask: bool | None = None
+            ask_frac = 0.5
+            if ask_prem + bid_prem > 0:
+                at_ask = ask_prem > bid_prem
+                ask_frac = ask_prem / (ask_prem + bid_prem)
+
+            sentiment: float | None = None
+            if otype is not None:
                 sign = 1.0 if otype == OptionType.CALL else -1.0
-                sentiment = sign * (0.6 if at_ask else 0.3)
+                # Ask-side buying is more conviction; bid-side less. [-1, 1].
+                sentiment = round(sign * (0.25 + 0.55 * ask_frac), 3)
+
             alerts.append(
                 FlowAlert(
                     symbol=str(r.get("ticker") or r.get("symbol") or symbol or "").upper(),
@@ -157,13 +171,13 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider):
                     strike=_f(r, "strike"),
                     expiration=_parse_date(r.get("expiry") or r.get("expiration")),
                     premium=_f(r, "total_premium", "premium"),
-                    size=_i(r, "size", "volume"),
+                    size=_i(r, "total_size", "size", "volume"),
                     open_interest=_i(r, "open_interest", "oi"),
-                    is_sweep=bool(r.get("is_sweep") or r.get("sweep") or False),
-                    is_opening=r.get("is_opening"),
+                    is_sweep=bool(r.get("has_sweep") or r.get("is_sweep") or False),
+                    is_opening=r.get("all_opening_trades", r.get("is_opening")),
                     at_ask=at_ask,
                     sentiment=sentiment,
-                    ts=_parse_dt(r.get("executed_at") or r.get("created_at") or r.get("timestamp")),
+                    ts=_parse_dt(r.get("created_at") or r.get("executed_at") or r.get("timestamp")),
                     source="unusual_whales",
                 )
             )

@@ -1,7 +1,25 @@
 # Unusual Whales (UW)
 
 Research verified against the live official docs and published OpenAPI spec
-(July 2026). Capability implemented: **options flow**.
+(July 2026). Capabilities implemented: **options flow** and **IV-rank history**.
+
+> **Live-validated 2026-07-16** with a real key. Field mapping was corrected
+> against the actual responses:
+> - Flow (`/api/stock/{t}/flow-alerts`): real fields are `ticker`, `type`,
+>   `strike`, `expiry`, `total_premium`, `total_size`, `open_interest`,
+>   `has_sweep`, `all_opening_trades`, `total_ask_side_prem` /
+>   `total_bid_side_prem`, `created_at`. Aggression (`at_ask`) and `sentiment`
+>   are derived from the ask/bid-side premium split; sweeps from `has_sweep`;
+>   opening from `all_opening_trades`.
+> - IV history (`/api/stock/{t}/iv-rank`): the default returns only ~5 recent
+>   rows — pass **`timespan=1Y`** for the full ~251-day series (fields `date`,
+>   `close`, `volatility`, `iv_rank_1y`). The engine computes IV rank/percentile
+>   from the `volatility` series; UW's own `iv_rank_1y` is available as a
+>   cross-check.
+>
+> Enable with `PROVIDER_OPTIONS_FLOW=unusual_whales`,
+> `PROVIDER_IV_HISTORY=unusual_whales`, and `UNUSUAL_WHALES_API_KEY` in the
+> environment (never in committed code).
 
 ## Base URL & versioning
 - Base: `https://api.unusualwhales.com`

@@ -92,6 +92,17 @@ class FlowAlert(BaseModel):
     source: str = "unknown"
 
 
+class OptionMarkPoint(BaseModel):
+    """A single historical mark for one option contract, for backtest replay."""
+
+    option_symbol: str
+    ts: datetime
+    mark: float  # per-share settlement/close mark
+    underlying_price: float | None = None
+    implied_volatility: float | None = None
+    source: str = "unknown"
+
+
 class IVContext(BaseModel):
     """Implied-volatility context used to judge whether IV is favorable."""
 

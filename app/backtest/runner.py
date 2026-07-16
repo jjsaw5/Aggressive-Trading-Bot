@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.backtest.engine import BacktestResult, backtest_trade
+from app.backtest.historical import HistoricalConfig, replay_symbol
 from app.backtest.performance import (
     PerformanceStats,
     by_direction,
@@ -26,6 +27,8 @@ from app.backtest.performance import (
 from app.domain.candidates import TradeCandidate
 from app.engine.universe import UniverseConfig
 from app.logging_config import get_logger
+from app.providers import registry
+from app.risk.policy import RiskPolicy
 from app.services.scan_service import run_scan
 
 log = get_logger(__name__)
@@ -43,9 +46,11 @@ class BacktestReport:
     overall: PerformanceStats
     by_strategy: list[PerformanceStats]
     by_direction: list[PerformanceStats]
+    mode: str = "simulated"
 
     def as_dict(self) -> dict:
         return {
+            "mode": self.mode,
             "num_candidates": self.num_candidates,
             "num_paths": self.num_paths,
             "num_trades": self.num_trades,
@@ -131,10 +136,61 @@ async def run_backtest(
         overall=overall(results),
         by_strategy=by_strategy(results),
         by_direction=by_direction(results),
+        mode="simulated",
     )
     log.info(
         "backtest_complete",
+        mode="simulated",
         candidates=len(actionable),
+        trades=len(results),
+        win_rate=round(report.overall.win_rate, 3),
+        expectancy=round(report.overall.expectancy_usd, 2),
+    )
+    return report
+
+
+async def run_historical_backtest(
+    universe: UniverseConfig | None = None,
+    *,
+    lookback_days: int = 365,
+    config: HistoricalConfig | None = None,
+    policy: RiskPolicy | None = None,
+) -> BacktestReport:
+    """Backtest a trend-following defined-risk-vertical strategy over REAL
+    historical underlying paths, sourced through the market-data provider.
+
+    With `PROVIDER_MARKET_DATA=fmp` (or robinhood) this uses real market history;
+    with the mock it uses the deterministic synthetic history. Same code path.
+    """
+    universe = universe or UniverseConfig()
+    config = config or HistoricalConfig()
+    policy = policy or RiskPolicy.from_settings()
+    market = registry.market_data_provider()
+
+    results: list[BacktestResult] = []
+    symbols = universe.normalized_symbols()
+    for symbol in symbols:
+        try:
+            history = await market.get_price_history(symbol, lookback_days=lookback_days)
+        except Exception as exc:
+            log.warning("history_fetch_failed", symbol=symbol, error=str(exc))
+            continue
+        results.extend(replay_symbol(symbol, history, policy, config))
+
+    report = BacktestReport(
+        num_candidates=len(symbols),
+        num_paths=0,
+        num_trades=len(results),
+        overall=overall(results),
+        by_strategy=by_strategy(results),
+        by_direction=by_direction(results),
+        mode="historical",
+    )
+    log.info(
+        "historical_backtest_complete",
+        mode="historical",
+        source=market.name,
+        symbols=len(symbols),
         trades=len(results),
         win_rate=round(report.overall.win_rate, 3),
         expectancy=round(report.overall.expectancy_usd, 2),

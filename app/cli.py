@@ -13,7 +13,7 @@ import argparse
 import asyncio
 import json
 
-from app.backtest.runner import run_backtest
+from app.backtest.runner import run_backtest, run_historical_backtest
 from app.logging_config import configure_logging
 from app.services.scan_service import run_scan
 
@@ -42,18 +42,28 @@ async def _scan(as_json: bool, actionable_only: bool) -> None:
     print()
 
 
-async def _backtest(num_paths: int, as_json: bool) -> None:
-    report = await run_backtest(num_paths=num_paths)
+async def _backtest(num_paths: int, as_json: bool, historical: bool) -> None:
+    if historical:
+        report = await run_historical_backtest()
+    else:
+        report = await run_backtest(num_paths=num_paths)
     if as_json:
         print(json.dumps(report.as_dict(), indent=2))
         return
 
     o = report.overall
-    print(
-        f"\nBacktest: {report.num_candidates} candidates x {report.num_paths} "
-        f"simulated paths = {report.num_trades} trades"
-    )
-    print("(zero-drift GBM simulation — structural edge only; not real option history)\n")
+    if report.mode == "historical":
+        print(
+            f"\nHistorical backtest: {report.num_trades} trades over real "
+            f"underlying paths ({report.num_candidates} symbols)"
+        )
+        print("(trend-following defined-risk verticals; legs repriced by BS at realized vol)\n")
+    else:
+        print(
+            f"\nBacktest: {report.num_candidates} candidates x {report.num_paths} "
+            f"simulated paths = {report.num_trades} trades"
+        )
+        print("(zero-drift GBM simulation — structural edge only; not real option history)\n")
     print(
         f"  OVERALL  win {o.win_rate:.0%} | expectancy ${o.expectancy_usd:+.2f} | "
         f"PF {o.profit_factor if o.profit_factor is None else round(o.profit_factor, 2)} | "
@@ -77,8 +87,13 @@ def main() -> None:
     scan_p.add_argument("--json", action="store_true", help="JSON output")
     scan_p.add_argument("--actionable", action="store_true", help="Only actionable candidates")
 
-    bt_p = sub.add_parser("backtest", help="Backtest actionable candidates (simulated)")
+    bt_p = sub.add_parser("backtest", help="Backtest candidates (simulated or historical)")
     bt_p.add_argument("--paths", type=int, default=200, help="Monte-Carlo paths per candidate")
+    bt_p.add_argument(
+        "--historical",
+        action="store_true",
+        help="Replay real underlying price history instead of simulating paths",
+    )
     bt_p.add_argument("--json", action="store_true", help="JSON output")
 
     sub.add_parser("providers", help="Show provider configuration status")
@@ -88,7 +103,7 @@ def main() -> None:
     if args.command == "scan":
         asyncio.run(_scan(args.json, args.actionable))
     elif args.command == "backtest":
-        asyncio.run(_backtest(args.paths, args.json))
+        asyncio.run(_backtest(args.paths, args.json, args.historical))
     elif args.command == "providers":
         from app.providers import registry
 

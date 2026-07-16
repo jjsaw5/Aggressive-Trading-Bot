@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
+from datetime import date
 
 from app.domain.market import (
     CatalystEvent,
@@ -22,7 +23,7 @@ from app.domain.market import (
     PriceHistory,
     Quote,
 )
-from app.domain.options import FlowAlert, IVContext, OptionChain
+from app.domain.options import FlowAlert, IVContext, OptionChain, OptionMarkPoint
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,25 @@ class OptionsFlowProvider(Provider):
     async def get_flow_alerts(
         self, symbol: str | None = None, unusual_only: bool = True, limit: int = 100
     ) -> list[FlowAlert]: ...
+
+
+class HistoricalOptionsProvider(Provider):
+    """Historical per-contract option marks for production backtesting.
+
+    This is the slot a true historical options-quote feed plugs into (e.g. a UW
+    historical option-trades add-on, Polygon/Databento/ORATS, or a broker's
+    historical option data). When configured, the backtester replays these real
+    marks directly; otherwise it falls back to repricing real underlying paths
+    with Black-Scholes (see app/backtest/historical.py).
+
+    No such feed is confirmed/available in the current stack, so this interface
+    intentionally has no built implementation yet — do not fabricate one.
+    """
+
+    @abc.abstractmethod
+    async def get_option_mark_series(
+        self, option_symbol: str, start: date, end: date
+    ) -> list[OptionMarkPoint]: ...
 
 
 class CalendarProvider(Provider):

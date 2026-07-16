@@ -60,11 +60,13 @@ Attached to every actionable plan as `TradePlan.analytics`:
 
 Greeks use the shared Black-Scholes model (`app/quant/pricing.py`).
 
-## Known limitation
+## Backtesting credit structures
 
-The **simulated backtester** currently models long *debit* structures only
-(long option, debit vertical, straddle, strangle). Credit spreads and iron
-condors have credit-oriented exits (manage at a % of credit captured) that the
-debit-oriented paper/backtest exit logic does not yet handle, so `run_backtest`
-**skips** them (logged) rather than reporting wrong numbers. Credit-aware exit
-handling in the paper engine is the next backtest enhancement.
+The paper engine and backtester price positions by **signed net** (debit > 0,
+credit < 0), so P&L = `(current − entry) × contracts × 100` is correct for both.
+Exits are credit-aware: `check_exit` measures P&L as a fraction of the capital
+at stake via `abs(entry)`, so a +50% profit target means "capture 50% of the
+debit paid" for a long and "capture 50% of the credit received" for a short.
+Credit spreads and iron condors are therefore scored end-to-end — e.g. a bull
+put spread wins on a rally and an iron condor wins when the underlying stays
+range-bound. `run_backtest` no longer skips them.

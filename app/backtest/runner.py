@@ -110,17 +110,12 @@ async def run_backtest(
 ) -> BacktestReport:
     candidates = await run_scan(universe=universe)
     actionable = [c for c in candidates if c.is_actionable]
-    # The simulated engine models long DEBIT structures (net_debit > 0). Credit
-    # spreads / iron condors have credit-oriented exits it does not yet handle,
-    # so skip them here rather than report wrong numbers.
-    debit = [c for c in actionable if c.trade_plan and c.trade_plan.net_debit > 0]
-    skipped = len(actionable) - len(debit)
-    if skipped:
-        log.info("backtest_skipped_credit_structures", count=skipped)
+    # The engine now prices structures by SIGNED net, so credit spreads and iron
+    # condors are scored with credit-aware exits (manage at a % of credit).
     rng = np.random.default_rng(seed)
 
     results: list[BacktestResult] = []
-    for c in debit:
+    for c in actionable:
         plan = c.trade_plan
         assert plan is not None
         vol = _candidate_vol(c)
@@ -137,7 +132,7 @@ async def run_backtest(
             results.append(res)
 
     report = BacktestReport(
-        num_candidates=len(debit),
+        num_candidates=len(actionable),
         num_paths=num_paths,
         num_trades=len(results),
         overall=overall(results),

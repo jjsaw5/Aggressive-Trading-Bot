@@ -38,7 +38,9 @@ strangles, and iron condors, choosing debit vs credit by IV rank (and vol
 structures for neutral theses with the right IV/catalyst setup). Every plan
 carries computed analytics — probability of profit, net greeks, breakeven(s),
 is_credit — via `app/quant/analytics.py`. See [`docs/STRATEGIES.md`](STRATEGIES.md).
-**Next:** credit-aware exits so the backtester can score credit structures too.
+Credit-aware exits are now built too: the paper engine and backtester price by
+signed net and manage credit structures at a % of credit captured, so iron
+condors and credit verticals are scored end-to-end.
 
 ### Real IV-rank / IV-percentile sourcing — built
 IV rank and percentile are now **computed** (`app/quant/iv.py`) from a real IV
@@ -55,20 +57,15 @@ path was made vol-coherent with its option IV. `PROVIDER_IV_HISTORY` routes it.
 Options chains + Greeks + account state via a verified `robin_stocks` surface
 (or alternative). Confirm ToS, auth/MFA, and field mapping. See the provider doc.
 
-### 2. Credit-aware paper/backtest exits
-Extend the paper engine and backtester to score credit structures (manage at a
-% of credit captured), so iron condors and credit verticals get historical
-performance too — the last gap from the structures work.
-
-### 3. Persistence repository + history API
+### 2. Persistence repository + history API
 Replace the in-memory store with the DB repository (models/migrations exist);
 add scan history, candidate/proposal history, and paper-trade P&L endpoints.
 
-### 4. Alerts
+### 3. Alerts
 Push notable candidates/flow to a channel (email/Slack) behind the same
 provider-style abstraction.
 
-### 5. Dashboard
+### 4. Dashboard
 Next.js/React front end over the API: ranked candidates, thesis breakdown,
 risk plan, paper P&L, provider/licensing status.
 

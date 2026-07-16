@@ -67,8 +67,10 @@ def backtest_trade(
             stored entry prices and the model injects a spurious edge.
     """
     slippage = slippage or SlippageModel()
+    # Signed net: debit > 0, credit < 0. No zero clamp — a credit structure's
+    # net is legitimately negative and must stay so for correct P&L.
     if reprice_entry and path_spots:
-        entry_net = max(0.01, net_position_price(plan, path_spots[0], entry_dte, vol, rate))
+        entry_net = net_position_price(plan, path_spots[0], entry_dte, vol, rate)
     else:
         entry_net = plan_entry_net_per_share(plan)
     trade = open_paper_trade(plan, scan_id, entry_mid=entry_net, entry_spread=0.0, slippage=slippage)
@@ -79,7 +81,7 @@ def backtest_trade(
 
     for day, spot in enumerate(path_spots):
         dte = entry_dte - day
-        net = max(0.0, net_position_price(plan, spot, dte, vol, rate))
+        net = net_position_price(plan, spot, dte, vol, rate)
         trajectory.append(net)
 
         if day == 0:

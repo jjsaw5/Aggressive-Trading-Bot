@@ -26,12 +26,18 @@ class SlippageModel:
     min_slippage_per_share: float = 0.01
 
     def entry_fill(self, mid: float, spread: float) -> float:
+        # `mid` is the SIGNED net (debit > 0, credit < 0). Slippage always
+        # worsens the entry: +slip moves a debit up (pay more) and a credit
+        # toward zero (receive less), so this is correct for both.
         slip = max(self.min_slippage_per_share, spread * self.spread_fraction / 2)
-        return round(mid + slip, 4)  # buyer pays up
+        return round(mid + slip, 4)
 
     def exit_fill(self, mid: float, spread: float) -> float:
+        # Closing always worsens: -slip lowers a debit sale and pushes a credit
+        # buy-back further negative. Correct for both signs; no zero clamp (a
+        # credit structure's net is legitimately negative).
         slip = max(self.min_slippage_per_share, spread * self.spread_fraction / 2)
-        return round(max(0.0, mid - slip), 4)  # seller receives less
+        return round(mid - slip, 4)
 
 
 def open_paper_trade(
@@ -67,11 +73,18 @@ def update_mark(trade: PaperTrade, current_mid: float) -> PaperTrade:
 
 
 def check_exit(trade: PaperTrade, current_mid: float) -> ExitReason | None:
-    """Evaluate the plan's exit rules against the current mark."""
+    """Evaluate the plan's exit rules against the current (signed net) mark.
+
+    `change` is P&L as a fraction of the capital at stake — debit paid or credit
+    received — via `abs(entry_fill)` in the denominator. So a +50% profit target
+    means "captured 50% of the debit" for a long and "captured 50% of the
+    credit" for a short, and the sign of (current - entry) is P&L direction for
+    both. This makes exits correct for credit spreads and iron condors too.
+    """
     entry = trade.entry_fill
-    if entry <= 0:
+    if abs(entry) < 1e-6:
         return None
-    change = (current_mid - entry) / entry
+    change = (current_mid - entry) / abs(entry)
     risk = trade.trade_plan.risk
     if change >= risk.profit_target_pct:
         return ExitReason.PROFIT_TARGET

@@ -20,6 +20,7 @@ from app.config import settings
 from app.events.bus import get_event_bus
 from app.events.types import provider_failure
 from app.logging_config import get_logger
+from app.observability.metrics import get_metrics
 from app.providers.ratelimit import get_limiter
 from app.scheduling.clock import MarketClock, MarketSession
 from app.scheduling.schedule import TierSchedule, load_schedule
@@ -84,15 +85,21 @@ class SessionScheduler:
     async def tick(self, funnel: FunnelEngine, *, now=None, mono: float | None = None) -> list[Tier]:
         session = self.clock.session(now)
         mono = mono if mono is not None else _time.monotonic()
+        metrics = get_metrics()
+        metrics.inc("scheduler.ticks")
+        metrics.inc(f"scheduler.session.{session.value}")
         ran: list[Tier] = []
         for tier in self.due_tiers(session, mono):
             if not self._allowed(tier):
+                metrics.inc("scheduler.throttled")
                 continue
             try:
                 await self._run_tier(funnel, tier)
                 ran.append(tier)
+                metrics.inc(f"scheduler.tier.{tier.name.lower()}.runs")
             except Exception as exc:  # noqa: BLE001 - a tier failure must not stop the loop
                 log.error("tier_run_failed", tier=tier.name, error=str(exc))
+                metrics.inc("scheduler.tier_failures")
                 if settings.events_enabled:
                     await get_event_bus().publish(
                         provider_failure(f"tier:{tier.name}", error=str(exc))

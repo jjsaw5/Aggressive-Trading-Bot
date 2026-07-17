@@ -17,6 +17,7 @@ from app.engine.universe import UniverseConfig
 from app.events.bus import get_event_bus
 from app.events.types import Event, EventType
 from app.logging_config import get_logger
+from app.observability.metrics import get_metrics
 from app.providers import registry
 from app.tiers.models import PositionRisk, Tier, TierMember
 from app.tiers.store import TierStore
@@ -102,6 +103,9 @@ class FunnelEngine:
     #     the session scheduler can run them at independent cadences) ---
     async def run_tier1(self, symbols: list[str] | None = None) -> list[str]:
         """Tier 1 sweep -> promote top passers to the watchlist. Returns watchlist."""
+        from time import perf_counter
+
+        _t0 = perf_counter()
         t1 = await self.tier1.run(symbols)
         passed = [r for r in t1 if r.passed]
         await self.store.replace(
@@ -123,10 +127,18 @@ class FunnelEngine:
         )
         self._last_tier1_count = len(t1)
         self._last_tier1_passed = len(passed)
+        m = get_metrics()
+        m.inc("funnel.tier1.runs")
+        m.observe("funnel.tier1.ms", (perf_counter() - _t0) * 1000)
+        m.set_gauge("funnel.tier1.evaluated", len(t1))
+        m.set_gauge("funnel.watchlist.size", len(watch))
         return watch
 
     async def run_tier2(self) -> list[str]:
         """Score the current watchlist -> promote top to candidates. Returns candidates."""
+        from time import perf_counter
+
+        _t0 = perf_counter()
         watch = await self.store.symbols(Tier.WATCHLIST)
         if not watch:
             return []
@@ -148,19 +160,33 @@ class FunnelEngine:
             [TierMember(symbol=r.symbol, tier=Tier.CANDIDATES, score=r.score)
              for r in t2[: self.candidates_max]],
         )
+        m = get_metrics()
+        m.inc("funnel.tier2.runs")
+        m.observe("funnel.tier2.ms", (perf_counter() - _t0) * 1000)
+        m.set_gauge("funnel.candidates.size", len(cand))
         return cand
 
     async def run_tier3(self) -> list[TradeCandidate]:
         """Deep-evaluate the current candidate set."""
+        from time import perf_counter
+
+        _t0 = perf_counter()
         cand = await self.store.symbols(Tier.CANDIDATES)
-        return await self.tier3.run(cand)
+        result = await self.tier3.run(cand)
+        m = get_metrics()
+        m.inc("funnel.tier3.runs")
+        m.observe("funnel.tier3.ms", (perf_counter() - _t0) * 1000)
+        m.set_gauge("funnel.tier3.actionable", sum(c.is_actionable for c in result))
+        return result
 
     async def run_tier4(self) -> list[PositionRisk]:
         """Monitor open positions and publish risk events."""
         import asyncio
+        from time import perf_counter
 
         from app.db import repository
 
+        _t0 = perf_counter()
         trades = await asyncio.to_thread(repository.list_paper_trades, 200)
         risks = await self.tier4.run(trades)
         await self.store.replace(
@@ -169,6 +195,10 @@ class FunnelEngine:
              for r in risks],
         )
         await self._publish_position_events(risks)
+        m = get_metrics()
+        m.inc("funnel.tier4.runs")
+        m.observe("funnel.tier4.ms", (perf_counter() - _t0) * 1000)
+        m.set_gauge("funnel.positions.size", len(risks))
         return risks
 
     async def run_once(self, symbols: list[str] | None = None) -> FunnelReport:

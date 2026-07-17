@@ -60,16 +60,22 @@ with a lower-priced universe (`AFFORDABLE_UNIVERSE`). See
 providers/           external data behind capability interfaces (swappable)
   base.py            MarketData / Fundamentals / OptionsChain / OptionsFlow /
                      Calendar / Brokerage  + ProviderMeta (auth/delay/limits/license)
+  _http.py           shared pooled client · TTL cache · rate limit · budget · priority
+  cache.py ratelimit.py   response cache (memory/Redis) · token bucket · budget
   mock/              deterministic synthetic provider (runs with zero keys)
   fmp/ unusual_whales/ robinhood/   grounded live clients
 engine/              universe → liquidity gate → signals → scoring → contract → candidate
+tiers/               four-tier funnel: broad → watchlist → candidates → positions
+events/              async event bus + change detectors (price/flow/regime/catalyst)
+scheduling/          ET market clock · declarative per-session cadences · session scheduler
+observability/       metrics registry (counters/gauges/timings) → /metrics + Ops panel
 risk/                policy · position sizing · portfolio heat · trade plans
 modes/               execution guard (kill-switch) · proposal lifecycle
 analytics/           decision snapshots · outcome resolution · calibration scorecard
-services/            scan orchestration · paper engine (MFE/MAE) · outcomes · store
-api/                 FastAPI routes (health, config, scans, proposals, outcomes)
+services/            scan orchestration · paper engine (MFE/MAE) · outcomes · funnel · events
+api/                 FastAPI routes (health, config, scans, proposals, outcomes, tiers, metrics)
 db/ alembic/         SQLAlchemy models + migrations (durable backend: Turso/libSQL)
-scheduler/           periodic research scans + outcome resolution (APScheduler)
+scheduler/           simple periodic scan OR session-aware tiered scheduler (gated)
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full picture,

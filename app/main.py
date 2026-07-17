@@ -16,6 +16,7 @@ from app.api.routes import (
     backtest,
     dashboard,
     health,
+    metrics,
     outcomes,
     paper,
     proposals,
@@ -70,4 +71,5 @@ app.include_router(backtest.router)
 app.include_router(alerts.router)
 app.include_router(outcomes.router)
 app.include_router(tiers.router)
+app.include_router(metrics.router)
 app.include_router(dashboard.router)

@@ -76,6 +76,7 @@
       <button data-tab="proposals">Proposals</button>
       <button data-tab="paper">Paper trades</button>
       <button data-tab="calibration">Calibration</button>
+      <button data-tab="ops">Ops</button>
     </div>
     <div id="view" class="overflow"><div class="empty">Run a scan to see ranked candidates.</div></div>
   </main>
@@ -265,12 +266,72 @@
            <th class="num">Win rate</th></tr></thead><tbody>${dirRows}</tbody></table>`;
     }
 
+    async function renderOps() {
+      const m = await api("GET", "/metrics");
+      const c = m.cache || {}, rl = m.rate_limit || {}, ev = m.events || {}, t = m.tiers || {};
+      const reg = m.registry || { counters: {}, gauges: {}, timings: {} };
+
+      const badges =
+        `<div style="margin-bottom:12px">
+          <span class="badge">cache ${c.hit_rate == null ? "—" : (c.hit_rate * 100).toFixed(0) + "%"} hit</span>
+          <span class="badge">cache hits ${c.hits ?? 0}/${(c.hits ?? 0) + (c.misses ?? 0)}</span>
+          <span class="badge">rate-limit ${rl.enabled ? "on" : "off"}</span>
+          <span class="badge">events ${ev.published ?? 0}</span>
+          <span class="badge ${ev.errors ? "warn" : ""}">event errors ${ev.errors ?? 0}</span>
+        </div>`;
+
+      const tierRow = `<b>Tier membership</b>
+        <table style="margin:4px 0 16px"><thead><tr><th>Broad</th><th>Watchlist</th><th>Candidates</th><th>Positions</th></tr></thead>
+        <tbody><tr><td class="num">${t.broad ?? 0}</td><td class="num">${t.watchlist ?? 0}</td>
+        <td class="num">${t.candidates ?? 0}</td><td class="num">${t.positions ?? 0}</td></tr></tbody></table>`;
+
+      // Provider metrics assembled from registry counters/timings.
+      const provs = {};
+      for (const [k, v] of Object.entries(reg.counters || {})) {
+        const mm = k.match(/^provider\.([^.]+)\.(requests|errors|cache_hits)$/);
+        if (mm) { (provs[mm[1]] ??= {}); provs[mm[1]][mm[2]] = v; }
+      }
+      for (const [k, v] of Object.entries(reg.timings || {})) {
+        const mm = k.match(/^provider\.([^.]+)\.latency_ms$/);
+        if (mm) { (provs[mm[1]] ??= {}); provs[mm[1]].latency = v; }
+      }
+      const provRows = Object.entries(provs).map(([name, p]) => `<tr>
+        <td>${name}</td><td class="num">${p.requests ?? 0}</td>
+        <td class="num">${p.cache_hits ?? 0}</td>
+        <td class="num ${p.errors ? "neg" : ""}">${p.errors ?? 0}</td>
+        <td class="num">${p.latency ? p.latency.avg_ms + " / " + p.latency.p95_ms : "—"}</td></tr>`).join("");
+      const provTable = `<b>Providers</b> <span class="muted">requests · cache hits · errors · latency avg/p95 ms</span>
+        <table style="margin:4px 0 16px"><thead><tr><th>Provider</th><th class="num">Req</th>
+        <th class="num">Cache</th><th class="num">Err</th><th class="num">Latency</th></tr></thead>
+        <tbody>${provRows || `<tr><td colspan="5" class="muted">no provider calls yet</td></tr>`}</tbody></table>`;
+
+      // Funnel timings + scheduler activity.
+      const funnelRows = ["tier1", "tier2", "tier3", "tier4"].map(tk => {
+        const tm = (reg.timings || {})[`funnel.${tk}.ms`];
+        const runs = (reg.counters || {})[`funnel.${tk}.runs`] || 0;
+        return `<tr><td>${tk}</td><td class="num">${runs}</td>
+          <td class="num">${tm ? tm.avg_ms : "—"}</td><td class="num">${tm ? tm.p95_ms : "—"}</td></tr>`;
+      }).join("");
+      const funnelTable = `<b>Funnel timings</b> <span class="muted">runs · avg/p95 ms</span>
+        <table style="margin:4px 0 16px"><thead><tr><th>Tier</th><th class="num">Runs</th>
+        <th class="num">Avg ms</th><th class="num">p95 ms</th></tr></thead><tbody>${funnelRows}</tbody></table>`;
+
+      const evRows = Object.entries(ev.by_type || {}).map(([k, v]) =>
+        `<tr><td>${k}</td><td class="num">${v}</td></tr>`).join("");
+      const evTable = `<b>Event volume</b>
+        <table style="margin-top:4px"><thead><tr><th>Type</th><th class="num">Count</th></tr></thead>
+        <tbody>${evRows || `<tr><td colspan="2" class="muted">none</td></tr>`}</tbody></table>`;
+
+      return badges + tierRow + provTable + funnelTable + evTable;
+    }
+
     async function render() {
       showErr(null);
       try {
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
         else if (state.tab === "proposals") $("#view").innerHTML = await renderProposals();
         else if (state.tab === "calibration") $("#view").innerHTML = await renderCalibration();
+        else if (state.tab === "ops") $("#view").innerHTML = await renderOps();
         else $("#view").innerHTML = await renderPaper();
       } catch (e) { showErr(e); }
     }

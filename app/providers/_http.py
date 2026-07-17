@@ -29,6 +29,7 @@ from tenacity import (
 )
 
 from app.logging_config import get_logger
+from app.observability.metrics import get_metrics
 from app.providers.cache import MISS, get_response_cache
 from app.providers.ratelimit import current_priority, get_limiter
 
@@ -150,12 +151,14 @@ class AsyncHTTP:
         reraise=True,
     )
     async def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        metrics = get_metrics()
         # 1) Serve from cache when fresh (keyed on non-auth params only).
         cache = get_response_cache()
         key = cache.key(self.provider, path, params) if cache.enabled else None
         if key is not None:
             hit = await cache.get(key)
             if hit is not MISS:
+                metrics.inc(f"provider.{self.provider}.cache_hits")
                 return hit
 
         # 2) Acquire rate-limit/budget permission for a REAL request. Priority
@@ -163,16 +166,21 @@ class AsyncHTTP:
         await get_limiter().acquire(self.provider, current_priority.get())
 
         merged = {**self._default_params, **(params or {})}
-        resp = await self._client.get(path, params=merged)
+        metrics.inc(f"provider.{self.provider}.requests")
+        with metrics.timer(f"provider.{self.provider}.latency_ms"):
+            resp = await self._client.get(path, params=merged)
         self._capture_rate_limit(resp)
         if resp.status_code == 429:
+            metrics.inc(f"provider.{self.provider}.errors")
             log.warning("rate_limited", provider=self.provider, path=path)
             raise RateLimitedError(self.provider, 429, str(resp.url), resp.text)
         if resp.status_code >= 500:
             # Transient server-side failure — retry with backoff.
+            metrics.inc(f"provider.{self.provider}.errors")
             raise ServerError(self.provider, resp.status_code, str(resp.url), resp.text)
         if resp.status_code >= 400:
             # Client error (auth, bad params) — do not retry.
+            metrics.inc(f"provider.{self.provider}.errors")
             raise ProviderHTTPError(self.provider, resp.status_code, str(resp.url), resp.text)
 
         data = resp.json()

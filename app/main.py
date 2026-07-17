@@ -19,6 +19,7 @@ from app.api.routes import (
     metrics,
     outcomes,
     paper,
+    positions,
     proposals,
     scans,
     tiers,
@@ -72,4 +73,5 @@ app.include_router(alerts.router)
 app.include_router(outcomes.router)
 app.include_router(tiers.router)
 app.include_router(metrics.router)
+app.include_router(positions.router)
 app.include_router(dashboard.router)

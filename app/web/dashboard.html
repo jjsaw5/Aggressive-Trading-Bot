@@ -73,6 +73,7 @@
     <div id="err" class="err"></div>
     <div class="tabs">
       <button data-tab="candidates" class="active">Candidates</button>
+      <button data-tab="positions">Positions</button>
       <button data-tab="proposals">Proposals</button>
       <button data-tab="paper">Paper trades</button>
       <button data-tab="calibration">Calibration</button>
@@ -100,10 +101,11 @@
 
     // Ops panel auto-refresh: poll /metrics every 5s while the Ops tab is open.
     let opsTimer = null;
+    const LIVE_TABS = ["ops", "positions"];
     function manageOpsRefresh() {
       if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
-      if (state.tab === "ops") {
-        opsTimer = setInterval(() => { if (state.tab === "ops") render(); }, 5000);
+      if (LIVE_TABS.includes(state.tab)) {
+        opsTimer = setInterval(() => { if (LIVE_TABS.includes(state.tab)) render(); }, 5000);
       }
     }
 
@@ -275,6 +277,32 @@
            <th class="num">Win rate</th></tr></thead><tbody>${dirRows}</tbody></table>`;
     }
 
+    async function renderPositions() {
+      const ps = await api("GET", "/positions");
+      if (!ps.length) return `<div class="empty">No open positions tracked. Import via POST /paper/import.</div>`;
+      const badge = (a) => {
+        const map = { stop: "neg", take_profit: "pos", time_stop: "warn", unmarked: "warn", hold: "" };
+        const label = { stop: "STOP — close", take_profit: "TAKE PROFIT", time_stop: "TIME STOP",
+                        unmarked: "UNMARKED", hold: "hold" };
+        return `<span class="badge ${map[a] || ''}">${label[a] || a}</span>`;
+      };
+      const rows = ps.map(p => `<tr>
+        <td><strong>${p.symbol}</strong></td>
+        <td>${p.strategy} <span class="muted">x${p.contracts}</span></td>
+        <td class="num">${fmt(p.entry_net)}</td>
+        <td class="num">${p.current_net == null ? "—" : fmt(p.current_net)}</td>
+        <td class="num ${cls(p.pnl_usd)}">${p.pnl_usd == null ? "—" : (p.pnl_usd >= 0 ? "+" : "") + "$" + fmt(p.pnl_usd, 0)}</td>
+        <td class="num ${cls(p.pnl_pct)}">${p.pnl_pct == null ? "—" : (p.pnl_pct >= 0 ? "+" : "") + (p.pnl_pct * 100).toFixed(0) + "%"}</td>
+        <td class="num">${p.dte == null ? "—" : p.dte}</td>
+        <td>${badge(p.action)} <span class="muted">${p.note || ""}</span></td>
+      </tr>`).join("");
+      return `<div style="margin-bottom:10px"><span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <span class="muted">Tier 4 marks each position from the live chain; exit action is mechanical.</span></div>
+        <table><thead><tr><th>Sym</th><th>Structure</th><th class="num">Entry</th><th class="num">Now</th>
+        <th class="num">P&amp;L</th><th class="num">%</th><th class="num">DTE</th><th>Action</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
     async function renderOps() {
       const m = await api("GET", "/metrics");
       const c = m.cache || {}, rl = m.rate_limit || {}, ev = m.events || {}, t = m.tiers || {};
@@ -339,6 +367,7 @@
       showErr(null);
       try {
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
+        else if (state.tab === "positions") $("#view").innerHTML = await renderPositions();
         else if (state.tab === "proposals") $("#view").innerHTML = await renderProposals();
         else if (state.tab === "calibration") $("#view").innerHTML = await renderCalibration();
         else if (state.tab === "ops") $("#view").innerHTML = await renderOps();

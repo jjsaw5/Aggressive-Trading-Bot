@@ -38,6 +38,15 @@ def candidate_to_alert(candidate: TradeCandidate) -> Alert:
             f"{plan.strategy.value} x{plan.contracts} | risk ${r.max_loss_usd:.0f} "
             f"({r.account_risk_pct:.1%})"
         )
+        # Entry economics as a mini-ticket so the alert is actionable on its own.
+        ep = plan.exit_plan
+        if ep is not None:
+            net = ep.entry_net_per_share
+            kind = "credit" if net < 0 else "debit"
+            parts.append(f"{kind} ${abs(net):.2f}")
+            tp = next((lv for lv in ep.levels if lv.kind == "take_profit"), None)
+            if tp is not None and tp.net_price is not None:
+                parts.append(f"TP ${tp.net_price:.2f}")
         if plan.analytics and plan.analytics.probability_of_profit is not None:
             parts.append(f"POP {plan.analytics.probability_of_profit:.0%}")
         if plan.analytics and plan.analytics.breakevens:

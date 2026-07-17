@@ -89,6 +89,24 @@ async def test_tier4_marks_open_position() -> None:
     assert risk.current_net is not None
 
 
+async def test_tier4_surfaces_unmarkable_position() -> None:
+    # A position whose legs aren't in the chain must NOT be silently dropped.
+    from datetime import date
+
+    from app.domain.enums import OptionType
+    from app.services.position_import import ImportedLeg, build_tracked_trade
+
+    mock = MockProvider()
+    # Bogus far-dated strike/expiration the mock chain won't contain.
+    trade = build_tracked_trade(
+        "AAPL", [ImportedLeg(9999.0, OptionType.CALL, True, 1, 1.0, date(2030, 1, 18))]
+    )
+    monitor = Tier4PositionMonitor(chain=mock)
+    risks = await monitor.run([trade])
+    assert len(risks) == 1
+    assert risks[0].action == "unmarked"  # visible, not dropped
+
+
 async def test_mark_net_per_share_matches_legs() -> None:
     mock = MockProvider()
     engine = ScanEngine(

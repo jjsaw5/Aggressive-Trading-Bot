@@ -48,18 +48,30 @@ class Tier4PositionMonitor:
         self.concurrency = concurrency
 
     async def evaluate(self, trade: PaperTrade) -> PositionRisk | None:
+        today = datetime.now(UTC).date()
+        exps = [leg.expiration for leg in trade.trade_plan.legs]
+        dte = (min(exps) - today).days if exps else None
+
         chain = await self.chain.get_option_chain(trade.symbol)
         net = mark_net_per_share(trade.trade_plan, chain)
         if net is None:
-            return None
+            # A risk monitor must never SILENTLY drop a position it can't price.
+            # Surface it as unmarked (e.g. expiration outside the chain window)
+            # so it stays visible and can be flagged, not ignored.
+            return PositionRisk(
+                symbol=trade.symbol,
+                trade_id=trade.id,
+                pnl_usd=0.0,
+                pnl_pct=0.0,
+                current_net=0.0,
+                dte=dte,
+                action="unmarked",
+                note="No live mark (expiration outside chain window).",
+            )
 
         pnl_usd = trade.mark_pnl_usd(net)
         entry = trade.entry_fill
         pnl_pct = round((net - entry) / abs(entry), 4) if abs(entry) > 1e-6 else 0.0
-
-        today = datetime.now(UTC).date()
-        exps = [leg.expiration for leg in trade.trade_plan.legs]
-        dte = (min(exps) - today).days if exps else None
         time_stop = trade.trade_plan.risk.time_stop_dte
 
         reason = check_exit(trade, net)

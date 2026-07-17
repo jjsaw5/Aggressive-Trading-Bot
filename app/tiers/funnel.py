@@ -87,7 +87,18 @@ class FunnelEngine:
                 )
             )
             n += 1
-            if r.action != "hold":
+            if r.action == "unmarked":
+                # Couldn't price the position — surface it, don't fake a risk hit.
+                await bus.publish(
+                    Event(
+                        type=EventType.DATA_STALE,
+                        symbol=r.symbol,
+                        payload={"trade_id": r.trade_id, "note": r.note},
+                        source="tier4",
+                    )
+                )
+                n += 1
+            elif r.action != "hold":
                 await bus.publish(
                     Event(
                         type=EventType.RISK_THRESHOLD_REACHED,
@@ -167,12 +178,28 @@ class FunnelEngine:
         return cand
 
     async def run_tier3(self) -> list[TradeCandidate]:
-        """Deep-evaluate the current candidate set."""
+        """Deep-evaluate the current candidate set, then surface it: persist the
+        candidates (so they can become proposals), warehouse the decisions (for
+        outcome scoring), and alert the actionable ones (so they reach you)."""
+        import asyncio
         from time import perf_counter
+
+        from app.alerts.service import alert_candidates
+        from app.db import repository
+        from app.services.outcomes_service import warehouse_candidates
 
         _t0 = perf_counter()
         cand = await self.store.symbols(Tier.CANDIDATES)
         result = await self.tier3.run(cand)
+
+        if result:
+            scan_id = result[0].scan_id
+            # Persist so POST /proposals can look candidates up by scan_id/symbol.
+            await asyncio.to_thread(repository.save_scan, scan_id, cand, result)
+            # Freeze decisions for the calibration loop and alert actionable ones.
+            await warehouse_candidates(result)
+            await alert_candidates(result)
+
         m = get_metrics()
         m.inc("funnel.tier3.runs")
         m.observe("funnel.tier3.ms", (perf_counter() - _t0) * 1000)

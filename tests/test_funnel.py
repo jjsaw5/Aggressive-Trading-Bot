@@ -53,6 +53,34 @@ async def test_funnel_run_once_promotes_and_persists() -> None:
     assert int(Tier.WATCHLIST) in tiers_present
 
 
+async def test_funnel_surfaces_candidates_for_proposals() -> None:
+    from app.modes.proposals import create_proposal
+
+    mock = MockProvider()
+    engine = FunnelEngine(
+        market=mock, fundamentals=mock, calendar=mock, flow=mock, chain=mock,
+        iv_history=mock, universe=UniverseConfig(symbols=_SYMS),
+        watchlist_max=5, candidates_max=3,
+    )
+    report = await engine.run_once()
+
+    # Tier 3 persisted a scan so its candidates can become proposals.
+    scans = repository.list_scans(limit=10)
+    assert scans, "funnel did not persist a scan"
+    latest = scans[0].scan_id
+    persisted = repository.get_scan_candidates(latest)
+    assert persisted, "no candidates persisted from the funnel pass"
+    assert set(report.candidates) & {c.symbol for c in persisted}
+
+    # An actionable, persisted candidate is retrievable and proposable.
+    actionable = next((c for c in persisted if c.is_actionable), None)
+    if actionable is not None:
+        got = repository.get_candidate(latest, actionable.symbol)
+        assert got is not None
+        prop = create_proposal(got)
+        assert prop.symbol == actionable.symbol
+
+
 def test_tiers_api_run_and_list() -> None:
     r = client.post("/tiers/run", json={"symbols": _SYMS})
     assert r.status_code == 200

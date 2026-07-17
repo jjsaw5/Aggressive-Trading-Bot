@@ -98,6 +98,15 @@
 
     let state = { scanId: null, candidates: [], tab: "candidates" };
 
+    // Ops panel auto-refresh: poll /metrics every 5s while the Ops tab is open.
+    let opsTimer = null;
+    function manageOpsRefresh() {
+      if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
+      if (state.tab === "ops") {
+        opsTimer = setInterval(() => { if (state.tab === "ops") render(); }, 5000);
+      }
+    }
+
     async function loadConfig() {
       try {
         const c = await api("GET", "/config/runtime");
@@ -273,6 +282,7 @@
 
       const badges =
         `<div style="margin-bottom:12px">
+          <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
           <span class="badge">cache ${c.hit_rate == null ? "—" : (c.hit_rate * 100).toFixed(0) + "%"} hit</span>
           <span class="badge">cache hits ${c.hits ?? 0}/${(c.hits ?? 0) + (c.misses ?? 0)}</span>
           <span class="badge">rate-limit ${rl.enabled ? "on" : "off"}</span>
@@ -341,7 +351,7 @@
     document.querySelectorAll(".tabs button").forEach(b =>
       b.addEventListener("click", () => {
         document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("active"));
-        b.classList.add("active"); state.tab = b.dataset.tab; render();
+        b.classList.add("active"); state.tab = b.dataset.tab; manageOpsRefresh(); render();
       }));
 
     $("#view").addEventListener("click", async (e) => {

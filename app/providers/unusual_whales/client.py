@@ -127,6 +127,12 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChain
             provider="unusual_whales",
             base_url=settings.unusual_whales_base_url,
             headers={"Authorization": f"Bearer {settings.unusual_whales_api_key or ''}"},
+            # UW returns remaining/limit budget on every response; capture it so
+            # exhaustion is visible before a 429 (feeds the Phase-2 budgeter).
+            rate_limit_headers={
+                "remaining": "x-uw-req-per-minute-remaining",
+                "limit": "x-uw-token-req-limit",
+            },
         )
 
     async def aclose(self) -> None:

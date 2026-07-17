@@ -4,6 +4,13 @@ Routing is driven entirely by settings (`PROVIDER_*`). Live providers are
 imported lazily so the mock stack has zero third-party import cost, and a
 misconfigured/unbuilt live provider fails loudly at resolution time rather
 than silently returning bad data.
+
+Every live provider is cached as a singleton (`@lru_cache`). This matters for
+efficiency: a provider owns one pooled `httpx.AsyncClient`, so resolving a
+capability must return the SAME instance each time rather than constructing a
+fresh client (and leaking its connection pool) on every call. One vendor that
+implements several capabilities (FMP: market data + fundamentals + calendar;
+UW: flow + IV history + chain) is therefore backed by a single shared client.
 """
 
 from __future__ import annotations
@@ -36,6 +43,23 @@ def _mock() -> MockProvider:
 
 
 @lru_cache
+def _fmp():
+    # Cached so one pooled httpx client backs market-data + fundamentals +
+    # calendar rather than a new client (and leaked pool) per resolver call.
+    from app.providers.fmp.client import FMPProvider
+
+    return FMPProvider()
+
+
+@lru_cache
+def _uw():
+    # Cached so one pooled httpx client backs flow + IV-history + chain.
+    from app.providers.unusual_whales.client import UnusualWhalesProvider
+
+    return UnusualWhalesProvider()
+
+
+@lru_cache
 def _robinhood():
     # Cached so a single authenticated session is shared across the market-data,
     # options-chain, and brokerage capabilities (one login, not three).
@@ -49,18 +73,15 @@ def _build(name: ProviderName, capability: str):
         return _mock()
 
     if name == ProviderName.FMP:
-        from app.providers.fmp.client import FMPProvider
-
+        # Key check stays OUTSIDE the cache so a missing key still fails loudly.
         if not settings.fmp_api_key:
             raise ProviderConfigError("FMP_API_KEY is not set")
-        return FMPProvider()
+        return _fmp()
 
     if name == ProviderName.UNUSUAL_WHALES:
-        from app.providers.unusual_whales.client import UnusualWhalesProvider
-
         if not settings.unusual_whales_api_key:
             raise ProviderConfigError("UNUSUAL_WHALES_API_KEY is not set")
-        return UnusualWhalesProvider()
+        return _uw()
 
     if name == ProviderName.ROBINHOOD:
         return _robinhood()

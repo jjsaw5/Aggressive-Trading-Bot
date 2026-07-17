@@ -20,11 +20,13 @@ from app.db.models import (
     PaperTradeRow,
     ProposalRow,
     ScanRow,
+    TierMemberRow,
 )
 from app.db.session import SessionLocal
 from app.domain.candidates import TradeCandidate
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot
 from app.domain.trades import OrderProposal, PaperTrade
+from app.tiers.models import TierMember
 
 
 # --- Scans & candidates ------------------------------------------------------
@@ -245,6 +247,44 @@ def get_outcomes_for(decision_id: str) -> list[DecisionOutcome]:
             )
         )
         return [DecisionOutcome.model_validate(r.payload) for r in res.scalars().all()]
+
+
+# --- Tier membership (funnel state) ------------------------------------------
+def replace_tier(tier: int, members: list[TierMember]) -> None:
+    """Overwrite the membership of one tier atomically (promotion + demotion)."""
+    with SessionLocal() as session:
+        session.execute(delete(TierMemberRow).where(TierMemberRow.tier == tier))
+        for m in members:
+            session.add(
+                TierMemberRow(
+                    tier=int(m.tier),
+                    symbol=m.symbol.upper(),
+                    score=m.score,
+                    reason=m.reason[:128],
+                    payload=m.model_dump(mode="json"),
+                )
+            )
+        session.commit()
+
+
+def list_tier(tier: int) -> list[TierMember]:
+    with SessionLocal() as session:
+        res = session.execute(
+            select(TierMemberRow)
+            .where(TierMemberRow.tier == tier)
+            .order_by(TierMemberRow.score.desc())
+        )
+        return [TierMember.model_validate(r.payload) for r in res.scalars().all()]
+
+
+def list_all_tiers() -> list[TierMember]:
+    with SessionLocal() as session:
+        res = session.execute(
+            select(TierMemberRow).order_by(
+                TierMemberRow.tier.desc(), TierMemberRow.score.desc()
+            )
+        )
+        return [TierMember.model_validate(r.payload) for r in res.scalars().all()]
 
 
 def fetch_calibration_data(

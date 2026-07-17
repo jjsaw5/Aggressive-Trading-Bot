@@ -110,3 +110,15 @@ class DecisionOutcomeRow(Base, TimestampMixin):
     realized_pnl_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     outcome_source: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class TierMemberRow(Base, TimestampMixin):
+    """Current membership of a symbol in a funnel tier (Tier 1-4)."""
+
+    __tablename__ = "tier_members"
+
+    tier: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    reason: Mapped[str] = mapped_column(String(128), default="")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)

@@ -20,6 +20,7 @@ from app.api.routes import (
     paper,
     proposals,
     scans,
+    tiers,
 )
 from app.api.routes import config as config_routes
 from app.config import settings
@@ -68,4 +69,5 @@ app.include_router(paper.router)
 app.include_router(backtest.router)
 app.include_router(alerts.router)
 app.include_router(outcomes.router)
+app.include_router(tiers.router)
 app.include_router(dashboard.router)

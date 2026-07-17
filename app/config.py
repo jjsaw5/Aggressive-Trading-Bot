@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     price_change_threshold_pct: float = 1.0  # material intraday move
     flow_burst_premium_usd: float = 250_000.0  # "new large flow" threshold
 
+    # --- Tier funnel (Phase 4) ---
+    # Off by default: the funnel is a parallel orchestration path; the simple
+    # scan remains the default until the session-aware scheduler cutover.
+    tiering_enabled: bool = False
+    tier_watchlist_max: int = 50  # Tier 1 -> Tier 2 promotions
+    tier_candidates_max: int = 10  # Tier 2 -> Tier 3 promotions
+    tier_concurrency: int = 8  # bounded fan-out per tier
+
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
     # account. This aligns the % cap with the $100 absolute per-trade cap and

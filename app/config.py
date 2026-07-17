@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     trading_mode: TradingMode = TradingMode.RESEARCH
     automation_enabled: bool = False
 
+    # --- Scheduler ---
+    # Baseline research-scan cadence (minutes). Default 180 (every 3 hours): the
+    # scanner runs 24/7 and is not yet market-session-aware, so a slow baseline
+    # keeps closed-market API waste low. Session-aware per-tier cadences arrive
+    # with the scheduling clock; until then, tune this via SCAN_INTERVAL_MINUTES.
+    scan_interval_minutes: int = 180
+
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
     # account. This aligns the % cap with the $100 absolute per-trade cap and
@@ -135,6 +142,8 @@ class Settings(BaseSettings):
             raise ValueError("ACCOUNT_EQUITY_USD must be positive")
         if self.max_concurrent_positions < 1:
             raise ValueError("MAX_CONCURRENT_POSITIONS must be >= 1")
+        if self.scan_interval_minutes < 1:
+            raise ValueError("SCAN_INTERVAL_MINUTES must be >= 1")
         return self
 
 

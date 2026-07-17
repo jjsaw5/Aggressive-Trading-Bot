@@ -78,6 +78,20 @@ class Settings(BaseSettings):
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
 
+    # --- Provider efficiency (Phase 2) ---
+    # Response cache: short TTLs on volatile data (quotes/chains), long on static
+    # (fundamentals/IV history). Backend defaults to in-process memory; set
+    # CACHE_BACKEND=redis to use Redis (falls back to memory if unreachable).
+    cache_enabled: bool = True
+    cache_backend: str = "memory"  # memory | redis
+    cache_ttl_scale: float = 1.0  # global multiplier on all TTLs
+    # Rate limiting: per-provider token bucket honoring documented req/min.
+    rate_limit_enabled: bool = True
+    rate_limit_default_rpm: int = 120  # fallback for providers without an entry
+    # Request budget: opt-in hard daily cap per provider (safety kill-switch).
+    api_budget_enabled: bool = False
+    api_daily_budget: int = 10_000  # per provider, when api_budget_enabled
+
     # --- Alerts ---
     alerts_enabled: bool = False
     alerts_channel: str = "console"  # console | slack | noop

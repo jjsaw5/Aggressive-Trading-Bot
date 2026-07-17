@@ -29,6 +29,8 @@ from tenacity import (
 )
 
 from app.logging_config import get_logger
+from app.providers.cache import MISS, get_response_cache
+from app.providers.ratelimit import current_priority, get_limiter
 
 log = get_logger(__name__)
 
@@ -148,6 +150,18 @@ class AsyncHTTP:
         reraise=True,
     )
     async def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        # 1) Serve from cache when fresh (keyed on non-auth params only).
+        cache = get_response_cache()
+        key = cache.key(self.provider, path, params) if cache.enabled else None
+        if key is not None:
+            hit = await cache.get(key)
+            if hit is not MISS:
+                return hit
+
+        # 2) Acquire rate-limit/budget permission for a REAL request. Priority
+        #    comes from the calling context (open positions preempt broad scans).
+        await get_limiter().acquire(self.provider, current_priority.get())
+
         merged = {**self._default_params, **(params or {})}
         resp = await self._client.get(path, params=merged)
         self._capture_rate_limit(resp)
@@ -160,4 +174,9 @@ class AsyncHTTP:
         if resp.status_code >= 400:
             # Client error (auth, bad params) — do not retry.
             raise ProviderHTTPError(self.provider, resp.status_code, str(resp.url), resp.text)
-        return resp.json()
+
+        data = resp.json()
+        # 3) Cache successful responses with a per-data-type TTL.
+        if key is not None:
+            await cache.set(key, data, path)
+        return data

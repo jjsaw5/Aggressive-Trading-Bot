@@ -32,6 +32,11 @@ for _var in (
 # Pin runtime toggles a local .env might flip, so tests stay hermetic.
 os.environ["ALERTS_ENABLED"] = "false"
 os.environ["ALERTS_CHANNEL"] = "console"
+# Disable the provider cache + rate limiter globally so call-count assertions
+# are deterministic; both are exercised directly in their own test modules.
+os.environ["CACHE_ENABLED"] = "false"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
+os.environ["API_BUDGET_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 

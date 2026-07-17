@@ -313,6 +313,26 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChain
             source="unusual_whales",
         )
 
+    async def get_option_chain_for_expirations(
+        self, symbol: str, expirations: list[date]
+    ) -> OptionChain:
+        """Fetch contracts for SPECIFIC expirations (held-position monitoring),
+        going straight to option-contracts?expiry= for each date rather than the
+        default ~30-DTE window."""
+        spot = await self._stock_close(symbol)
+        contracts: list[OptionContract] = []
+        for exp in expirations:
+            contracts.extend(
+                await self._contracts_for_expiration(symbol, exp.isoformat(), spot)
+            )
+        return OptionChain(
+            symbol=symbol.upper(),
+            underlying_price=spot or 0.0,
+            contracts=contracts,
+            as_of=datetime.now(UTC),
+            source="unusual_whales",
+        )
+
     async def get_iv_context(self, symbol: str) -> IVContext:
         """Current ATM IV from /api/stock/{ticker}/volatility/stats (iv field).
         IV rank/percentile are computed elsewhere from the IV history."""

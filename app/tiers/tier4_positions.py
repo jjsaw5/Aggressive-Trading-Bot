@@ -52,7 +52,11 @@ class Tier4PositionMonitor:
         exps = [leg.expiration for leg in trade.trade_plan.legs]
         dte = (min(exps) - today).days if exps else None
 
-        chain = await self.chain.get_option_chain(trade.symbol)
+        # Fetch the position's OWN expirations, not the default ~30-DTE window,
+        # so held positions with any expiry can be marked.
+        chain = await self.chain.get_option_chain_for_expirations(
+            trade.symbol, sorted(set(exps))
+        )
         net = mark_net_per_share(trade.trade_plan, chain)
         if net is None:
             # A risk monitor must never SILENTLY drop a position it can't price.

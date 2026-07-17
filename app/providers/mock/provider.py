@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.domain.enums import OptionType
 from app.domain.market import (
@@ -166,25 +166,18 @@ class MockProvider(
         )
 
     # --- Options chain / IV ---
-    async def get_option_chain(self, symbol: str, expirations: int = 4) -> OptionChain:
-        """Synthetic chain priced with the SAME Black-Scholes model the engine
-        and backtester use, so entry marks, sizing, and repricing are
-        internally consistent. A ~$1-wide strike ladder gives realistic,
-        affordable defined-risk verticals."""
+    def _build_contracts(
+        self, symbol: str, spot: float, iv: float, exps: list[date]
+    ) -> list[OptionContract]:
+        """Synthetic BS-priced strike ladder for the given expirations."""
         s = _seed(symbol)
-        spot = (await self.get_quote(symbol)).price
-        iv = 0.20 + s * 0.55
-        contracts: list[OptionContract] = []
         today = self._now.date()
-
-        # ~$1 strike increment (rounded), a realistic ladder for these names.
-        step = max(0.5, round(spot * 0.005 * 2) / 2)
+        step = max(0.5, round(spot * 0.005 * 2) / 2)  # ~$1 increment
         n_strikes = 24
-        for w in range(1, expirations + 1):
-            exp = today + timedelta(days=7 * w + 2)
-            dte = (exp - today).days
-            t = dte / 365.0
-            atm = round(spot / step) * step
+        atm = round(spot / step) * step
+        contracts: list[OptionContract] = []
+        for exp in exps:
+            t = max(0.0, (exp - today).days) / 365.0
             for j in range(-n_strikes, n_strikes + 1):
                 strike = round(atm + j * step, 2)
                 if strike <= 0:
@@ -221,10 +214,35 @@ class MockProvider(
                             source="mock",
                         )
                     )
+        return contracts
+
+    async def get_option_chain(self, symbol: str, expirations: int = 4) -> OptionChain:
+        """Synthetic chain priced with the SAME Black-Scholes model the engine
+        and backtester use, so entry marks, sizing, and repricing are
+        internally consistent. A ~$1-wide strike ladder gives realistic,
+        affordable defined-risk verticals."""
+        spot = (await self.get_quote(symbol)).price
+        iv = 0.20 + _seed(symbol) * 0.55
+        today = self._now.date()
+        exps = [today + timedelta(days=7 * w + 2) for w in range(1, expirations + 1)]
         return OptionChain(
             symbol=symbol.upper(),
             underlying_price=spot,
-            contracts=contracts,
+            contracts=self._build_contracts(symbol, spot, iv, exps),
+            as_of=self._now,
+            source="mock",
+        )
+
+    async def get_option_chain_for_expirations(
+        self, symbol: str, expirations: list[date]
+    ) -> OptionChain:
+        """Build the ladder at the requested expirations (for position monitoring)."""
+        spot = (await self.get_quote(symbol)).price
+        iv = 0.20 + _seed(symbol) * 0.55
+        return OptionChain(
+            symbol=symbol.upper(),
+            underlying_price=spot,
+            contracts=self._build_contracts(symbol, spot, iv, list(expirations)),
             as_of=self._now,
             source="mock",
         )

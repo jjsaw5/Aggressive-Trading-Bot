@@ -78,6 +78,16 @@ class OptionsChainProvider(Provider):
     @abc.abstractmethod
     async def get_iv_context(self, symbol: str) -> IVContext: ...
 
+    async def get_option_chain_for_expirations(
+        self, symbol: str, expirations: list[date]
+    ) -> OptionChain:
+        """Fetch a chain covering SPECIFIC expiration dates — for monitoring held
+        positions whose expiry may fall outside the default ~30-DTE window.
+
+        Default falls back to the standard chain (best effort); providers that can
+        target expirations directly should override this for correctness."""
+        return await self.get_option_chain(symbol)
+
 
 class OptionsFlowProvider(Provider):
     @abc.abstractmethod

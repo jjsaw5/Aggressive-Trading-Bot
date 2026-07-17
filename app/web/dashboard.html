@@ -159,6 +159,29 @@
       </tr>`;
     }
 
+    function orderTicketHtml(c) {
+      const p = c.trade_plan;
+      if (!p || !p.legs || !p.legs.length) return "";
+      const legRows = p.legs.map(l => {
+        const buy = (l.action || "").indexOf("buy") === 0;
+        const typ = l.option_type === "call" ? "C" : "P";
+        return `<tr><td>${buy ? "BUY" : "SELL"}</td><td><strong>${l.strike}${typ}</strong></td>
+          <td>${l.expiration}</td><td class="num">$${fmt(l.entry_price)}</td></tr>`;
+      }).join("");
+      let width = "";
+      if (p.legs.length === 2) width = ` · width $${fmt(Math.abs(p.legs[0].strike - p.legs[1].strike), 0)}`;
+      const net = p.exit_plan ? p.exit_plan.entry_net_per_share : (p.net_debit / 100);
+      const kind = net < 0 ? "credit" : "debit";
+      const maxLoss = p.risk ? `$${fmt(p.risk.max_loss_usd, 0)}` : "—";
+      const maxProfit = (p.risk && p.risk.max_profit_usd != null) ? `$${fmt(p.risk.max_profit_usd, 0)}` : "uncapped";
+      return `<div style="margin-top:10px"><b>Order ticket</b>
+        <span class="muted">(${p.strategy} x${p.contracts}${width})</span>
+        <table style="margin-top:4px"><thead><tr><th>Side</th><th>Contract</th><th>Expiration</th><th class="num">Mid</th></tr></thead>
+        <tbody>${legRows}</tbody></table>
+        <div class="muted" style="margin-top:4px">Enter as ONE spread order — net <b>${kind} ~$${fmt(Math.abs(net))}/share</b>,
+        ${p.contracts} lot · max loss ${maxLoss} · max profit ${maxProfit}. Prices are mids; use the live bid/ask at order time.</div></div>`;
+    }
+
     function exitPlanHtml(c) {
       const ep = c.trade_plan && c.trade_plan.exit_plan;
       if (!ep) return "";
@@ -184,7 +207,7 @@
         <div>IV favorable</div><div>${t.iv_favorable} — ${t.iv_note || ""}</div>
         <div>Invalidation</div><div>${t.invalidation}</div>
         <div>Signals</div><div>${sig}</div>
-      </div>${exitPlanHtml(c)}</td></tr>`;
+      </div>${orderTicketHtml(c)}${exitPlanHtml(c)}</td></tr>`;
     }
 
     function renderCandidates() {

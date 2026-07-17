@@ -23,6 +23,7 @@ from app.db import repository
 from app.db.session import create_all
 from app.engine.universe import UniverseConfig
 from app.logging_config import configure_logging, get_logger
+from app.services.events_service import publish_scan_events
 from app.services.outcomes_service import resolve_pending, warehouse_candidates
 from app.services.scan_service import run_scan
 
@@ -41,6 +42,8 @@ async def scheduled_scan() -> None:
                 candidates,
             )
             await warehouse_candidates(candidates)
+            # Detect material change vs the previous scan and publish events.
+            await publish_scan_events(candidates)
             await alert_candidates(candidates)
         # Resolve any decisions that have matured against current prices.
         try:

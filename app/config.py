@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # with the scheduling clock; until then, tune this via SCAN_INTERVAL_MINUTES.
     scan_interval_minutes: int = 180
 
+    # --- Event bus + change detection (Phase 3) ---
+    # When enabled, each scan runs change detectors and publishes events
+    # (PriceChanged, MarketRegimeChanged, ...) to the in-process bus. Additive:
+    # the default subscriber only logs; event-driven recompute arrives with the
+    # tier funnel.
+    events_enabled: bool = True
+    price_change_threshold_pct: float = 1.0  # material intraday move
+    flow_burst_premium_usd: float = 250_000.0  # "new large flow" threshold
+
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
     # account. This aligns the % cap with the $100 absolute per-trade cap and

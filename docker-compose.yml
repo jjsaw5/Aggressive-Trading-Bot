@@ -1,59 +1,25 @@
+# Two processes share one image:
+#   api        — FastAPI + dashboard on :8000  (http://localhost:8000/dashboard)
+#   scheduler  — the session-aware tiered funnel (runs when TIERING_ENABLED=true)
+#
+# Durable storage is Turso (from .env); the response cache is in-process memory,
+# so no Postgres/Redis is needed. Tables are ensured on startup (create_all),
+# so there is no migration step. Secrets come from .env via env_file — never
+# baked into the image (see .dockerignore).
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-atb}
-      POSTGRES_USER: ${POSTGRES_USER:-atb}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atb}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   api:
     build: .
+    image: aggressive-trading-bot
     env_file: .env
-    environment:
-      POSTGRES_HOST: db
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     ports:
       - "8000:8000"
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
 
   scheduler:
     build: .
+    image: aggressive-trading-bot
     env_file: .env
-    environment:
-      POSTGRES_HOST: db
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    restart: unless-stopped
     command: ["python", "-m", "app.scheduler.run"]
-
-volumes:
-  pgdata:
+    healthcheck:
+      disable: true  # no HTTP port; the API healthcheck covers liveness

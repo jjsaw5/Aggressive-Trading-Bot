@@ -45,14 +45,32 @@ RATE_LIMIT_ENABLED=true
 
 If `SLACK_WEBHOOK_URL` is unset, alerts fall back to console (host logs only).
 
-## 2. Install + create tables (one-time)
+## 2. Run with Docker (recommended)
+
+The compose stack builds one image and runs two containers — `api` (dashboard on
+:8000) and `scheduler` (the tiered funnel). No Postgres/Redis: storage is Turso
+and the cache is in-process. Secrets come from `.env` at runtime and are never
+baked into the image (`.dockerignore` excludes `.env`).
+
+```
+docker compose up -d --build          # build + start both containers
+docker compose logs -f scheduler      # watch the funnel tick
+docker compose ps                     # api should be "healthy"
+```
+
+Open **http://localhost:8000/dashboard**. To stop: `docker compose down`
+(add `restart: unless-stopped` keeps them running across reboots — already set).
+
+Tables are created automatically on startup — no migration step.
+
+### Manual alternative (no Docker)
 
 ```
 pip install -e ".[dev]"
 python -c "from app.db.session import create_all; create_all()"   # idempotent
 ```
 
-## 3. Run the two processes
+## 3. Run the two processes (manual only)
 
 Run both under a supervisor (systemd, pm2, tmux, or `docker compose`) so they
 restart on crash and survive logout.

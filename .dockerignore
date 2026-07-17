@@ -1,0 +1,30 @@
+# Never bake secrets or local junk into the image. Secrets are injected at
+# runtime via docker compose `env_file: .env`.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+.github
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+*.db
+*.sqlite
+*.sqlite3
+scratchpad/
+
+.venv/
+venv/
+*.egg-info/
+build/
+dist/

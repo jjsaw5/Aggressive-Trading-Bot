@@ -98,8 +98,10 @@ class FunnelEngine:
                 n += 1
         return n
 
-    async def run_once(self, symbols: list[str] | None = None) -> FunnelReport:
-        # --- Tier 1: broad, cheap ---
+    # --- Per-tier steps (each reads/writes tier membership via the store, so
+    #     the session scheduler can run them at independent cadences) ---
+    async def run_tier1(self, symbols: list[str] | None = None) -> list[str]:
+        """Tier 1 sweep -> promote top passers to the watchlist. Returns watchlist."""
         t1 = await self.tier1.run(symbols)
         passed = [r for r in t1 if r.passed]
         await self.store.replace(
@@ -113,10 +115,22 @@ class FunnelEngine:
                 for r in passed[:200]
             ],
         )
-        watch_syms = [r.symbol for r in passed[: self.watchlist_max]]
+        watch = [r.symbol for r in passed[: self.watchlist_max]]
+        await self.store.replace(
+            Tier.WATCHLIST,
+            [TierMember(symbol=r.symbol, tier=Tier.WATCHLIST, score=r.score)
+             for r in passed[: self.watchlist_max]],
+        )
+        self._last_tier1_count = len(t1)
+        self._last_tier1_passed = len(passed)
+        return watch
 
-        # --- Tier 2: medium ---
-        t2 = await self.tier2.run(watch_syms)
+    async def run_tier2(self) -> list[str]:
+        """Score the current watchlist -> promote top to candidates. Returns candidates."""
+        watch = await self.store.symbols(Tier.WATCHLIST)
+        if not watch:
+            return []
+        t2 = await self.tier2.run(watch)
         await self.store.replace(
             Tier.WATCHLIST,
             [
@@ -128,20 +142,21 @@ class FunnelEngine:
                 for r in t2
             ],
         )
-        cand_syms = [r.symbol for r in t2[: self.candidates_max]]
+        cand = [r.symbol for r in t2[: self.candidates_max]]
         await self.store.replace(
             Tier.CANDIDATES,
-            [
-                TierMember(symbol=r.symbol, tier=Tier.CANDIDATES, score=r.score)
-                for r in t2[: self.candidates_max]
-            ],
+            [TierMember(symbol=r.symbol, tier=Tier.CANDIDATES, score=r.score)
+             for r in t2[: self.candidates_max]],
         )
+        return cand
 
-        # --- Tier 3: deep ---
-        t3: list[TradeCandidate] = await self.tier3.run(cand_syms)
-        actionable = [c for c in t3 if c.is_actionable]
+    async def run_tier3(self) -> list[TradeCandidate]:
+        """Deep-evaluate the current candidate set."""
+        cand = await self.store.symbols(Tier.CANDIDATES)
+        return await self.tier3.run(cand)
 
-        # --- Tier 4: positions (always) ---
+    async def run_tier4(self) -> list[PositionRisk]:
+        """Monitor open positions and publish risk events."""
         import asyncio
 
         from app.db import repository
@@ -150,22 +165,30 @@ class FunnelEngine:
         risks = await self.tier4.run(trades)
         await self.store.replace(
             Tier.POSITIONS,
-            [
-                TierMember(symbol=r.symbol, tier=Tier.POSITIONS, score=r.pnl_pct, reason=r.action)
-                for r in risks
-            ],
+            [TierMember(symbol=r.symbol, tier=Tier.POSITIONS, score=r.pnl_pct, reason=r.action)
+             for r in risks],
         )
-        events = await self._publish_position_events(risks)
+        await self._publish_position_events(risks)
+        return risks
 
+    async def run_once(self, symbols: list[str] | None = None) -> FunnelReport:
+        """One full cascade T1->T2->T3 + T4. Used on demand (API) and in tests;
+        the scheduler runs the per-tier steps at independent cadences instead."""
+        self._last_tier1_count = 0
+        self._last_tier1_passed = 0
+        watch = await self.run_tier1(symbols)
+        cand = await self.run_tier2()
+        t3 = await self.run_tier3()
+        risks = await self.run_tier4()
         report = FunnelReport(
-            tier1_evaluated=len(t1),
-            tier1_passed=len(passed),
-            watchlist=watch_syms,
-            candidates=cand_syms,
-            tier3_actionable=len(actionable),
+            tier1_evaluated=self._last_tier1_count,
+            tier1_passed=self._last_tier1_passed,
+            watchlist=watch,
+            candidates=cand,
+            tier3_actionable=sum(c.is_actionable for c in t3),
             positions_monitored=len(risks),
             position_risks=risks,
-            events_published=events,
+            events_published=sum(1 for _ in risks),  # approximate; events already published
         )
         log.info(
             "funnel_pass",

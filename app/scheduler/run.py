@@ -55,12 +55,8 @@ async def scheduled_scan() -> None:
         log.error("scheduled_scan_failed", error=str(exc))
 
 
-async def main() -> None:
-    configure_logging()
-    try:
-        await asyncio.to_thread(create_all)
-    except Exception as exc:
-        log.warning("db_init_skipped", error=str(exc))
+async def run_simple_scheduler() -> None:
+    """Default path: one periodic full scan at SCAN_INTERVAL_MINUTES."""
     interval = settings.scan_interval_minutes
     scheduler = AsyncIOScheduler(timezone="America/New_York")
     scheduler.add_job(
@@ -80,6 +76,28 @@ async def main() -> None:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
         scheduler.shutdown()
+
+
+async def run_session_scheduler() -> None:
+    """Phase-5 path: session-aware, per-tier cadences (TIERING_ENABLED=true)."""
+    from app.scheduling.engine import SessionScheduler
+
+    log.info("using_session_scheduler")
+    await SessionScheduler().run_forever()
+
+
+async def main() -> None:
+    configure_logging()
+    try:
+        await asyncio.to_thread(create_all)
+    except Exception as exc:
+        log.warning("db_init_skipped", error=str(exc))
+    # Cutover is gated: the funnel-driven session scheduler runs only when
+    # TIERING_ENABLED; otherwise the simple periodic scan remains the default.
+    if settings.tiering_enabled:
+        await run_session_scheduler()
+    else:
+        await run_simple_scheduler()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,60 @@
+# Per-session x per-tier cadences, in SECONDS. 0 (or an omitted tier) means the
+# tier does not run in that session. Edit this file to retune the schedule
+# without code changes; the loader falls back to the built-in defaults
+# (app/scheduling/schedule.py) if this file is missing or unparseable.
+#
+# Tiers: broad (T1) · watchlist (T2) · candidates (T3) · positions (T4)
+
+overnight:        # 20:00-07:00 ET — news/filings gathering, slow
+  broad: 3600
+  positions: 1800
+
+pre_market:       # 07:00-09:00 — universe refresh, gaps, relative volume
+  broad: 900
+  watchlist: 900
+  positions: 300
+
+final_pre_open:   # 09:00-09:30 — regime + final watchlist
+  broad: 300
+  watchlist: 300
+  positions: 300
+
+opening:          # 09:30-09:45 — opening-range stabilization (no auto entries)
+  watchlist: 60
+  candidates: 60
+  positions: 45
+
+primary:          # 09:45-11:00 — highest-priority trading window
+  broad: 300
+  watchlist: 60
+  candidates: 30
+  positions: 20
+
+midday:           # 11:00-14:00 — reduced activity
+  broad: 720
+  watchlist: 240
+  candidates: 45
+  positions: 45
+
+afternoon:        # 14:00-15:00 — reassessment
+  broad: 300
+  watchlist: 120
+  candidates: 30
+  positions: 20
+
+power_hour:       # 15:00-16:00 — hold/exit, overnight risk
+  broad: 600
+  watchlist: 60
+  candidates: 30
+  positions: 15
+
+post_close:       # close..close+30 — reconciliation
+  positions: 120
+
+earnings:         # close+30..20:00 — after-hours earnings
+  broad: 300
+  watchlist: 300
+  positions: 300
+
+closed:           # weekends / holidays — slow news only
+  broad: 3600

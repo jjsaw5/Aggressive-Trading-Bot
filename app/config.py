@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     tier_candidates_max: int = 10  # Tier 2 -> Tier 3 promotions
     tier_concurrency: int = 8  # bounded fan-out per tier
 
+    # --- Session-aware scheduler (Phase 5) ---
+    # When tiering_enabled, the scheduler process drives each tier at its
+    # session-dependent cadence (config/scheduling.yaml) instead of the simple
+    # periodic scan. session_tick_seconds is the control-loop granularity.
+    session_tick_seconds: int = 10
+    scheduling_config_path: str | None = None  # override config/scheduling.yaml
+
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
     # account. This aligns the % cap with the $100 absolute per-trade cap and

@@ -75,6 +75,7 @@
       <button data-tab="candidates" class="active">Candidates</button>
       <button data-tab="proposals">Proposals</button>
       <button data-tab="paper">Paper trades</button>
+      <button data-tab="calibration">Calibration</button>
     </div>
     <div id="view" class="overflow"><div class="empty">Run a scan to see ranked candidates.</div></div>
   </main>
@@ -217,11 +218,59 @@
         <tbody>${rows}</tbody></table>`;
     }
 
+    const gapTxt = (g) => g == null ? "—" : (g >= 0 ? "+" : "") + (Number(g) * 100).toFixed(0) + "pt";
+    const gapCls = (g) => g == null ? "" : (g >= 0 ? "pos" : "neg");
+
+    async function renderCalibration() {
+      const sc = await api("GET", "/outcomes/calibration");
+      const badges =
+        `<div style="margin-bottom:10px">
+          <span class="badge">decisions ${sc.n_decisions}</span>
+          <span class="badge">resolved ${sc.n_resolved}</span>
+          <span class="badge">decisive ${sc.n_decisive}</span>
+          <span class="badge">win rate ${pct(sc.win_rate)}</span>
+          <span class="badge">direction ${pct(sc.direction_accuracy)}</span>
+          <span class="badge">avg POP ${pct(sc.avg_predicted_pop)}</span>
+          <span class="badge ${gapCls(sc.calibration_gap)}">calib gap ${gapTxt(sc.calibration_gap)}</span>
+          <span class="badge">Brier ${fmt(sc.brier_score)}</span>
+        </div>`;
+      const resolveBtn = `<button class="ghost" data-act="resolve">Resolve matured decisions</button>`;
+      if (!sc.n_resolved) {
+        return badges + `<div class="empty">No resolved decisions yet. Scans warehouse every
+          actionable decision automatically; once they've matured, ${resolveBtn} scores them
+          against current prices.</div>`;
+      }
+      const popRows = (sc.pop_buckets || []).map(b => `<tr>
+        <td>${b.label}</td><td class="num">${b.n}</td>
+        <td class="num">${pct(b.avg_predicted_pop)}</td>
+        <td class="num">${pct(b.realized_win_rate)}</td>
+        <td class="num ${gapCls(b.calibration_gap)}">${gapTxt(b.calibration_gap)}</td></tr>`).join("");
+      const stratRows = (sc.by_strategy || []).map(g => `<tr>
+        <td>${g.key}</td><td class="num">${g.n}</td>
+        <td class="num">${pct(g.win_rate)}</td><td class="num">${fmt(g.avg_score)}</td></tr>`).join("");
+      const dirRows = (sc.by_direction || []).map(g => `<tr>
+        <td>${g.key}</td><td class="num">${g.n}</td><td class="num">${pct(g.win_rate)}</td></tr>`).join("");
+      return badges +
+        `<div style="margin-bottom:10px">${resolveBtn} <span class="muted">${sc.note || ""}</span></div>
+         <b>POP calibration</b> <span class="muted">— predicted vs realized win rate by bucket</span>
+         <table style="margin:4px 0 16px"><thead><tr><th>POP bucket</th><th class="num">n</th>
+           <th class="num">Predicted</th><th class="num">Realized</th><th class="num">Gap</th></tr></thead>
+           <tbody>${popRows || `<tr><td colspan="5" class="muted">—</td></tr>`}</tbody></table>
+         <b>By strategy</b>
+         <table style="margin:4px 0 16px"><thead><tr><th>Strategy</th><th class="num">n</th>
+           <th class="num">Win rate</th><th class="num">Avg score</th></tr></thead>
+           <tbody>${stratRows}</tbody></table>
+         <b>By direction</b>
+         <table style="margin-top:4px"><thead><tr><th>Direction</th><th class="num">n</th>
+           <th class="num">Win rate</th></tr></thead><tbody>${dirRows}</tbody></table>`;
+    }
+
     async function render() {
       showErr(null);
       try {
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
         else if (state.tab === "proposals") $("#view").innerHTML = await renderProposals();
+        else if (state.tab === "calibration") $("#view").innerHTML = await renderCalibration();
         else $("#view").innerHTML = await renderPaper();
       } catch (e) { showErr(e); }
     }
@@ -253,6 +302,10 @@
           } else if (act === "execute") {
             const d = await api("POST", `/proposals/${actBtn.dataset.p}/execute`);
             alert("Execution: authorized=" + d.authorized + " — " + d.reason);
+          } else if (act === "resolve") {
+            const d = await api("POST", "/outcomes/resolve?min_age_days=0");
+            alert("Resolved " + d.resolved + " decision(s) against current prices.");
+            render();
           }
         } catch (err) { showErr(err); }
         return;

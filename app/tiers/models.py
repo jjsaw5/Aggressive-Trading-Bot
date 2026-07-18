@@ -75,3 +75,10 @@ class PositionRisk(BaseModel):
     dte: int | None = None
     action: str = "hold"  # hold | take_profit | stop | time_stop | expiry_risk
     note: str = ""
+    # Live risk profile from the current chain (None when greeks/spot unavailable).
+    underlying_price: float | None = None
+    net_delta: float | None = None  # position delta in shares-equivalent (x100 x contracts)
+    net_theta: float | None = None  # position theta in $/day
+    # Signed % the underlying must move to reach the nearest breakeven
+    # (>0 = must rise, <0 = must fall).
+    breakeven_distance_pct: float | None = None

@@ -19,6 +19,7 @@ from app.domain.trades import PaperTrade, TradePlan
 from app.logging_config import get_logger
 from app.providers.base import OptionsChainProvider
 from app.providers.ratelimit import Priority, use_priority
+from app.quant.analytics import structure_breakevens
 from app.services.paper_engine import check_exit
 from app.tiers.concurrency import bounded_gather
 from app.tiers.models import PositionRisk
@@ -28,11 +29,13 @@ log = get_logger(__name__)
 _BUY = {OptionAction.BUY_TO_OPEN, OptionAction.BUY_TO_CLOSE}
 
 
+def _chain_index(chain: OptionChain) -> dict:
+    return {(c.expiration, round(c.strike, 4), c.option_type): c for c in chain.contracts}
+
+
 def mark_net_per_share(plan: TradePlan, chain: OptionChain) -> float | None:
     """Current signed net (debit>0/credit<0) per share from live chain marks."""
-    by_key = {
-        (c.expiration, round(c.strike, 4), c.option_type): c for c in chain.contracts
-    }
+    by_key = _chain_index(chain)
     net = 0.0
     for leg in plan.legs:
         c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
@@ -40,6 +43,28 @@ def mark_net_per_share(plan: TradePlan, chain: OptionChain) -> float | None:
             return None
         net += (1.0 if leg.action in _BUY else -1.0) * c.mark
     return round(net, 4)
+
+
+def position_greeks(
+    plan: TradePlan, chain: OptionChain
+) -> tuple[float | None, float | None]:
+    """Live net (delta, theta) for the whole position from the current chain.
+
+    Delta is shares-equivalent (x100 x contracts); theta is $/day. Returns
+    (None, None) if any leg is missing a live delta/theta — a partial greek would
+    misstate the position's exposure, so it's all-or-nothing.
+    """
+    by_key = _chain_index(chain)
+    net_delta = net_theta = 0.0
+    for leg in plan.legs:
+        c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
+        if c is None or c.greeks.delta is None or c.greeks.theta is None:
+            return None, None
+        sign = 1.0 if leg.action in _BUY else -1.0
+        scale = sign * plan.contracts * 100.0
+        net_delta += c.greeks.delta * scale
+        net_theta += c.greeks.theta * scale
+    return round(net_delta, 2), round(net_theta, 2)
 
 
 class Tier4PositionMonitor:
@@ -88,6 +113,17 @@ class Tier4PositionMonitor:
         else:
             action, note = "hold", ""
 
+        # Live risk profile: net greeks from the chain + how far spot is from the
+        # nearest breakeven. All best-effort — missing greeks/spot leave None.
+        net_delta, net_theta = position_greeks(trade.trade_plan, chain)
+        spot = chain.underlying_price
+        be_dist = None
+        if spot and spot > 0:
+            bes = structure_breakevens(trade.trade_plan)
+            if bes:
+                nearest = min(bes, key=lambda b: abs(b - spot))
+                be_dist = round((nearest - spot) / spot, 4)
+
         return PositionRisk(
             symbol=trade.symbol,
             trade_id=trade.id,
@@ -97,6 +133,10 @@ class Tier4PositionMonitor:
             dte=dte,
             action=action,
             note=note,
+            underlying_price=round(spot, 4) if spot else None,
+            net_delta=net_delta,
+            net_theta=net_theta,
+            breakeven_distance_pct=be_dist,
         )
 
     async def run(self, trades: list[PaperTrade]) -> list[PositionRisk]:

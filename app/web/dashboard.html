@@ -324,11 +324,20 @@
         <table style="margin:4px 0 12px"><thead><tr><th>Trigger</th><th class="num">Net</th><th class="num">P&L</th><th>Note</th></tr></thead>
         <tbody>${exRows}</tbody></table>` : "";
       const be = (p.breakevens || []).length ? p.breakevens.join(" / ") : "—";
+      const beDist = p.breakeven_distance_pct == null ? "" :
+        ` <span class="muted">(needs ${p.breakeven_distance_pct >= 0 ? "+" : ""}${(p.breakeven_distance_pct * 100).toFixed(1)}% ${p.underlying_price != null ? "from $" + fmt(p.underlying_price) : ""})</span>`;
+      const greeks = (p.net_delta == null && p.net_theta == null) ? "—" :
+        `${p.net_delta == null ? "—" : (p.net_delta >= 0 ? "+" : "") + fmt(p.net_delta, 0) + "Δ"} · ${p.net_theta == null ? "—" : (p.net_theta >= 0 ? "+" : "") + "$" + fmt(p.net_theta, 0) + "/day θ"}`;
+      const earn = p.earnings_date
+        ? `<div>Earnings</div><div class="${p.earnings_before_expiry ? "neg" : ""}">${p.earnings_date}${p.earnings_before_expiry ? " ⚠ before expiry" : " (after expiry)"}</div>`
+        : "";
       const summary = `<div class="kv">
         <div>Entry (net)</div><div>$${fmt(p.entry_net)}${p.current_net != null ? ` → now $${fmt(p.current_net)}` : ""}</div>
         <div>Max loss / profit</div><div>$${fmt(p.max_loss_usd, 0)} / ${p.max_profit_usd == null ? "uncapped" : "$" + fmt(p.max_profit_usd, 0)}</div>
-        <div>Breakeven</div><div>${be}</div>
+        <div>Breakeven</div><div>${be}${beDist}</div>
+        <div>Net greeks</div><div>${greeks}</div>
         <div>DTE / time stop</div><div>${p.dte == null ? "—" : p.dte} / ${p.time_stop_dte == null ? "—" : p.time_stop_dte} DTE</div>
+        ${earn}
       </div>`;
       const open = state.expandedPos.has(p.symbol);
       return `<tr class="detail" id="pd-${p.symbol}"${open ? "" : " hidden"}><td colspan="8">

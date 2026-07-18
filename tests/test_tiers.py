@@ -120,3 +120,58 @@ async def test_mark_net_per_share_matches_legs() -> None:
     chain = await mock.get_option_chain(actionable.symbol)
     net = mark_net_per_share(actionable.trade_plan, chain)
     assert net is not None  # every leg found a matching contract mark
+
+
+def test_structure_breakevens_needs_no_spot_and_matches_pop() -> None:
+    # Breakeven is structural (strikes + net premium), so it computes with no
+    # spot/vol — and must equal what breakevens_and_pop derives.
+    from datetime import date
+
+    from app.domain.enums import OptionType
+    from app.quant.analytics import breakevens_and_pop, structure_breakevens
+    from app.services.position_import import ImportedLeg, build_tracked_trade
+
+    # Bull call debit spread 100/105 for 2.00 net -> breakeven 102.00.
+    spread = build_tracked_trade("MSFT", [
+        ImportedLeg(100.0, OptionType.CALL, True, 1, 3.0, date(2026, 9, 18)),
+        ImportedLeg(105.0, OptionType.CALL, False, 1, 1.0, date(2026, 9, 18)),
+    ]).trade_plan
+    assert structure_breakevens(spread) == [102.0]
+    bes, pop = breakevens_and_pop(spread, spot=101.0, vol=0.3, as_of=date(2026, 7, 18))
+    assert bes == structure_breakevens(spread)
+    assert 0.0 <= pop <= 1.0
+
+    # Long put 90 for 2.62 -> breakeven 87.38.
+    lp = build_tracked_trade(
+        "NOW", [ImportedLeg(90.0, OptionType.PUT, True, 1, 2.62, date(2026, 8, 21))]
+    ).trade_plan
+    assert structure_breakevens(lp) == [87.38]
+
+
+async def test_tier4_reports_live_risk_profile() -> None:
+    # A marked position carries net greeks + distance-to-breakeven from the chain.
+    from app.tiers.tier4_positions import position_greeks
+
+    mock = MockProvider()
+    engine = ScanEngine(
+        market=mock, fundamentals=mock, chain=mock, flow=mock, calendar=mock,
+        policy=_policy(), universe=UniverseConfig(symbols=_SYMS),
+    )
+    cands = await engine.run()
+    actionable = next((c for c in cands if c.is_actionable), None)
+    if actionable is None:
+        return
+    entry = plan_entry_net_per_share(actionable.trade_plan)
+    trade = open_paper_trade(actionable.trade_plan, actionable.scan_id, entry_mid=entry)
+
+    chain = await mock.get_option_chain_for_expirations(
+        actionable.symbol, sorted({lg.expiration for lg in actionable.trade_plan.legs})
+    )
+    nd, nt = position_greeks(actionable.trade_plan, chain)
+    assert nd is not None and nt is not None  # mock chain carries greeks
+
+    risk = (await Tier4PositionMonitor(chain=mock).run([trade]))[0]
+    assert risk.net_delta is not None
+    assert risk.net_theta is not None
+    assert risk.underlying_price is not None
+    assert risk.breakeven_distance_pct is not None

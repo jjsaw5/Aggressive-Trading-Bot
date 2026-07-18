@@ -55,11 +55,55 @@ def _legs(plan: TradePlan, otype: OptionType, action_buy: bool) -> list[Contract
     ]
 
 
+def structure_breakevens(plan: TradePlan) -> list[float]:
+    """Breakeven underlying price(s) from strikes + net premium alone.
+
+    Needs no spot or vol (a breakeven is a structural property of the legs), so
+    it can be computed for any held position — including imported ones without
+    plan-time analytics. `breakevens_and_pop` builds on this for the pop math.
+    """
+    net = _net_per_share(plan)  # debit>0, credit<0
+    s = plan.strategy
+
+    if s in (StrategyType.LONG_CALL, StrategyType.BULL_CALL_SPREAD):
+        k = min(leg.strike for leg in _legs(plan, OptionType.CALL, True))
+        return [round(k + net, 2)]
+
+    if s in (StrategyType.LONG_PUT, StrategyType.BEAR_PUT_SPREAD):
+        k = max(leg.strike for leg in _legs(plan, OptionType.PUT, True))
+        return [round(k - net, 2)]
+
+    if s == StrategyType.BULL_PUT_SPREAD:  # credit; net < 0
+        ks = max(leg.strike for leg in _legs(plan, OptionType.PUT, False))
+        return [round(ks + net, 2)]  # net negative -> below short strike
+
+    if s == StrategyType.BEAR_CALL_SPREAD:  # credit
+        ks = min(leg.strike for leg in _legs(plan, OptionType.CALL, False))
+        return [round(ks - net, 2)]  # net negative -> above short strike
+
+    if s == StrategyType.LONG_STRADDLE:
+        k = _legs(plan, OptionType.CALL, True)[0].strike
+        return [round(k - net, 2), round(k + net, 2)]
+
+    if s == StrategyType.LONG_STRANGLE:
+        kp = _legs(plan, OptionType.PUT, True)[0].strike
+        kc = _legs(plan, OptionType.CALL, True)[0].strike
+        return [round(kp - net, 2), round(kc + net, 2)]
+
+    if s == StrategyType.IRON_CONDOR:  # credit
+        kps = max(leg.strike for leg in _legs(plan, OptionType.PUT, False))
+        kcs = min(leg.strike for leg in _legs(plan, OptionType.CALL, False))
+        credit = -net
+        return [round(kps - credit, 2), round(kcs + credit, 2)]
+
+    return []
+
+
 def breakevens_and_pop(
     plan: TradePlan, spot: float, vol: float, as_of: date, rate: float = 0.04
 ) -> tuple[list[float], float | None]:
     """Breakeven price(s) and risk-neutral probability of profit by strategy."""
-    net = _net_per_share(plan)  # debit>0, credit<0
+    bes = structure_breakevens(plan)
     t = min((_leg_t(leg, as_of) for leg in plan.legs), default=0.0)
     s = plan.strategy
 
@@ -69,48 +113,24 @@ def breakevens_and_pop(
     def p_below(level: float) -> float:
         return prob_below(spot, level, t, vol, rate)
 
-    if s in (StrategyType.LONG_CALL, StrategyType.BULL_CALL_SPREAD):
-        k = min(leg.strike for leg in _legs(plan, OptionType.CALL, True))
-        be = round(k + net, 2)
-        return [be], round(p_above(be), 4)
+    if not bes:
+        return [], None
 
-    if s in (StrategyType.LONG_PUT, StrategyType.BEAR_PUT_SPREAD):
-        k = max(leg.strike for leg in _legs(plan, OptionType.PUT, True))
-        be = round(k - net, 2)
-        return [be], round(p_below(be), 4)
+    if s in (StrategyType.LONG_CALL, StrategyType.BULL_CALL_SPREAD, StrategyType.BULL_PUT_SPREAD):
+        return bes, round(p_above(bes[0]), 4)
 
-    if s == StrategyType.BULL_PUT_SPREAD:  # credit; net < 0
-        ks = max(leg.strike for leg in _legs(plan, OptionType.PUT, False))
-        be = round(ks + net, 2)  # net negative -> below short strike
-        return [be], round(p_above(be), 4)
+    if s in (StrategyType.LONG_PUT, StrategyType.BEAR_PUT_SPREAD, StrategyType.BEAR_CALL_SPREAD):
+        return bes, round(p_below(bes[0]), 4)
 
-    if s == StrategyType.BEAR_CALL_SPREAD:  # credit
-        ks = min(leg.strike for leg in _legs(plan, OptionType.CALL, False))
-        be = round(ks - net, 2)  # net negative -> above short strike
-        return [be], round(p_below(be), 4)
+    if s in (StrategyType.LONG_STRADDLE, StrategyType.LONG_STRANGLE):
+        lo, hi = bes
+        return bes, round(p_below(lo) + p_above(hi), 4)
 
-    if s == StrategyType.LONG_STRADDLE:
-        k = _legs(plan, OptionType.CALL, True)[0].strike
-        lo, hi = round(k - net, 2), round(k + net, 2)
-        pop = round(p_below(lo) + p_above(hi), 4)
-        return [lo, hi], pop
+    if s == StrategyType.IRON_CONDOR:  # credit; profit BETWEEN the breakevens
+        lo, hi = bes
+        return bes, max(0.0, round(p_below(hi) - p_below(lo), 4))
 
-    if s == StrategyType.LONG_STRANGLE:
-        kp = _legs(plan, OptionType.PUT, True)[0].strike
-        kc = _legs(plan, OptionType.CALL, True)[0].strike
-        lo, hi = round(kp - net, 2), round(kc + net, 2)
-        pop = round(p_below(lo) + p_above(hi), 4)
-        return [lo, hi], pop
-
-    if s == StrategyType.IRON_CONDOR:  # credit
-        kps = max(leg.strike for leg in _legs(plan, OptionType.PUT, False))
-        kcs = min(leg.strike for leg in _legs(plan, OptionType.CALL, False))
-        credit = -net
-        lo, hi = round(kps - credit, 2), round(kcs + credit, 2)
-        pop = round(p_below(hi) - p_below(lo), 4)
-        return [lo, hi], max(0.0, pop)
-
-    return [], None
+    return bes, None
 
 
 def compute_analytics(

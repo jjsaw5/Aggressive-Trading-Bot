@@ -68,6 +68,12 @@ def test_import_endpoint_and_positions_view() -> None:
     assert aapl["legs"][0]["contract"] == "200C"
     assert aapl["exit_levels"]  # standing reminder of where to close
     assert isinstance(aapl["warnings"], list)
+    # Live risk-profile fields are always present (null when unmarkable).
+    for k in ("net_delta", "net_theta", "breakeven_distance_pct", "underlying_price",
+              "earnings_date"):
+        assert k in aapl
+    assert isinstance(aapl["earnings_before_expiry"], bool)
+    assert aapl["breakevens"] == [203.0]  # 200 call + 3.00 debit
 
 
 def test_positions_sync_reports_reason_when_broker_unavailable() -> None:

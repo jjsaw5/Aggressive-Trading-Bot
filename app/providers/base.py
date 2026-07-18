@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from app.domain.market import (
     CatalystEvent,
@@ -30,6 +30,7 @@ from app.domain.options import (
     OptionChain,
     OptionMarkPoint,
 )
+from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,45 @@ class CalendarProvider(Provider):
     async def get_catalysts(
         self, symbol: str, horizon_days: int = 21
     ) -> list[CatalystEvent]: ...
+
+
+class IntradayProvider(Provider):
+    """Intraday OHLCV bars — the base layer for VWAP, opening range, and
+    relative volume. Distinct from `MarketDataProvider.get_price_history`, which
+    is daily EOD only."""
+
+    @abc.abstractmethod
+    async def get_intraday_bars(
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+    ) -> list[IntradayBar]:
+        """Chronological bars for the given interval ("1min"|"5min"). When
+        `session_date` is None, returns the most recent session available."""
+        ...
+
+
+class NewsProvider(Provider):
+    """Headline news with latency lineage. Producers must set `received_ts`;
+    `source_ts`/`provider_ts` are set when the feed supplies them so end-to-end
+    latency can be measured."""
+
+    @abc.abstractmethod
+    async def get_news(
+        self,
+        symbols: list[str] | None = None,
+        *,
+        limit: int = 50,
+        since: datetime | None = None,
+    ) -> list[NewsItem]: ...
+
+
+class EconomicCalendarProvider(Provider):
+    """Scheduled macro releases (CPI, FOMC, NFP, ...). Separate from earnings —
+    these gate whole-market restricted windows, not single symbols."""
+
+    @abc.abstractmethod
+    async def get_economic_events(
+        self, *, from_date: date | None = None, to_date: date | None = None
+    ) -> list[EconomicEvent]: ...
 
 
 class BrokerageProvider(Provider):

@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import math
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from app.domain.enums import OptionType
 from app.domain.market import (
@@ -32,17 +33,23 @@ from app.domain.options import (
     OptionChain,
     OptionContract,
 )
+from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 from app.providers.base import (
     BrokerageProvider,
     CalendarProvider,
+    EconomicCalendarProvider,
     FundamentalsProvider,
+    IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
+    NewsProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
     ProviderMeta,
 )
 from app.quant.pricing import black_scholes_delta, black_scholes_price
+
+_ET_TZ = ZoneInfo("America/New_York")
 
 _META = ProviderMeta(
     name="mock",
@@ -92,6 +99,9 @@ class MockProvider(
     OptionsFlowProvider,
     IVHistoryProvider,
     CalendarProvider,
+    IntradayProvider,
+    NewsProvider,
+    EconomicCalendarProvider,
     BrokerageProvider,
 ):
     meta = _META
@@ -343,3 +353,96 @@ class MockProvider(
 
     async def get_open_option_symbols(self) -> list[str]:
         return []
+
+    # --- Intraday / news / economic calendar (deterministic) ---
+    async def get_intraday_bars(
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+    ) -> list[IntradayBar]:
+        """A synthetic RTH session (09:30-16:00 ET) of seeded GBM bars, so VWAP,
+        opening range, and relative volume can be computed deterministically."""
+        step = 1 if interval == "1min" else 5
+        d = session_date or self._now.astimezone(_ET_TZ).date()
+        open_et = datetime.combine(d, time(9, 30), tzinfo=_ET_TZ)
+        # Cap at "now" on the current session so bars never run into the future.
+        now_et = self._now.astimezone(_ET_TZ)
+        end_et = datetime.combine(d, time(16, 0), tzinfo=_ET_TZ)
+        if d == now_et.date() and now_et < end_et:
+            end_et = now_et
+        s = _seed(symbol)
+        base = _anchor(symbol)
+        intraday_vol = (0.20 + s * 0.55) / math.sqrt(252) / math.sqrt(390 / step)
+        drift = (s - 0.45) * 0.0002 * step
+        bars: list[IntradayBar] = []
+        price = base * (1 + (s - 0.5) * 0.01)
+        i = 0
+        t = open_et
+        while t <= end_et:
+            z = _norm(f"{symbol}|{d.isoformat()}", i)
+            price = max(1.0, price * math.exp(drift + intraday_vol * z))
+            hi = price * (1 + intraday_vol / 2)
+            lo = price * (1 - intraday_vol / 2)
+            vol = 30_000 + s * 120_000 + abs(z) * 20_000
+            bars.append(
+                IntradayBar(
+                    ts=t.astimezone(UTC),
+                    open=round(price, 2), high=round(hi, 2),
+                    low=round(lo, 2), close=round(price, 2), volume=round(vol, 0),
+                )
+            )
+            i += 1
+            t = open_et + timedelta(minutes=step * i)
+        return bars
+
+    async def get_news(
+        self,
+        symbols: list[str] | None = None,
+        *,
+        limit: int = 50,
+        since: datetime | None = None,
+    ) -> list[NewsItem]:
+        syms = [s.upper() for s in (symbols or ["SPY", "QQQ", "NVDA"])]
+        out: list[NewsItem] = []
+        for idx, sym in enumerate(syms):
+            s = _seed(sym)
+            pub = self._now - timedelta(minutes=2 + int(s * 20))
+            out.append(
+                NewsItem(
+                    id=f"mock:{sym}:{idx}",
+                    symbol=sym,
+                    headline=f"{sym} extends move on above-average volume",
+                    summary="Synthetic mock headline for local testing.",
+                    source="mock-wire",
+                    category="market",
+                    url=f"https://example.test/{sym}/{idx}",
+                    source_ts=pub,
+                    provider_ts=pub + timedelta(seconds=1),
+                    received_ts=self._now,
+                    raw_ref=f"mock:{sym}:{idx}",
+                )
+            )
+        if since is not None:
+            out = [n for n in out if n.source_ts is None or n.source_ts >= since]
+        return out[:limit]
+
+    async def get_economic_events(
+        self, *, from_date: date | None = None, to_date: date | None = None
+    ) -> list[EconomicEvent]:
+        # One recurring high-impact event a couple hours out, for the countdown.
+        base = self._now.replace(second=0, microsecond=0) + timedelta(hours=2)
+        events = [
+            EconomicEvent(
+                name="CPI (MoM)", category="inflation", country="US",
+                scheduled_at=base, impact="high", previous=0.3, consensus=0.2,
+                affected_markets=["SPY", "QQQ", "IWM"], status="scheduled", source="mock",
+            ),
+            EconomicEvent(
+                name="Initial Jobless Claims", category="employment", country="US",
+                scheduled_at=base + timedelta(days=1), impact="medium",
+                previous=220000.0, consensus=225000.0, status="scheduled", source="mock",
+            ),
+        ]
+        if from_date is not None:
+            events = [e for e in events if e.scheduled_at.date() >= from_date]
+        if to_date is not None:
+            events = [e for e in events if e.scheduled_at.date() <= to_date]
+        return events

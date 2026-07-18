@@ -22,9 +22,12 @@ from app.logging_config import get_logger
 from app.providers.base import (
     BrokerageProvider,
     CalendarProvider,
+    EconomicCalendarProvider,
     FundamentalsProvider,
+    IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
+    NewsProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
 )
@@ -68,6 +71,13 @@ def _robinhood():
     return RobinhoodProvider()
 
 
+@lru_cache
+def _benzinga():
+    from app.providers.benzinga.client import BenzingaProvider
+
+    return BenzingaProvider()
+
+
 def _build(name: ProviderName, capability: str):
     if name == ProviderName.MOCK:
         return _mock()
@@ -85,6 +95,11 @@ def _build(name: ProviderName, capability: str):
 
     if name == ProviderName.ROBINHOOD:
         return _robinhood()
+
+    if name == ProviderName.BENZINGA:
+        if not settings.benzinga_api_key:
+            raise ProviderConfigError("BENZINGA_API_KEY is not set")
+        return _benzinga()
 
     raise ProviderConfigError(f"Unknown provider {name!r} for {capability}")
 
@@ -129,3 +144,17 @@ def iv_history_provider() -> IVHistoryProvider | None:
 
 def brokerage_provider() -> BrokerageProvider:
     return _resolve(settings.provider_brokerage, "brokerage", BrokerageProvider)
+
+
+def intraday_provider() -> IntradayProvider:
+    return _resolve(settings.provider_intraday, "intraday", IntradayProvider)
+
+
+def news_provider() -> NewsProvider:
+    return _resolve(settings.provider_news, "news", NewsProvider)
+
+
+def econ_calendar_provider() -> EconomicCalendarProvider:
+    return _resolve(
+        settings.provider_econ_calendar, "econ_calendar", EconomicCalendarProvider
+    )

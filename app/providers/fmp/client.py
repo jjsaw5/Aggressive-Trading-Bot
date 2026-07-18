@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.domain.market import (
@@ -34,11 +35,15 @@ from app.domain.market import (
     PriceHistory,
     Quote,
 )
+from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 from app.providers._http import AsyncHTTP
 from app.providers.base import (
     CalendarProvider,
+    EconomicCalendarProvider,
     FundamentalsProvider,
+    IntradayProvider,
     MarketDataProvider,
+    NewsProvider,
     ProviderMeta,
 )
 
@@ -68,7 +73,39 @@ def _epoch_to_dt(ts: Any) -> datetime:
         return datetime.now(UTC)
 
 
-class FMPProvider(MarketDataProvider, FundamentalsProvider, CalendarProvider):
+# FMP intraday/news timestamps are US/Eastern wall-clock without a tzoffset
+# (e.g. "2026-07-17 15:59:00"). Localize to ET, then normalize to UTC so the
+# whole platform stays UTC-internal.
+_ET = ZoneInfo("America/New_York")
+
+
+def _parse_fmp_dt(value: Any) -> datetime | None:
+    """Parse an FMP datetime string. Accepts ISO with or without a tz; naive
+    values are assumed US/Eastern (FMP's convention) and converted to UTC."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        return dt.replace(tzinfo=_ET).astimezone(UTC)
+    try:  # explicit offset, e.g. "...+00:00"
+        dt = datetime.fromisoformat(str(value))
+        return (dt if dt.tzinfo else dt.replace(tzinfo=_ET)).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+class FMPProvider(
+    MarketDataProvider,
+    FundamentalsProvider,
+    CalendarProvider,
+    IntradayProvider,
+    NewsProvider,
+    EconomicCalendarProvider,
+):
     meta = _META
 
     def __init__(self) -> None:
@@ -182,4 +219,108 @@ class FMPProvider(MarketDataProvider, FundamentalsProvider, CalendarProvider):
                     source="fmp",
                 )
             )
+        return out
+
+    # --- Intraday bars (grounded on /stable/historical-chart/{interval}; field
+    # mapping validated defensively — see module note and docs/SHORT_DURATION.md) ---
+    async def get_intraday_bars(
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+    ) -> list[IntradayBar]:
+        if interval not in ("1min", "5min"):
+            raise ValueError("interval must be '1min' or '5min'")
+        params: dict[str, Any] = {"symbol": symbol.upper()}
+        if session_date is not None:
+            params["from"] = session_date.isoformat()
+            params["to"] = session_date.isoformat()
+        data = await self._http.get_json(f"/stable/historical-chart/{interval}", params)
+        rows = data if isinstance(data, list) else []
+        bars: list[IntradayBar] = []
+        for r in rows:
+            ts = _parse_fmp_dt(r.get("date"))
+            if ts is None:
+                continue
+            bars.append(
+                IntradayBar(
+                    ts=ts,
+                    open=_to_float(r.get("open")) or 0.0,
+                    high=_to_float(r.get("high")) or 0.0,
+                    low=_to_float(r.get("low")) or 0.0,
+                    close=_to_float(r.get("close")) or 0.0,
+                    volume=_to_float(r.get("volume")) or 0.0,
+                )
+            )
+        bars.sort(key=lambda b: b.ts)  # FMP returns newest-first; want chronological.
+        return bars
+
+    # --- News (grounded on /stable/stock-news) ---
+    async def get_news(
+        self,
+        symbols: list[str] | None = None,
+        *,
+        limit: int = 50,
+        since: datetime | None = None,
+    ) -> list[NewsItem]:
+        params: dict[str, Any] = {"limit": limit}
+        if symbols:
+            params["symbols"] = ",".join(s.upper() for s in symbols)
+        data = await self._http.get_json("/stable/stock-news", params)
+        rows = data if isinstance(data, list) else []
+        now = datetime.now(UTC)
+        out: list[NewsItem] = []
+        for r in rows:
+            pub = _parse_fmp_dt(r.get("publishedDate"))
+            if since is not None and pub is not None and pub < since:
+                continue
+            title = r.get("title") or ""
+            if not title:
+                continue
+            sym = r.get("symbol")
+            out.append(
+                NewsItem(
+                    id=f"fmp:{r.get('url') or title}"[:180],
+                    symbol=str(sym).upper() if sym else None,
+                    headline=title,
+                    summary=(r.get("text") or "")[:2000],
+                    source=r.get("site") or r.get("publisher") or "fmp",
+                    url=r.get("url"),
+                    source_ts=pub,
+                    provider_ts=pub,
+                    received_ts=now,
+                    raw_ref=r.get("url"),
+                )
+            )
+        return out
+
+    # --- Economic calendar (grounded on /stable/economics-calendar) ---
+    async def get_economic_events(
+        self, *, from_date: date | None = None, to_date: date | None = None
+    ) -> list[EconomicEvent]:
+        params: dict[str, Any] = {}
+        if from_date is not None:
+            params["from"] = from_date.isoformat()
+        if to_date is not None:
+            params["to"] = to_date.isoformat()
+        data = await self._http.get_json("/stable/economics-calendar", params)
+        rows = data if isinstance(data, list) else []
+        out: list[EconomicEvent] = []
+        for r in rows:
+            when = _parse_fmp_dt(r.get("date"))
+            name = r.get("event")
+            if when is None or not name:
+                continue
+            impact = r.get("impact")
+            out.append(
+                EconomicEvent(
+                    name=str(name),
+                    country=r.get("country"),
+                    scheduled_at=when,
+                    impact=str(impact).lower() if impact else None,
+                    previous=_to_float(r.get("previous")),
+                    consensus=_to_float(r.get("estimate")),
+                    actual=_to_float(r.get("actual")),
+                    status="released" if r.get("actual") not in (None, "") else "scheduled",
+                    source="fmp",
+                )
+            )
+        out.sort(key=lambda e: e.scheduled_at)
         return out

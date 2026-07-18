@@ -25,6 +25,7 @@ class ProviderName(str, Enum):
     FMP = "fmp"
     UNUSUAL_WHALES = "unusual_whales"
     ROBINHOOD = "robinhood"
+    BENZINGA = "benzinga"
 
 
 class Settings(BaseSettings):
@@ -132,6 +133,10 @@ class Settings(BaseSettings):
     # Optional. If unset, IV rank falls back to a realized-vol proxy from real
     # price history rather than an opaque provider field.
     provider_iv_history: ProviderName | None = ProviderName.MOCK
+    # Short-duration data capabilities (intraday bars, news, macro calendar).
+    provider_intraday: ProviderName = ProviderName.MOCK
+    provider_news: ProviderName = ProviderName.MOCK
+    provider_econ_calendar: ProviderName = ProviderName.MOCK
 
     # --- Provider credentials ---
     fmp_api_key: str | None = None
@@ -141,6 +146,8 @@ class Settings(BaseSettings):
     robinhood_username: str | None = None
     robinhood_password: str | None = None
     robinhood_mfa_secret: str | None = None
+    benzinga_api_key: str | None = None
+    benzinga_base_url: str = "https://api.benzinga.com"
 
     @field_validator("provider_iv_history", mode="before")
     @classmethod

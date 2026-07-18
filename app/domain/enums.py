@@ -83,3 +83,69 @@ class RejectReason(str, Enum):
     WEAK_SIGNAL = "weak_signal"
     NO_VALID_CONTRACT = "no_valid_contract"
     PORTFOLIO_LIMIT = "portfolio_limit"
+    STALE_QUOTE = "stale_quote"
+    RESTRICTED_EVENT_WINDOW = "restricted_event_window"
+    TIME_OF_DAY_BLOCKED = "time_of_day_blocked"
+    DAILY_LOSS_LIMIT = "daily_loss_limit"
+
+
+class DTECategory(str, Enum):
+    """Short-duration bucket. Kept distinct from a raw DTE integer because the
+    two categories have different data priorities, scoring, and risk rules."""
+
+    ZERO_DTE = "0dte"
+    SHORT_DTE = "1-5dte"
+
+
+class ShortDurationStrategy(str, Enum):
+    """Setup archetypes for the short-duration module (independent modules).
+
+    The strategy names an already-confirmed market setup; the option is only the
+    expression. Implemented incrementally — Phase 2 lands the first four."""
+
+    # 0DTE
+    OPENING_RANGE_BREAKOUT = "opening_range_breakout"
+    VWAP_TREND_CONTINUATION = "vwap_trend_continuation"
+    FAILED_BREAKOUT = "failed_breakout"
+    NEWS_MOMENTUM = "news_momentum"
+    MACRO_EVENT_REACTION = "macro_event_reaction"
+    # 1-5DTE
+    TREND_CONTINUATION = "trend_continuation"
+    BREAKOUT_FOLLOW_THROUGH = "breakout_follow_through"
+    PULLBACK_IN_TREND = "pullback_in_trend"
+    POST_EARNINGS_CONTINUATION = "post_earnings_continuation"
+    POST_EARNINGS_REVERSAL = "post_earnings_reversal"
+    CATALYST_CONTINUATION = "catalyst_continuation"
+    MULTI_SESSION_FLOW = "multi_session_flow"
+
+
+class CandidateState(str, Enum):
+    """Short-duration candidate lifecycle. Every transition is recorded with
+    the previous/new state, trigger, actor, reason, and score-at-transition."""
+
+    DETECTED = "detected"
+    EVALUATING = "evaluating"
+    WATCHLIST = "watchlist"
+    ARMED = "armed"
+    TRIGGERED = "triggered"
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    OPEN = "open"
+    MANAGING = "managing"
+    CLOSED = "closed"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class ShortDurationRegime(str, Enum):
+    """Intraday market regimes for short-duration decisions."""
+
+    BULL_TREND = "bull_trend"
+    BEAR_TREND = "bear_trend"
+    RANGE_BOUND = "range_bound"
+    HIGH_VOL_TREND = "high_vol_trend"
+    HIGH_VOL_CHOP = "high_vol_chop"
+    LOW_VOL_COMPRESSION = "low_vol_compression"
+    NEWS_DRIVEN = "news_driven"
+    MACRO_EVENT_DRIVEN = "macro_event_driven"
+    UNSTABLE = "unstable"  # restricted — new trades discouraged/blocked

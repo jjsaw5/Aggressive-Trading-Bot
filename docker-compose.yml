@@ -6,9 +6,18 @@
 # so no Postgres/Redis is needed. Tables are ensured on startup (create_all),
 # so there is no migration step. Secrets come from .env via env_file — never
 # baked into the image (see .dockerignore).
+#
+# To pull live Robinhood positions from inside the container, set
+# INSTALL_ROBINHOOD=1 in .env (or the shell) and rebuild:
+#   docker compose up -d --build
+# That installs the unofficial robin_stocks library into the image; also set
+# PROVIDER_BROKERAGE=robinhood (+ RH creds) in .env. Default 0 keeps it out.
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_ROBINHOOD: ${INSTALL_ROBINHOOD:-0}
     image: aggressive-trading-bot
     env_file: .env
     ports:
@@ -16,7 +25,10 @@ services:
     restart: unless-stopped
 
   scheduler:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_ROBINHOOD: ${INSTALL_ROBINHOOD:-0}
     image: aggressive-trading-bot
     env_file: .env
     restart: unless-stopped

@@ -172,6 +172,51 @@ class RobinhoodProvider(MarketDataProvider, OptionsChainProvider, BrokerageProvi
         }
         return sorted(symbols)
 
+    async def get_option_positions(self) -> list:
+        """Full open option positions grouped by (symbol, expiration), each as a
+        list of `ImportedLeg` (strike, type, long/short, qty, per-share cost).
+        Mirrors what the connector pulls: positions + per-contract instrument
+        data for strikes/type. Best-effort; unofficial API."""
+        from app.domain.enums import OptionType
+        from app.services.position_import import ImportedLeg
+
+        positions = await self._session.call("options.get_open_option_positions")
+        positions = positions if isinstance(positions, list) else []
+        groups: dict[tuple[str, str], list[ImportedLeg]] = {}
+        for p in positions:
+            if not isinstance(p, dict):
+                continue
+            oid = p.get("option_id")
+            sym = str(p.get("chain_symbol") or "").upper()
+            try:
+                qty = int(float(p.get("quantity") or 0))
+            except (TypeError, ValueError):
+                qty = 0
+            exp = p.get("expiration_date")
+            if not (oid and sym and qty and exp):
+                continue
+            is_long = str(p.get("type") or "").lower() == "long"
+            try:
+                avg = abs(float(p.get("average_price") or 0)) / 100.0  # per-share
+            except (TypeError, ValueError):
+                continue
+            inst = await self._session.call("options.get_option_instrument_data_by_id", oid)
+            if not isinstance(inst, dict) or not inst.get("strike_price"):
+                continue
+            otype = (
+                OptionType.CALL if str(inst.get("type")).lower() == "call" else OptionType.PUT
+            )
+            expd = _to_date(exp)
+            if expd is None:
+                continue
+            groups.setdefault((sym, str(exp)), []).append(
+                ImportedLeg(
+                    strike=float(inst["strike_price"]), option_type=otype, is_long=is_long,
+                    quantity=qty, entry_price_per_share=round(avg, 4), expiration=expd,
+                )
+            )
+        return [(sym, legs) for (sym, _exp), legs in groups.items()]
+
 
 def _to_date(value: object) -> date | None:
     try:

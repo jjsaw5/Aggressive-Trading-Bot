@@ -97,7 +97,7 @@
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
 
-    let state = { scanId: null, candidates: [], tab: "candidates" };
+    let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set() };
 
     // Ops panel auto-refresh: poll /metrics every 5s while the Ops tab is open.
     let opsTimer = null;
@@ -300,16 +300,50 @@
            <th class="num">Win rate</th></tr></thead><tbody>${dirRows}</tbody></table>`;
     }
 
+    function posBadge(a) {
+      const map = { stop: "neg", take_profit: "pos", time_stop: "warn", unmarked: "warn", hold: "" };
+      const label = { stop: "STOP — close", take_profit: "TAKE PROFIT", time_stop: "TIME STOP",
+                      unmarked: "UNMARKED", hold: "hold" };
+      return `<span class="badge ${map[a] || ''}">${label[a] || a}</span>`;
+    }
+
+    function positionDetail(p) {
+      const warn = (p.warnings || []).length
+        ? `<div class="err" style="margin:6px 0">${p.warnings.join(" · ")}</div>` : "";
+      const legRows = (p.legs || []).map(l =>
+        `<tr><td>${l.side}</td><td><strong>${l.contract}</strong></td><td>${l.expiration}</td></tr>`).join("");
+      const closeTicket = legRows ? `<b>Close ticket</b> <span class="muted">(reverse the spread as ONE order)</span>
+        <table style="margin:4px 0 12px"><thead><tr><th>Side</th><th>Contract</th><th>Expiration</th></tr></thead>
+        <tbody>${legRows}</tbody></table>` : "";
+      const exRows = (p.exit_levels || []).map(l => {
+        const price = l.net_price == null ? "—" : ("$" + fmt(l.net_price));
+        const pnl = l.pnl_usd == null ? "" : `<span class="${l.pnl_usd >= 0 ? "pos" : "neg"}">${l.pnl_usd >= 0 ? "+" : ""}$${fmt(l.pnl_usd, 0)}</span>`;
+        return `<tr><td>${l.label}</td><td class="num">${price}</td><td class="num">${pnl}</td><td class="muted">${l.note}</td></tr>`;
+      }).join("");
+      const exitPlan = exRows ? `<b>Exit plan</b> <span class="muted">(your standing reminder — close at these nets)</span>
+        <table style="margin:4px 0 12px"><thead><tr><th>Trigger</th><th class="num">Net</th><th class="num">P&L</th><th>Note</th></tr></thead>
+        <tbody>${exRows}</tbody></table>` : "";
+      const be = (p.breakevens || []).length ? p.breakevens.join(" / ") : "—";
+      const summary = `<div class="kv">
+        <div>Entry (net)</div><div>$${fmt(p.entry_net)}${p.current_net != null ? ` → now $${fmt(p.current_net)}` : ""}</div>
+        <div>Max loss / profit</div><div>$${fmt(p.max_loss_usd, 0)} / ${p.max_profit_usd == null ? "uncapped" : "$" + fmt(p.max_profit_usd, 0)}</div>
+        <div>Breakeven</div><div>${be}</div>
+        <div>DTE / time stop</div><div>${p.dte == null ? "—" : p.dte} / ${p.time_stop_dte == null ? "—" : p.time_stop_dte} DTE</div>
+      </div>`;
+      const open = state.expandedPos.has(p.symbol);
+      return `<tr class="detail" id="pd-${p.symbol}"${open ? "" : " hidden"}><td colspan="8">
+        ${warn}${summary}<div style="margin-top:8px"></div>${closeTicket}${exitPlan}</td></tr>`;
+    }
+
     async function renderPositions() {
       const ps = await api("GET", "/positions");
-      if (!ps.length) return `<div class="empty">No open positions tracked. Import via POST /paper/import.</div>`;
-      const badge = (a) => {
-        const map = { stop: "neg", take_profit: "pos", time_stop: "warn", unmarked: "warn", hold: "" };
-        const label = { stop: "STOP — close", take_profit: "TAKE PROFIT", time_stop: "TIME STOP",
-                        unmarked: "UNMARKED", hold: "hold" };
-        return `<span class="badge ${map[a] || ''}">${label[a] || a}</span>`;
-      };
-      const rows = ps.map(p => `<tr>
+      const toolbar = `<div style="margin-bottom:10px">
+        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <button class="ghost" data-act="pos-refresh">Refresh</button>
+        <button class="ghost" data-act="pos-sync">Sync from Robinhood</button>
+        <span class="muted">Click a row for its exit plan + close ticket. Marks re-fetch live every 5s.</span></div>`;
+      if (!ps.length) return toolbar + `<div class="empty">No open positions tracked. Import via POST /paper/import, or Sync from Robinhood.</div>`;
+      const rows = ps.map(p => `<tr class="pos-clickable" data-sym="${p.symbol}">
         <td><strong>${p.symbol}</strong></td>
         <td>${p.strategy} <span class="muted">x${p.contracts}</span></td>
         <td class="num">${fmt(p.entry_net)}</td>
@@ -317,11 +351,9 @@
         <td class="num ${cls(p.pnl_usd)}">${p.pnl_usd == null ? "—" : (p.pnl_usd >= 0 ? "+" : "") + "$" + fmt(p.pnl_usd, 0)}</td>
         <td class="num ${cls(p.pnl_pct)}">${p.pnl_pct == null ? "—" : (p.pnl_pct >= 0 ? "+" : "") + (p.pnl_pct * 100).toFixed(0) + "%"}</td>
         <td class="num">${p.dte == null ? "—" : p.dte}</td>
-        <td>${badge(p.action)} <span class="muted">${p.note || ""}</span></td>
-      </tr>`).join("");
-      return `<div style="margin-bottom:10px"><span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
-        <span class="muted">Tier 4 marks each position from the live chain; exit action is mechanical.</span></div>
-        <table><thead><tr><th>Sym</th><th>Structure</th><th class="num">Entry</th><th class="num">Now</th>
+        <td>${posBadge(p.action)}</td>
+      </tr>` + positionDetail(p)).join("");
+      return toolbar + `<table><thead><tr><th>Sym</th><th>Structure</th><th class="num">Entry</th><th class="num">Now</th>
         <th class="num">P&amp;L</th><th class="num">%</th><th class="num">DTE</th><th>Action</th></tr></thead>
         <tbody>${rows}</tbody></table>`;
     }
@@ -429,6 +461,14 @@
             const d = await api("POST", "/outcomes/resolve?min_age_days=0");
             alert("Resolved " + d.resolved + " decision(s) against current prices.");
             render();
+          } else if (act === "pos-refresh") {
+            render();
+          } else if (act === "pos-sync") {
+            actBtn.disabled = true; actBtn.textContent = "Syncing…";
+            try {
+              const d = await api("POST", "/positions/sync");
+              alert("Sync: " + d.message);
+            } finally { render(); }
           }
         } catch (err) { showErr(err); }
         return;
@@ -440,6 +480,15 @@
         const d = $("#d-" + sym);
         if (d.hidden) { d.innerHTML = detailRow(c).replace(/^<tr[^>]*>|<\/tr>$/g, ""); d.hidden = false; }
         else d.hidden = true;
+      }
+      const posRow = e.target.closest("tr.pos-clickable");
+      if (posRow && state.tab === "positions") {
+        const sym = posRow.dataset.sym;
+        const d = $("#pd-" + sym);
+        if (d) {
+          d.hidden = !d.hidden;
+          if (d.hidden) state.expandedPos.delete(sym); else state.expandedPos.add(sym);
+        }
       }
     });
 

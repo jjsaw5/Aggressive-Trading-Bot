@@ -117,8 +117,29 @@ Dashboard: open `http://<host>:8000/dashboard`
 
 ## 6. Keeping tracked positions in sync
 
-The app can't read your broker directly in every environment, so tracked
-positions are a snapshot. Re-import after you open/close trades:
+Once a position is tracked, Tier 4 re-marks it from the live chain every pass and
+the dashboard **Positions** tab refreshes its P&L, DTE, and exit levels every 5s —
+no action needed for marks to stay current. What needs syncing is the *set* of
+positions (which trades you hold), after you open or close one.
+
+**Option A — Sync from Robinhood (one button).** On the Positions tab, click
+**Sync from Robinhood**. This calls `POST /positions/sync`, which reads your open
+option positions (with cost basis) from the broker and tracks them. It needs the
+unofficial `robin_stocks` library present in the running image and Robinhood
+configured, which are BOTH off by default:
+
+1. In `.env`, set `INSTALL_ROBINHOOD=1`, `PROVIDER_BROKERAGE=robinhood`, and your
+   `ROBINHOOD_USERNAME` / `ROBINHOOD_PASSWORD` (+ `ROBINHOOD_MFA_SECRET`, your
+   authenticator's TOTP seed — recommended, since email/SMS MFA prompts can't be
+   answered by a headless container).
+2. Rebuild so the library is installed: `docker compose up -d --build`.
+
+If the button reports "Broker sync unavailable: …", the message tells you which of
+those is missing. Robinhood has no official API and its login can require an
+interactive MFA challenge; if a sync fails for that reason, use Option B.
+
+**Option B — Import explicitly (always works, no broker library).** Re-import
+after you open/close trades:
 
 ```
 curl -s -X POST localhost:8000/paper/import -H 'content-type: application/json' -d '[
@@ -138,8 +159,9 @@ curl -s -X POST localhost:8000/paper/import -H 'content-type: application/json' 
 
 ## Known follow-ups
 
-- **Broker auto-sync**: positions are imported manually (the `robin_stocks`
-  client doesn't run in all environments). A working broker provider would let
-  Tier 4 reconcile automatically.
+- **Broker auto-sync**: the **Sync from Robinhood** button (§6, Option A) pulls
+  positions on demand when `INSTALL_ROBINHOOD=1` + `PROVIDER_BROKERAGE=robinhood`.
+  A scheduled auto-reconcile (Tier 4 periodically re-pulling the position set) is
+  the next step; today the set is synced on button press or explicit import.
 - **Redis**: optional; in-memory cache/bus is the default and is sufficient for
   a single scheduler process.

@@ -59,6 +59,28 @@ def test_import_endpoint_and_positions_view() -> None:
     aapl = next((r for r in rows if r["symbol"] == "AAPL"), None)
     assert aapl is not None
     assert aapl["action"] in {"hold", "take_profit", "stop", "time_stop", "unmarked"}
+    # Enriched detail for the Positions page: expiration, risk economics, a
+    # close ticket (reversed legs), the exit plan, and human-readable warnings.
+    assert aapl["expiration"] == "2026-09-18"
+    assert aapl["max_loss_usd"] == 300.0  # 3.00/share x100 x1
+    assert aapl["time_stop_dte"] == 7
+    assert aapl["legs"] and aapl["legs"][0]["side"] == "Sell to close"
+    assert aapl["legs"][0]["contract"] == "200C"
+    assert aapl["exit_levels"]  # standing reminder of where to close
+    assert isinstance(aapl["warnings"], list)
+
+
+def test_positions_sync_reports_reason_when_broker_unavailable() -> None:
+    # No brokerage that can read positions is configured in tests, so the sync
+    # endpoint must fail gracefully with a clear reason (never a 500).
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    resp = TestClient(app).post("/positions/sync")
+    assert resp.status_code in {200, 400}
+    if resp.status_code == 400:
+        assert "sync unavailable" in resp.json()["detail"].lower()
 
 
 def test_import_multi_contract_scales_risk() -> None:

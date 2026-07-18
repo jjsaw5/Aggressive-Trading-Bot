@@ -12,11 +12,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Opt-in Robinhood live integration. Off by default so the base image stays
+# lean and builds can't break on the unofficial library. To pull your real
+# positions from inside the container, build with:
+#   docker compose build --build-arg INSTALL_ROBINHOOD=1
+# and set PROVIDER_BROKERAGE=robinhood (+ RH creds) in .env. See docs/GO_LIVE.md.
+ARG INSTALL_ROBINHOOD=0
+
 # Copy the project and install it EDITABLE so config/scheduling.yaml and the
 # dashboard HTML resolve from the source tree at runtime (the schedule loader
 # looks for config/ relative to the package). .dockerignore keeps .env out.
 COPY . .
-RUN pip install --upgrade pip && pip install -e .
+RUN pip install --upgrade pip \
+    && if [ "$INSTALL_ROBINHOOD" = "1" ]; then pip install -e ".[robinhood]"; else pip install -e .; fi
 
 # Non-root runtime user.
 RUN useradd --create-home --uid 10001 appuser \

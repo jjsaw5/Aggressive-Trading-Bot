@@ -125,3 +125,31 @@ def build_tracked_trade(
         entry_fill=net_per_share,
         entry_slippage=0.0,
     )
+
+
+async def sync_broker_positions() -> tuple[int, str]:
+    """Pull open option positions from the configured brokerage and store them as
+    tracked positions Tier 4 monitors. Raises a clear error if the broker can't
+    read positions (e.g. Robinhood library not installed, or creds/MFA missing)."""
+    import asyncio
+
+    from app.db import repository
+    from app.providers import registry
+
+    broker = registry.brokerage_provider()
+    getter = getattr(broker, "get_option_positions", None)
+    if getter is None:
+        raise RuntimeError(
+            "The configured brokerage can't read positions. Set PROVIDER_BROKERAGE=robinhood."
+        )
+    groups = await getter()
+    if not groups:
+        return 0, "No open option positions returned by the broker."
+    n = 0
+    for symbol, legs in groups:
+        if not legs:
+            continue
+        trade = build_tracked_trade(symbol, legs, source="rh_sync")
+        await asyncio.to_thread(repository.save_paper_trade, trade)
+        n += 1
+    return n, f"Synced {n} position(s) from the broker."

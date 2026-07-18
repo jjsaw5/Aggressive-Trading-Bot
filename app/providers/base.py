@@ -151,3 +151,9 @@ class BrokerageProvider(Provider):
 
     @abc.abstractmethod
     async def get_open_option_symbols(self) -> list[str]: ...
+
+    async def get_option_positions(self) -> list:
+        """Open option positions grouped into structures, as
+        ``list[(symbol, list[ImportedLeg])]`` for the position importer. Default
+        is empty; override in a broker that can read positions with cost basis."""
+        return []

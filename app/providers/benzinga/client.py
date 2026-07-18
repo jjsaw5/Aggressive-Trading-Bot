@@ -3,19 +3,23 @@
 Grounded on Benzinga's public v2 Newsfeed API:
   * Base:  https://api.benzinga.com
   * GET /api/v2/news
-  * Auth:  `token` query param OR `Authorization: token <KEY>` header (header used
-           here so the key never lands in a URL or cache key).
+  * Auth:  `token` query param. (The `Authorization: token <KEY>` header form is
+           documented but returns 401 "anonymous" against the v2 newsfeed — the
+           query param is what actually authenticates. The response cache strips
+           `token` from its cache key, so the secret never fragments the cache.)
   * IMPORTANT: the endpoint defaults to XML — `Accept: application/json` is
     required to get JSON back.
   * Key params: `tickers` (comma list), `pageSize`, `page`, `displayOutput`
     ("full"|"abstract"|"headline"), `updatedSince` (unix seconds).
   * Item fields: id, author, created, updated (RFC-2822), title, teaser, body,
-    url, stocks:[{name}], channels:[{name}], tags:[{name}], image:[...].
+    url, stocks:[{name, exchange}], channels:[{name}], tags:[{name}], image:[...],
+    importance_rank (a materiality signal used in Phase-3 news scoring).
 
-`meta.verified=False`: the mapping is grounded on Benzinga's published docs but
-is not yet exercised against a live key in this environment. Field access is
-defensive; missing fields degrade to None rather than being fabricated. Activated
-only when `BENZINGA_API_KEY` is set — otherwise the registry routes news to FMP.
+`meta.verified=True`: exercised against a live key (2026-07-17) — auth, JSON
+negotiation, and field mapping confirmed against a real response. Field access
+stays defensive; missing fields degrade to None rather than being fabricated.
+Activated only when `BENZINGA_API_KEY` is set — otherwise the registry routes
+news to FMP.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ _META = ProviderMeta(
     rate_limit="per-plan; unpublished. Back off on 429 (handled by AsyncHTTP).",
     licensing="Commercial license required; personal/eval per your Benzinga agreement.",
     docs_url="https://docs.benzinga.com",
-    verified=False,  # Grounded on published v2 docs; needs a live smoke test.
+    verified=True,  # Live-confirmed 2026-07-17: auth + JSON + field mapping.
 )
 
 
@@ -74,13 +78,13 @@ class BenzingaProvider(NewsProvider):
 
     def __init__(self) -> None:
         key = settings.benzinga_api_key or ""
+        # Token goes in the query string (the header form 401s on v2 news). The
+        # response cache strips `token` from its key, so it won't leak or shard.
         self._http = AsyncHTTP(
             provider="benzinga",
             base_url=settings.benzinga_base_url,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"token {key}",
-            },
+            headers={"Accept": "application/json"},
+            default_params={"token": key},
         )
 
     async def aclose(self) -> None:

@@ -22,6 +22,7 @@ from app.api.routes import (
     positions,
     proposals,
     scans,
+    short_duration,
     tiers,
 )
 from app.api.routes import config as config_routes
@@ -74,4 +75,5 @@ app.include_router(outcomes.router)
 app.include_router(tiers.router)
 app.include_router(metrics.router)
 app.include_router(positions.router)
+app.include_router(short_duration.router)
 app.include_router(dashboard.router)

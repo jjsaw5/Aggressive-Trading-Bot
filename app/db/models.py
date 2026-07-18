@@ -122,3 +122,91 @@ class TierMemberRow(Base, TimestampMixin):
     score: Mapped[float] = mapped_column(Float, default=0.0)
     reason: Mapped[str] = mapped_column(String(128), default="")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+# --- Short-duration (0DTE / 1-5DTE) module ---
+
+
+class ShortDurationCandidateRow(Base, TimestampMixin):
+    """A short-duration trade candidate. Filter/rank fields promoted; the full
+    domain object lives in `payload`."""
+
+    __tablename__ = "short_duration_candidates"
+    __table_args__ = (
+        Index("ix_sd_cand_cat_state", "dte_category", "state"),
+        Index("ix_sd_cand_detected", "detected_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    dte_category: Mapped[str] = mapped_column(String(8), nullable=False)
+    strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class CandidateTransitionRow(Base, TimestampMixin):
+    """Audit trail of a short-duration candidate's state changes."""
+
+    __tablename__ = "candidate_state_transitions"
+    __table_args__ = (Index("ix_sd_trans_cand_at", "candidate_id", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    from_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    to_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(64), default="")
+    actor: Mapped[str] = mapped_column(String(32), default="system")
+    reason: Mapped[str] = mapped_column(String(256), default="")
+    score_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class IntradayLevelsRow(Base, TimestampMixin):
+    """Computed intraday session levels for one symbol on one session date."""
+
+    __tablename__ = "intraday_levels"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    session_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    vwap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opening_range_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opening_range_low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    relative_volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class NewsItemRow(Base, TimestampMixin):
+    """A news headline with full latency lineage, for the News page + analytics."""
+
+    __tablename__ = "news_items"
+    __table_args__ = (Index("ix_news_symbol_recv", "symbol", "received_ts"),)
+
+    id: Mapped[str] = mapped_column(String(192), primary_key=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    headline: Mapped[str] = mapped_column(String(512), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), default="unknown")
+    source_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duplicate_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class EventRestrictionRow(Base, TimestampMixin):
+    """A trading-restricted window around a high-impact macro event."""
+
+    __tablename__ = "event_restrictions"
+    __table_args__ = (Index("ix_evt_restr_window", "window_start", "window_end"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trading_allowed: Mapped[bool] = mapped_column(default=False)
+    size_modifier: Mapped[float] = mapped_column(Float, default=0.0)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)

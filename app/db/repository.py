@@ -15,16 +15,28 @@ from sqlalchemy import delete, select
 
 from app.db.models import (
     CandidateRow,
+    CandidateTransitionRow,
     DecisionOutcomeRow,
     DecisionSnapshotRow,
+    EventRestrictionRow,
+    IntradayLevelsRow,
+    NewsItemRow,
     PaperTradeRow,
     ProposalRow,
     ScanRow,
+    ShortDurationCandidateRow,
     TierMemberRow,
 )
 from app.db.session import SessionLocal
 from app.domain.candidates import TradeCandidate
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot
+from app.domain.shortduration import (
+    CandidateTransition,
+    EventRestriction,
+    IntradayLevels,
+    NewsItem,
+    ShortDurationCandidate,
+)
 from app.domain.trades import OrderProposal, PaperTrade
 from app.tiers.models import TierMember
 
@@ -305,3 +317,164 @@ def fetch_calibration_data(
         )
         outs = [DecisionOutcome.model_validate(r.payload) for r in orows.scalars().all()]
         return snaps, outs
+
+
+# --- Short-duration (0DTE / 1-5DTE) -----------------------------------------
+def save_short_duration_candidate(candidate: ShortDurationCandidate) -> None:
+    with SessionLocal() as session:
+        session.merge(
+            ShortDurationCandidateRow(
+                id=candidate.id,
+                symbol=candidate.symbol,
+                dte_category=candidate.dte_category.value,
+                strategy=candidate.strategy.value if candidate.strategy else None,
+                direction=candidate.direction.value,
+                state=candidate.state.value,
+                score=candidate.score,
+                detected_at=candidate.detected_at,
+                expires_at=candidate.expires_at,
+                payload=candidate.model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+
+def list_short_duration_candidates(
+    *, dte_category: str | None = None, states: list[str] | None = None, limit: int = 100
+) -> list[ShortDurationCandidate]:
+    with SessionLocal() as session:
+        stmt = select(ShortDurationCandidateRow)
+        if dte_category:
+            stmt = stmt.where(ShortDurationCandidateRow.dte_category == dte_category)
+        if states:
+            stmt = stmt.where(ShortDurationCandidateRow.state.in_(states))
+        stmt = stmt.order_by(ShortDurationCandidateRow.detected_at.desc()).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [ShortDurationCandidate.model_validate(r.payload) for r in rows]
+
+
+def get_short_duration_candidate(candidate_id: str) -> ShortDurationCandidate | None:
+    with SessionLocal() as session:
+        row = session.get(ShortDurationCandidateRow, candidate_id)
+        return ShortDurationCandidate.model_validate(row.payload) if row else None
+
+
+def append_candidate_transition(t: CandidateTransition) -> None:
+    with SessionLocal() as session:
+        session.add(
+            CandidateTransitionRow(
+                candidate_id=t.candidate_id,
+                from_state=t.from_state.value if t.from_state else None,
+                to_state=t.to_state.value,
+                at=t.at,
+                trigger=t.trigger,
+                actor=t.actor,
+                reason=t.reason,
+                score_at=t.score_at,
+            )
+        )
+        session.commit()
+
+
+def list_candidate_transitions(candidate_id: str) -> list[CandidateTransition]:
+    with SessionLocal() as session:
+        rows = (
+            session.execute(
+                select(CandidateTransitionRow)
+                .where(CandidateTransitionRow.candidate_id == candidate_id)
+                .order_by(CandidateTransitionRow.at.asc())
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            CandidateTransition(
+                candidate_id=r.candidate_id,
+                from_state=r.from_state,  # type: ignore[arg-type]
+                to_state=r.to_state,  # type: ignore[arg-type]
+                at=r.at,
+                trigger=r.trigger,
+                actor=r.actor,
+                reason=r.reason,
+                score_at=r.score_at,
+            )
+            for r in rows
+        ]
+
+
+def save_news_items(items: list[NewsItem]) -> int:
+    """Idempotent upsert by id; returns the count written."""
+    if not items:
+        return 0
+    with SessionLocal() as session:
+        for n in items:
+            session.merge(
+                NewsItemRow(
+                    id=n.id,
+                    symbol=n.symbol,
+                    headline=n.headline[:512],
+                    source=n.source,
+                    source_ts=n.source_ts,
+                    received_ts=n.received_ts,
+                    duplicate_group_id=n.duplicate_group_id,
+                    payload=n.model_dump(mode="json"),
+                )
+            )
+        session.commit()
+        return len(items)
+
+
+def list_news_items(*, symbol: str | None = None, limit: int = 100) -> list[NewsItem]:
+    with SessionLocal() as session:
+        stmt = select(NewsItemRow)
+        if symbol:
+            stmt = stmt.where(NewsItemRow.symbol == symbol.upper())
+        stmt = stmt.order_by(NewsItemRow.received_ts.desc()).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [NewsItem.model_validate(r.payload) for r in rows]
+
+
+def save_intraday_levels(levels: IntradayLevels) -> None:
+    with SessionLocal() as session:
+        session.merge(
+            IntradayLevelsRow(
+                symbol=levels.symbol,
+                session_date=levels.session_date,
+                vwap=levels.vwap,
+                opening_range_high=levels.opening_range_high,
+                opening_range_low=levels.opening_range_low,
+                relative_volume=levels.relative_volume,
+                computed_at=levels.computed_at,
+                payload=levels.model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+
+def save_event_restriction(r: EventRestriction) -> None:
+    with SessionLocal() as session:
+        session.add(
+            EventRestrictionRow(
+                event_name=r.event_name,
+                window_start=r.window_start,
+                window_end=r.window_end,
+                trading_allowed=r.trading_allowed,
+                size_modifier=r.size_modifier,
+                payload=r.model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+
+def list_event_restrictions(limit: int = 100) -> list[EventRestriction]:
+    with SessionLocal() as session:
+        rows = (
+            session.execute(
+                select(EventRestrictionRow)
+                .order_by(EventRestrictionRow.window_start.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return [EventRestriction.model_validate(r.payload) for r in rows]

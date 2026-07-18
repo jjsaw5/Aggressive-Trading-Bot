@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     session_tick_seconds: int = 10
     scheduling_config_path: str | None = None  # override config/scheduling.yaml
 
+    # --- Short-duration (0DTE / 1-5DTE) module ---
+    # Off by default. When enabled, a dedicated fast loop (added in a later phase)
+    # drives the module; Phase 1 exposes only read-only views + a context scan.
+    # Live trading for this module stays gated behind the global execution guard.
+    short_duration_enabled: bool = False
+    short_duration_opening_range_minutes: int = 15
+    short_duration_max_dte: int = 5
+
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
     # account. This aligns the % cap with the $100 absolute per-trade cap and

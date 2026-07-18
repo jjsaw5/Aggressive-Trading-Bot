@@ -61,8 +61,19 @@ sort by composite_score  →  store  →  API / CLI / scheduler
 | Risk | `app/risk` | domain, config, engine (selection DTO) |
 | Modes | `app/modes` | domain, config, risk |
 | Services | `app/services` | engine, risk, providers registry |
+| Short-duration | `app/shortduration` | domain, providers, risk, quant |
 | API | `app/api` | services, modes |
 | Persistence | `app/db`, `alembic` | config, domain |
+
+The **Short-Duration Trading** module (0DTE / 1–5DTE) is a separate subsystem
+that reuses the pricing, risk-sizing, exit-plan, paper-engine, event-bus, market-
+clock, and warehouse machinery while adding its own intraday primitives (VWAP,
+opening range, relative volume, breadth proxy), a transparent intraday regime
+engine, new provider capabilities (`IntradayProvider`, `NewsProvider`,
+`EconomicCalendarProvider`), and its own persistence/API/dashboard surface. It is
+setup-first — confirm a market setup, then decide whether a short-dated option is
+the right expression — and runs research/paper/approval only. See
+`docs/SHORT_DURATION.md` for the full design and phase status.
 
 ## Modes & the execution guard
 

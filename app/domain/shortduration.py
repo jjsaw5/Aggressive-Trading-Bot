@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.domain.enums import (
     CandidateState,
@@ -115,9 +115,12 @@ class NewsItem(BaseModel):
     duplicate_group_id: str | None = None
     raw_ref: str | None = None  # pointer/hash to the retained raw payload
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def end_to_end_latency_s(self) -> float | None:
-        """Seconds from source publication to our receipt, when both known."""
+        """Seconds from source publication to our receipt, when both known.
+        A computed field so it is serialized in API responses (the News page
+        renders it directly)."""
         if self.source_ts is None:
             return None
         return round((self.received_ts - self.source_ts).total_seconds(), 3)

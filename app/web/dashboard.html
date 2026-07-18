@@ -18,6 +18,7 @@
       }
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
            background: var(--bg); color: var(--text); }
     header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex;
@@ -56,6 +57,26 @@
     .empty { padding: 28px; text-align: center; color: var(--muted); }
     .err { color: var(--red); margin: 8px 0; }
     code { background: var(--chip); padding: 1px 5px; border-radius: 5px; }
+    .sections { display: flex; gap: 8px; margin-bottom: 14px; }
+    .sections button { background: transparent; color: var(--muted); border: 1px solid var(--border);
+                       font-weight: 600; }
+    .sections button.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+    .banner { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
+              background: var(--panel); }
+    .banner h2 { margin: 0 0 4px; font-size: 20px; }
+    .banner .sub { color: var(--muted); font-size: 13px; }
+    .regime-ok { border-left: 4px solid var(--green); }
+    .regime-warn { border-left: 4px solid #d97706; }
+    .regime-stop { border-left: 4px solid var(--red); }
+    .factors { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .factor { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); }
+    .factor.against { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+    .card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+    .card h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+    .countdown { font-size: 22px; font-variant-numeric: tabular-nums; }
+    .proxy-note { font-size: 11px; color: var(--muted); font-style: italic; }
   </style>
 </head>
 <body>
@@ -64,20 +85,34 @@
     <span id="cfg" class="muted"></span>
   </header>
   <main>
-    <div class="controls">
+    <div class="sections">
+      <button data-section="core" class="active">Core Research</button>
+      <button data-section="short">Short-Duration Trading</button>
+    </div>
+    <div id="coreControls" class="controls">
       <input id="symbols" type="text" placeholder="Symbols (optional, comma-separated) — blank = default universe" />
       <label class="muted"><input id="actionable" type="checkbox" checked /> actionable only</label>
       <button id="scan">Run scan</button>
       <span id="scanInfo" class="muted"></span>
     </div>
     <div id="err" class="err"></div>
-    <div class="tabs">
+    <div class="tabs" id="coreTabs">
       <button data-tab="candidates" class="active">Candidates</button>
       <button data-tab="positions">Positions</button>
       <button data-tab="proposals">Proposals</button>
       <button data-tab="paper">Paper trades</button>
       <button data-tab="calibration">Calibration</button>
       <button data-tab="ops">Ops</button>
+    </div>
+    <div class="tabs" id="sdTabs" hidden>
+      <button data-sdtab="command" class="active">0DTE Command Center</button>
+      <button data-sdtab="scanner">1–5DTE Scanner</button>
+      <button data-sdtab="candidates">Trade Candidates</button>
+      <button data-sdtab="positions">Open Positions</button>
+      <button data-sdtab="news">News &amp; Catalysts</button>
+      <button data-sdtab="events">Event Calendar</button>
+      <button data-sdtab="performance">Performance</button>
+      <button data-sdtab="config">Configuration</button>
     </div>
     <div id="view" class="overflow"><div class="empty">Run a scan to see ranked candidates.</div></div>
   </main>
@@ -97,16 +132,22 @@
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
 
-    let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set() };
+    let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
+                  section: "core", sdTab: "command" };
 
-    // Ops panel auto-refresh: poll /metrics every 5s while the Ops tab is open.
+    // Live auto-refresh: poll while a live view is open (Ops/Positions, or the
+    // Short-Duration command center / positions).
     let opsTimer = null;
     const LIVE_TABS = ["ops", "positions"];
+    const SD_LIVE_TABS = ["command", "positions"];
+    function isLive() {
+      return state.section === "short"
+        ? SD_LIVE_TABS.includes(state.sdTab)
+        : LIVE_TABS.includes(state.tab);
+    }
     function manageOpsRefresh() {
       if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
-      if (LIVE_TABS.includes(state.tab)) {
-        opsTimer = setInterval(() => { if (LIVE_TABS.includes(state.tab)) render(); }, 5000);
-      }
+      if (isLive()) opsTimer = setInterval(() => { if (isLive()) render(); }, 5000);
     }
 
     async function loadConfig() {
@@ -427,9 +468,180 @@
       return badges + tierRow + provTable + funnelTable + evTable;
     }
 
+    // ---------------- Short-Duration Trading ----------------
+    const REGIME_LABEL = {
+      bull_trend: "Bull trend", bear_trend: "Bear trend", range_bound: "Range-bound",
+      high_vol_trend: "High-vol trend", high_vol_chop: "High-vol chop",
+      low_vol_compression: "Low-vol compression", news_driven: "News-driven",
+      macro_event_driven: "Macro-event-driven", unstable: "Unstable / restricted",
+    };
+    function regimeBanner(r) {
+      const cls = !r.allow_new_trades ? "regime-stop" : r.reduce_size ? "regime-warn" : "regime-ok";
+      const gate = !r.allow_new_trades
+        ? `<span class="badge warn">NEW TRADES BLOCKED</span>`
+        : r.reduce_size ? `<span class="badge" style="color:#d97706">REDUCE SIZE</span>`
+        : `<span class="badge" style="color:var(--green)">trading allowed</span>`;
+      const nxt = r.next_event_name
+        ? `Next risk event: <strong>${r.next_event_name}</strong> in <span class="countdown">${r.next_event_minutes == null ? "—" : Math.round(r.next_event_minutes) + "m"}</span>`
+        : "No scheduled macro event ahead.";
+      const facts = (r.factors || []).map(f =>
+        `<span class="factor ${f.supports ? "" : "against"}">${f.name}: ${f.value}</span>`).join("");
+      const idx = [["SPY", r.spy_trend_pct], ["QQQ", r.qqq_trend_pct], ["IWM", r.iwm_trend_pct]]
+        .map(([s, v]) => `${s} ${v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%"}`).join(" · ");
+      return `<div class="banner ${cls}">
+        <h2>${REGIME_LABEL[r.regime] || r.regime} ${gate}</h2>
+        <div class="sub">Confidence ${(r.confidence * 100).toFixed(0)}% · ${idx}
+          · breadth ${r.breadth_above_vwap_pct == null ? "—" : (r.breadth_above_vwap_pct * 100).toFixed(0) + "% > VWAP"}
+          · vol ${r.vol_reading == null ? "—" : (r.vol_reading * 100).toFixed(0) + "%"}</div>
+        <div style="margin-top:6px">${nxt}</div>
+        <div class="factors">${facts}</div>
+        ${r.notes ? `<div class="proxy-note" style="margin-top:6px">${r.notes}</div>` : ""}
+      </div>`;
+    }
+
+    function sdCandRows(cands) {
+      if (!cands.length) return `<tr><td colspan="6" class="muted">No candidates. Run a scan — Phase 1 creates context-only snapshots.</td></tr>`;
+      return cands.map(c => `<tr>
+        <td><strong>${c.symbol}</strong></td>
+        <td><span class="pill">${c.dte_category}</span></td>
+        <td>${c.direction}</td>
+        <td>${c.strategy || "—"}</td>
+        <td><span class="pill">${c.state}</span></td>
+        <td class="num">${(c.score * 100).toFixed(0)}</td>
+        <td class="row-actions">
+          <button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
+          <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button></td>
+      </tr>`).join("");
+    }
+    function sdCandTable(cands) {
+      return `<table><thead><tr><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
+        <th>State</th><th class="num">Score</th><th></th></tr></thead>
+        <tbody>${sdCandRows(cands)}</tbody></table>`;
+    }
+
+    async function renderSdCommand() {
+      const r = await api("GET", "/short-duration/market-regime");
+      const cands = await api("GET", "/short-duration/0dte/candidates?limit=20");
+      const news = await api("GET", "/short-duration/news?limit=6");
+      const toolbar = `<div style="margin-bottom:10px">
+        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <button class="ghost" data-act="sd-scan-0dte">Run 0DTE context scan</button>
+        <span class="muted">Setup-first: regime & event risk gate every idea. Refreshes every 5s.</span></div>`;
+      const levelRows = (r.levels || []).map(l => `<tr>
+        <td><strong>${l.symbol}</strong></td>
+        <td class="num">${l.last == null ? "—" : fmt(l.last)}</td>
+        <td class="num">${l.vwap == null ? "—" : fmt(l.vwap)}</td>
+        <td>${l.last == null || l.vwap == null ? "—" : (l.last > l.vwap ? '<span class="pos">above</span>' : '<span class="neg">below</span>')}</td>
+        <td class="num">${l.opening_range_low == null ? "—" : fmt(l.opening_range_low) + " / " + fmt(l.opening_range_high)}</td>
+        <td class="num">${l.relative_volume == null ? "—" : l.relative_volume + "x"}</td></tr>`).join("");
+      const newsRows = (news || []).map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
+        <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
+      return toolbar + regimeBanner(r.regime) + `<div class="grid2">
+        <div class="card"><h3>Candidate board (0DTE)</h3>${sdCandTable(cands)}</div>
+        <div class="card"><h3>Market internals <span class="proxy-note">(breadth = universe proxy)</span></h3>
+          <table><thead><tr><th>Sym</th><th class="num">Last</th><th class="num">VWAP</th><th>vs VWAP</th>
+          <th class="num">Opening range</th><th class="num">RelVol</th></tr></thead><tbody>${levelRows}</tbody></table></div>
+        <div class="card"><h3>News tape</h3><table><thead><tr><th>Sym</th><th>Headline</th><th class="num">Latency</th></tr></thead>
+          <tbody>${newsRows || `<tr><td colspan="3" class="muted">no news</td></tr>`}</tbody></table></div>
+        <div class="card"><h3>Risk & session</h3><div class="kv">
+          <div>New trades</div><div>${r.regime.allow_new_trades ? "allowed" : "BLOCKED"}</div>
+          <div>Position size</div><div>${r.regime.reduce_size ? "reduce" : "normal"}</div>
+          <div>Next event</div><div>${r.regime.next_event_name || "—"} ${r.regime.next_event_minutes == null ? "" : "(" + Math.round(r.regime.next_event_minutes) + "m)"}</div>
+          <div>Live trading</div><div>disabled (research/paper)</div>
+        </div></div></div>`;
+    }
+
+    async function renderSdScanner() {
+      const cands = await api("GET", "/short-duration/1-5dte/candidates?limit=50");
+      const events = await api("GET", "/short-duration/events");
+      const toolbar = `<div style="margin-bottom:10px">
+        <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE context scan</button>
+        <span class="muted">Multi-session setups. Detection lands in Phase 2.</span></div>`;
+      const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
+        <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
+      return toolbar + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
+        <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
+        <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
+        <tbody>${evRows || `<tr><td colspan="3" class="muted">none</td></tr>`}</tbody></table></div>`;
+    }
+
+    async function renderSdCandidates() {
+      const [zero, short] = await Promise.all([
+        api("GET", "/short-duration/0dte/candidates?limit=100"),
+        api("GET", "/short-duration/1-5dte/candidates?limit=100"),
+      ]);
+      return `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
+        + sdCandTable([...zero, ...short]);
+    }
+
+    async function renderSdNews() {
+      const news = await api("GET", "/short-duration/news?limit=50");
+      if (!news.length) return `<div class="empty">No news items.</div>`;
+      const rows = news.map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
+        <td>${n.source}</td>
+        <td>${n.source_ts ? new Date(n.source_ts).toLocaleTimeString() : "—"}</td>
+        <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
+      return `<div class="proxy-note" style="margin-bottom:8px">Latency = source publication → our receipt. Classification/confirmation land in Phase 3.</div>
+        <table><thead><tr><th>Sym</th><th>Headline</th><th>Source</th><th>Published</th><th class="num">Latency</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    async function renderSdEvents() {
+      const events = await api("GET", "/short-duration/events");
+      if (!events.length) return `<div class="empty">No scheduled economic events.</div>`;
+      const now = Date.now();
+      const rows = events.map(e => {
+        const mins = Math.round((new Date(e.scheduled_at).getTime() - now) / 60000);
+        return `<tr><td><strong>${e.name}</strong></td><td>${e.category || "—"}</td>
+          <td>${e.impact || "—"}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td>
+          <td class="num">${mins < 0 ? "released" : mins + "m"}</td>
+          <td class="num">${e.consensus == null ? "—" : e.consensus}</td>
+          <td class="num">${e.actual == null ? "—" : e.actual}</td></tr>`;
+      }).join("");
+      return `<table><thead><tr><th>Event</th><th>Category</th><th>Impact</th><th>When</th>
+        <th class="num">Countdown</th><th class="num">Consensus</th><th class="num">Actual</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    async function renderSdPerformance() {
+      return `<div class="card"><h3>Performance & Journal</h3>
+        <p class="muted">Short-duration performance reporting (by 0DTE vs 1–5DTE, strategy, regime,
+        time-of-day, DTE, news/flow-confirmed, score band) is delivered in Phase 5 once paper
+        trading is wired. The decision warehouse and calibration engine it reuses are already live
+        under Core Research → Calibration.</p></div>`;
+    }
+
+    async function renderSdConfig() {
+      const c = await api("GET", "/short-duration/configuration");
+      const provs = Object.entries(c.providers).map(([k, v]) =>
+        `<div>${k}</div><div>${v}</div>`).join("");
+      return `<div class="card"><h3>Configuration</h3><div class="kv">
+        <div>Module enabled</div><div>${c.enabled}</div>
+        <div>Trading mode</div><div>${c.trading_mode}</div>
+        <div>Live trading</div><div>${c.live_trading_enabled ? "ENABLED" : "disabled"}</div>
+        <div>Universe</div><div>${c.universe.join(", ")}</div>
+        ${provs}
+      </div><p class="proxy-note" style="margin-top:10px">${c.note} Editable thresholds arrive in Phase 4.</p></div>`;
+    }
+
+    async function renderSd() {
+      switch (state.sdTab) {
+        case "command": return await renderSdCommand();
+        case "scanner": return await renderSdScanner();
+        case "candidates": return await renderSdCandidates();
+        case "positions": return await renderPositions();
+        case "news": return await renderSdNews();
+        case "events": return await renderSdEvents();
+        case "performance": return await renderSdPerformance();
+        case "config": return await renderSdConfig();
+        default: return await renderSdCommand();
+      }
+    }
+
     async function render() {
       showErr(null);
       try {
+        if (state.section === "short") { $("#view").innerHTML = await renderSd(); return; }
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
         else if (state.tab === "positions") $("#view").innerHTML = await renderPositions();
         else if (state.tab === "proposals") $("#view").innerHTML = await renderProposals();
@@ -439,12 +651,30 @@
       } catch (e) { showErr(e); }
     }
 
+    function switchSection(section) {
+      state.section = section;
+      document.querySelectorAll(".sections button").forEach(x =>
+        x.classList.toggle("active", x.dataset.section === section));
+      const short = section === "short";
+      $("#coreControls").hidden = short;
+      $("#coreTabs").hidden = short;
+      $("#sdTabs").hidden = !short;
+      manageOpsRefresh(); render();
+    }
+
     // Event delegation
     $("#scan").addEventListener("click", runScan);
-    document.querySelectorAll(".tabs button").forEach(b =>
+    document.querySelectorAll(".sections button").forEach(b =>
+      b.addEventListener("click", () => switchSection(b.dataset.section)));
+    document.querySelectorAll("#coreTabs button").forEach(b =>
       b.addEventListener("click", () => {
-        document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("active"));
+        document.querySelectorAll("#coreTabs button").forEach(x => x.classList.remove("active"));
         b.classList.add("active"); state.tab = b.dataset.tab; manageOpsRefresh(); render();
+      }));
+    document.querySelectorAll("#sdTabs button").forEach(b =>
+      b.addEventListener("click", () => {
+        document.querySelectorAll("#sdTabs button").forEach(x => x.classList.remove("active"));
+        b.classList.add("active"); state.sdTab = b.dataset.sdtab; manageOpsRefresh(); render();
       }));
 
     $("#view").addEventListener("click", async (e) => {
@@ -478,6 +708,17 @@
               const d = await api("POST", "/positions/sync");
               alert("Sync: " + d.message);
             } finally { render(); }
+          } else if (act === "sd-scan-0dte" || act === "sd-scan-1-5dte") {
+            const cat = act === "sd-scan-0dte" ? "0dte" : "1-5dte";
+            actBtn.disabled = true; actBtn.textContent = "Scanning…";
+            try {
+              const d = await api("POST", `/short-duration/scans/${cat}`);
+              alert(`Created ${d.created} context candidate(s). ${d.note}`);
+            } finally { render(); }
+          } else if (act === "sd-arm") {
+            await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/arm`); render();
+          } else if (act === "sd-reject") {
+            await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/reject`); render();
           }
         } catch (err) { showErr(err); }
         return;

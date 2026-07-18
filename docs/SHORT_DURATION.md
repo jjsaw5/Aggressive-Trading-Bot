@@ -150,6 +150,31 @@ A per-instrument validation checklist (broker support, multiplier, liquidity,
 spreads, permissions, settlement, assignment, practical cost) will gate any index
 symbol before it enters the universe. Until validated: **excluded**.
 
+### 4.1 XSP viability spike (Phase 1 finding)
+
+Probed the broker directly (Robinhood connector, 2026-07-17):
+
+| Check | Result |
+|---|---|
+| Broker support | **Yes** — XSP chain exists, `can_open_position: true` |
+| Expirations | **Daily, including 0DTE** (e.g. 2026-07-20/21/22/23/24 …) |
+| Multiplier | 100 |
+| Settlement | Cash-settled, European (`underlying_instruments` empty); observed chain is PM-settled (`settle_on_open: false`) — **no early assignment / no share pin risk** |
+| Current level | 745.77 → **~$74,600 notional per contract** |
+| Extended hours | enabled |
+
+**Affordability verdict for a ~$2,000 account (`min(equity×5%, $100)` = $100/trade cap):**
+a naked near-ATM 0DTE XSP option (~$1.50–3.50/share → $150–350/contract) **exceeds
+the per-trade risk cap** and would be rejected by sizing. A tight **defined-risk
+debit spread** (1–2 points wide, net debit ~$0.40–0.90 → **$40–90 risk**) **fits**.
+
+**Decision:** XSP is viable **spreads-only**, and stays **config-gated and OUT of
+the Phase 1 default universe**. Enable it in Phase 4 (contract selection) behind
+the validation checklist, forcing defined-risk structures. Open items before
+enabling: confirm **data-feed coverage** for XSP (FMP intraday for the index; UW
+options-flow/chain for XSP) — broker support is confirmed, market-data support is
+not yet. SPX (~$746k notional) and NDX remain excluded for this account size.
+
 ---
 
 ## 5. Data model additions (`app/db/models.py` + Alembic migration)
@@ -262,14 +287,17 @@ of existing components, tests, docs, no regressions, **live trading off**.
 ## 11. Phased backlog
 
 - **Phase 0 — Discovery & design (this doc).** ✅ deliverable.
-- **Phase 1 — Read-only module.** New `app/shortduration/` package; extend FMP
-  with verified intraday bars + news + econ calendar; intraday primitives
-  (VWAP/OR/relvol/breadth-proxy); short-duration regime engine + banner; new DB
-  tables + migration; `/short-duration/*` read routes; new dashboard section
-  (0DTE Command Center, 1–5DTE Scanner, Candidates, Positions, News & Catalysts,
-  Event Calendar, Performance & Journal, Configuration) rendering live data. **No
-  execution, no detection yet** — boards populate from a manual/scheduled scan
-  stub.
+- **Phase 1 — Read-only module. ✅ DELIVERED.** New `app/shortduration/` package;
+  extended FMP with intraday bars + news + econ calendar (grounded, `verified=False`
+  pending live smoke test); new Benzinga news provider (premium, key-gated, FMP
+  fallback); intraday primitives (VWAP/opening-range/relvol + breadth proxy);
+  transparent short-duration regime engine + banner with allow-new/reduce-size
+  gates; 6 new DB tables + idempotent Alembic 0002 (also backfilled the 3 lagging
+  warehouse tables); `/short-duration/*` read routes + context-scan + manual state
+  machine; new dashboard section (all 8 pages) rendering live data; 19 new tests.
+  XSP viability spike done (§4.1). **No execution, no real detection** — boards
+  populate from a context-only scan stub explicitly labeled non-actionable.
+  Providers/module gated off by default; live trading unchanged.
 - **Phase 2 — Strategy detection (subset):** 0DTE opening-range breakout, 0DTE
   VWAP continuation; 1–5DTE trend continuation, 1–5DTE catalyst continuation.
 - **Phase 3 — Scoring & candidate state:** separate 0DTE / 1–5DTE scoring models,
@@ -293,8 +321,14 @@ decisions & unresolved risks, update this backlog, recommend the next phase.
 ## 12. Documented assumptions
 
 1. Equity/ETF options only for MVP; index options deferred & config-gated (§4).
-2. FMP supplies intraday bars, news, and economic calendar — **to be verified
-   against FMP docs in Phase 1** before wiring (per "verify before integrating").
+   XSP confirmed broker-viable, spreads-only (§4.1); still excluded from the
+   Phase 1 default universe pending data-feed confirmation.
+2. FMP supplies intraday bars, news, and economic calendar. Endpoints are wired,
+   grounded on FMP's stable schema + the Benzinga v2 contract, but marked
+   `verified=False` pending a live smoke test — the FMP doc leaf-pages return 403
+   through the agent proxy (Cloudflare), so the field mapping is defensive and
+   confirmed only against a live key. Same convention the codebase uses for the
+   Robinhood provider.
 3. Market breadth is a **proxy** from our own universe until a real internals
    feed is licensed; always labeled as such.
 4. Short-duration runs as a **separate loop**, not a 5th scan tier.

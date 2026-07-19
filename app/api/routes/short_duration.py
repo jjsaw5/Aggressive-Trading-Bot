@@ -234,6 +234,15 @@ async def performance() -> dict:
     return await run_in_threadpool(short_duration_performance)
 
 
+@router.get("/backtest/classification")
+async def backtest_classification() -> dict:
+    """Honest backtest FIDELITY per DTE — reconstructed / approximate / proxy /
+    not-testable — given the data actually available. Never fabricates results."""
+    from app.shortduration.backtest import classify_all
+
+    return {"classifications": [c.model_dump() for c in classify_all()]}
+
+
 # --- Configuration ----------------------------------------------------------
 @router.get("/configuration", response_model=ConfigResponse)
 async def configuration() -> ConfigResponse:

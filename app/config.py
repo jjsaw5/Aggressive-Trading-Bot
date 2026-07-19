@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
     short_duration_0dte_cutoff_et: str = "15:00"  # no new 0DTE entries after 3pm ET
+    # Dedicated fast-loop cadences (seconds). Only runs when SHORT_DURATION_ENABLED
+    # and during RTH. Position monitoring is the most frequent (capital at risk).
+    short_duration_loop_tick_seconds: int = 5
+    short_duration_monitor_seconds: int = 15
+    short_duration_scan_0dte_seconds: int = 300  # 5 min
+    short_duration_scan_1_5dte_seconds: int = 900  # 15 min
 
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%

@@ -703,11 +703,22 @@
           profit factor ${o.profit_factor==null?"—":o.profit_factor} ·
           expectancy ${o.expectancy==null?"—":"$"+fmt(o.expectancy,2)} ·
           total ${o.total_pnl==null?"—":(o.total_pnl>=0?"+":"")+"$"+fmt(o.total_pnl,0)}</div></div>`;
-      if (!o.trades) return head + `<div class="empty">No closed paper trades yet — open some from candidates, then Mark &amp; check exits on the Positions page.</div>`;
-      return head + perfGroup("By DTE", p.by_dte) + perfGroup("By strategy", p.by_strategy)
-        + perfGroup("By regime", p.by_regime) + perfGroup("By time of day", p.by_time_of_day)
-        + perfGroup("By score band", p.by_score_band) + perfGroup("News-confirmed", p.by_news_confirmed)
-        + perfGroup("Flow-confirmed", p.by_flow_confirmed) + perfGroup("By symbol", p.by_symbol);
+      let bt = "";
+      try {
+        const bc = await api("GET", "/short-duration/backtest/classification");
+        const rows = (bc.classifications||[]).map(c =>
+          `<div>${c.dte_category}</div><div><strong>${c.fidelity.replace(/_/g," ")}</strong> — <span class="muted">${c.reason}</span></div>`).join("");
+        bt = `<div class="card" style="margin-top:14px"><h3>Backtest fidelity</h3>
+          <div class="kv">${rows}</div>
+          <div class="proxy-note" style="margin-top:6px">Results are classified honestly by what the available data supports — never presented as precise. No per-contract historical option feed is configured.</div></div>`;
+      } catch (e) { /* non-fatal */ }
+      const body = !o.trades
+        ? `<div class="empty">No closed paper trades yet — open some from candidates, then Mark &amp; check exits on the Positions page.</div>`
+        : perfGroup("By DTE", p.by_dte) + perfGroup("By strategy", p.by_strategy)
+          + perfGroup("By regime", p.by_regime) + perfGroup("By time of day", p.by_time_of_day)
+          + perfGroup("By score band", p.by_score_band) + perfGroup("News-confirmed", p.by_news_confirmed)
+          + perfGroup("Flow-confirmed", p.by_flow_confirmed) + perfGroup("By symbol", p.by_symbol);
+      return head + body + bt;
     }
 
     async function renderSdConfig() {

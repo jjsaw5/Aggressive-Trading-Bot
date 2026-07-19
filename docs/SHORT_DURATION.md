@@ -360,8 +360,20 @@ of existing components, tests, docs, no regressions, **live trading off**.
   expectancy / P&L. API: open-paper / positions / monitor / performance. Dashboard:
   Open Positions page + real Performance & Journal page + a paper button on the
   candidate detail. 7 new tests. Every fill simulated — no live order.
-- **Phase 6 — Validation:** full test matrix, load/rate-limit/latency, backtest
-  classification, failure simulations.
+- **Phase 6 — Validation. ✅ DELIVERED.** A dedicated `ShortDurationLoop`
+  (`app/shortduration/loop.py`) runs CONCURRENTLY with the core scheduler — its
+  own RTH-gated cadences (monitor 15s, 0DTE scan 5m, 1–5DTE scan 15m), pure/
+  testable `due_jobs`, best-effort tick so a failing job never stalls the loop,
+  metrics per job; wired into `app/scheduler/run.py` behind `SHORT_DURATION_ENABLED`.
+  Honest backtest-fidelity classification (`backtest.py` + endpoint): 0DTE is
+  **not_testable** without an intraday per-contract option feed (P&L is gamma/
+  theta-dominated), 1–5DTE is **proxy** (BS reprice on the real underlying path) —
+  never presented as precise. 13 new tests: loop cadence/RTH-gating/failure-
+  isolation, backtest fidelity, failure simulations (options-provider outage →
+  candidates degrade to REJECTED not crash; marking outage leaves positions OPEN),
+  scenario gates (macro-event blackout, power-hour reduce-size, cautious-regime
+  market-alignment penalty), and a bounded larger-universe load test. Dashboard
+  Performance page shows the backtest-fidelity honesty note.
 - **Phase 7 — Human-approved live proposals:** NOT enabled without explicit
   authorization through existing execution controls.
 

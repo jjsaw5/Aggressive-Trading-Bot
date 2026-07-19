@@ -92,12 +92,21 @@ async def main() -> None:
         await asyncio.to_thread(create_all)
     except Exception as exc:
         log.warning("db_init_skipped", error=str(exc))
+
+    # The short-duration fast loop runs CONCURRENTLY with whichever core
+    # scheduler is active (it has its own RTH-gated cadences), so sub-15s
+    # position monitoring never blocks behind the core scan. Off by default.
+    tasks = []
+    if settings.short_duration_enabled:
+        from app.shortduration.loop import ShortDurationLoop
+
+        log.info("short_duration_loop_enabled")
+        tasks.append(asyncio.create_task(ShortDurationLoop().run_forever()))
+
     # Cutover is gated: the funnel-driven session scheduler runs only when
     # TIERING_ENABLED; otherwise the simple periodic scan remains the default.
-    if settings.tiering_enabled:
-        await run_session_scheduler()
-    else:
-        await run_simple_scheduler()
+    core = run_session_scheduler() if settings.tiering_enabled else run_simple_scheduler()
+    await asyncio.gather(core, *tasks)
 
 
 if __name__ == "__main__":

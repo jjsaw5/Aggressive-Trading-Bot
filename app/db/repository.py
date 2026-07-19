@@ -25,6 +25,7 @@ from app.db.models import (
     ProposalRow,
     ScanRow,
     ShortDurationCandidateRow,
+    ShortDurationTradeRow,
     TierMemberRow,
 )
 from app.db.session import SessionLocal
@@ -36,6 +37,7 @@ from app.domain.shortduration import (
     IntradayLevels,
     NewsItem,
     ShortDurationCandidate,
+    ShortDurationTrade,
 )
 from app.domain.trades import OrderProposal, PaperTrade
 from app.tiers.models import TierMember
@@ -478,3 +480,41 @@ def list_event_restrictions(limit: int = 100) -> list[EventRestriction]:
             .all()
         )
         return [EventRestriction.model_validate(r.payload) for r in rows]
+
+
+def save_short_duration_trade(trade: ShortDurationTrade) -> None:
+    with SessionLocal() as session:
+        session.merge(
+            ShortDurationTradeRow(
+                id=trade.id,
+                candidate_id=trade.candidate_id,
+                paper_trade_id=trade.paper_trade_id,
+                symbol=trade.symbol,
+                dte_category=trade.dte_category.value,
+                strategy=trade.strategy.value if trade.strategy else None,
+                status=trade.status,
+                opened_at=trade.opened_at,
+                closed_at=trade.closed_at,
+                realized_pnl_usd=trade.realized_pnl_usd,
+                payload=trade.model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+
+def list_short_duration_trades(
+    *, status: str | None = None, limit: int = 500
+) -> list[ShortDurationTrade]:
+    with SessionLocal() as session:
+        stmt = select(ShortDurationTradeRow)
+        if status:
+            stmt = stmt.where(ShortDurationTradeRow.status == status)
+        stmt = stmt.order_by(ShortDurationTradeRow.opened_at.desc()).limit(limit)
+        rows = session.execute(stmt).scalars().all()
+        return [ShortDurationTrade.model_validate(r.payload) for r in rows]
+
+
+def get_short_duration_trade(trade_id: str) -> ShortDurationTrade | None:
+    with SessionLocal() as session:
+        row = session.get(ShortDurationTradeRow, trade_id)
+        return ShortDurationTrade.model_validate(row.payload) if row else None

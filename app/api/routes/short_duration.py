@@ -27,6 +27,7 @@ from app.domain.shortduration import (
     NewsItem,
     ShortDurationCandidate,
     ShortDurationRegimeState,
+    ShortDurationTrade,
 )
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.providers import registry
@@ -170,16 +171,28 @@ async def scan_short_dte() -> ScanResult:
 
 @router.post("/candidates/{candidate_id}/{action}", response_model=CandidateDetail)
 async def transition_candidate(candidate_id: str, action: str) -> CandidateDetail:
-    """Manual state transition (Phase 1 supports arm / reject / watchlist to
-    exercise the machine). Never places an order."""
-    target = _MANUAL_TRANSITIONS.get(action)
-    if target is None:
-        raise HTTPException(
-            400, f"Unsupported action '{action}'. Allowed: {sorted(_MANUAL_TRANSITIONS)}"
-        )
+    """Manual candidate action: arm / reject / watchlist (state machine) or
+    `paper` (open a simulated position). Never places a live order."""
     cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
     if cand is None:
         raise HTTPException(404, "Candidate not found.")
+
+    if action == "paper":
+        from app.shortduration.paper import open_short_duration_paper
+
+        try:
+            await open_short_duration_paper(cand)
+        except Exception as exc:  # noqa: BLE001 - surface the reason to the UI
+            raise HTTPException(400, f"Cannot open paper trade: {exc}") from exc
+        cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
+        transitions = await run_in_threadpool(repository.list_candidate_transitions, candidate_id)
+        return CandidateDetail(candidate=cand, transitions=transitions)
+
+    target = _MANUAL_TRANSITIONS.get(action)
+    if target is None:
+        raise HTTPException(
+            400, f"Unsupported action '{action}'. Allowed: {sorted(_MANUAL_TRANSITIONS)} + paper"
+        )
     now = datetime.now(UTC)
     prev = cand.state
     cand.state = target
@@ -196,6 +209,29 @@ async def transition_candidate(candidate_id: str, action: str) -> CandidateDetai
         repository.list_candidate_transitions, candidate_id
     )
     return CandidateDetail(candidate=cand, transitions=transitions)
+
+
+# --- Paper positions + performance ------------------------------------------
+@router.get("/positions", response_model=list[ShortDurationTrade])
+async def positions(status: str = "open", limit: int = 200) -> list[ShortDurationTrade]:
+    return await run_in_threadpool(
+        repository.list_short_duration_trades, status=status, limit=limit
+    )
+
+
+@router.post("/positions/monitor", response_model=list[ShortDurationTrade])
+async def monitor_positions() -> list[ShortDurationTrade]:
+    """Mark open short-duration paper positions and apply exits. No live order."""
+    from app.shortduration.paper import monitor_short_duration_positions
+
+    return await monitor_short_duration_positions()
+
+
+@router.get("/performance")
+async def performance() -> dict:
+    from app.shortduration.paper import short_duration_performance
+
+    return await run_in_threadpool(short_duration_performance)
 
 
 # --- Configuration ----------------------------------------------------------

@@ -24,6 +24,7 @@ from app.engine.contract_selection import (
 )
 from app.engine.liquidity import OptionLiquidityConfig, gate_option
 from app.quant.analytics import structure_breakevens
+from app.risk.exit_plan import for_trade_plan
 from app.risk.policy import RiskPolicy
 from app.risk.trade_plan import build_long_option_plan, build_vertical_spread_plan
 
@@ -111,6 +112,7 @@ def select_short_duration_contract(
         if choice else None
     )
     if plan is not None:
+        plan.exit_plan = for_trade_plan(plan)
         note = "Single-leg near-ATM fits the risk cap."
         return ContractResult(plan, _recommendation(plan, note), [])
 
@@ -123,6 +125,7 @@ def select_short_duration_contract(
         if spread else None
     )
     if plan is not None:
+        plan.exit_plan = for_trade_plan(plan)
         note = "Single leg exceeded the risk cap — using a defined-risk debit spread."
         return ContractResult(plan, _recommendation(plan, note), [])
 

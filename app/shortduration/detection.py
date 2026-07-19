@@ -34,7 +34,6 @@ from app.providers.ratelimit import Priority, use_priority
 from app.shortduration.contracts import ContractResult, select_short_duration_contract
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.risk import (
-    DailyRiskState,
     EntryGate,
     evaluate_entry_gates,
     short_duration_policy,
@@ -149,6 +148,7 @@ def _candidate_from(
         invalidation=det.invalidation,
         targets=det.targets,
         contract=contract.recommendation,
+        trade_plan=plan,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -203,7 +203,9 @@ async def _score_symbol(
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
     stale = quote_is_stale(ctx, now)
     equity = settings.account_equity_usd
-    daily = DailyRiskState()  # Phase 5 populates realized P&L / consecutive losses
+    # Real daily posture from today's closed paper trades feeds the loss/halt gates.
+    from app.shortduration.paper import daily_risk_state
+    daily = await asyncio.to_thread(daily_risk_state, now)
     scored = []
     for det in dets:
         fa = analyze_flow(ctx.flow, now, det.direction)

@@ -23,7 +23,10 @@ _LEGAL: dict[S, set[S]] = {
     S.EVALUATING: {S.WATCHLIST, S.ARMED},
     S.WATCHLIST: {S.ARMED, S.EVALUATING},
     S.ARMED: {S.TRIGGERED, S.WATCHLIST},
-    S.TRIGGERED: {S.PROPOSED},
+    # TRIGGERED -> OPEN is the PAPER/research path (no human approval needed).
+    # The human-approved LIVE path is TRIGGERED -> PROPOSED -> APPROVED -> OPEN,
+    # and any live order still passes the ExecutionGuard.
+    S.TRIGGERED: {S.PROPOSED, S.OPEN},
     S.PROPOSED: {S.APPROVED},
     S.APPROVED: {S.OPEN},
     S.OPEN: {S.MANAGING, S.CLOSED},

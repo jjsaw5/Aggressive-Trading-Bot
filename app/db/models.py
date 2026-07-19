@@ -210,3 +210,22 @@ class EventRestrictionRow(Base, TimestampMixin):
     trading_allowed: Mapped[bool] = mapped_column(default=False)
     size_modifier: Mapped[float] = mapped_column(Float, default=0.0)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ShortDurationTradeRow(Base, TimestampMixin):
+    """A short-duration paper position + its entry-context tags for performance."""
+
+    __tablename__ = "short_duration_trades"
+    __table_args__ = (Index("ix_sd_trade_status_opened", "status", "opened_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    candidate_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    paper_trade_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    dte_category: Mapped[str] = mapped_column(String(8), nullable=False)
+    strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    realized_pnl_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)

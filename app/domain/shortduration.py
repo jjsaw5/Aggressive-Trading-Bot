@@ -20,6 +20,7 @@ from app.domain.enums import (
     ShortDurationRegime,
     ShortDurationStrategy,
 )
+from app.domain.trades import TradePlan
 
 
 class IntradayBar(BaseModel):
@@ -256,6 +257,48 @@ class ShortDurationCandidate(BaseModel):
     entry_notes: list[str] = Field(default_factory=list)
     reject_reasons: list[str] = Field(default_factory=list)
     reward_to_risk: float | None = None
+    # The actionable sized structure (source of truth for opening a paper trade).
+    trade_plan: TradePlan | None = None
+
+
+class ShortDurationTrade(BaseModel):
+    """A paper (or, later, live) short-duration position, tagged with the entry
+    context needed for performance attribution: strategy, regime, time-of-day,
+    DTE, news/flow confirmation, and the entry score band. Wraps a `PaperTrade`
+    (by id) so the paper engine owns fills/MFE/MAE while this owns the analytics.
+    """
+
+    id: str
+    candidate_id: str
+    paper_trade_id: str
+    symbol: str
+    dte_category: DTECategory
+    strategy: ShortDurationStrategy | None = None
+    direction: Direction = Direction.NEUTRAL
+    regime: ShortDurationRegime | None = None
+    entry_score: float = 0.0
+    entry_confidence: float = 0.0
+    news_confirmed: bool = False
+    flow_confirmed: bool = False
+    time_of_day: str = ""  # first_hour | midday | power_hour | other
+    opened_at: datetime
+    entry_net: float = 0.0
+    contracts: int = 1
+    max_loss_usd: float | None = None
+    status: str = "open"  # open | closed
+    current_net: float | None = None
+    unrealized_pnl_usd: float | None = None
+    mfe_usd: float = 0.0
+    mae_usd: float = 0.0
+    exit_net: float | None = None
+    realized_pnl_usd: float | None = None
+    exit_reason: str | None = None
+    closed_at: datetime | None = None
+
+    @property
+    def score_band(self) -> str:
+        s = self.entry_score
+        return "0.8+" if s >= 0.8 else "0.7-0.8" if s >= 0.7 else "0.6-0.7" if s >= 0.6 else "<0.6"
 
 
 class CandidateTransition(BaseModel):

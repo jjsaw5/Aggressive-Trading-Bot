@@ -517,7 +517,9 @@
     async function renderSdDetail(cid) {
       const d = await api("GET", `/short-duration/candidates/${cid}`);
       const c = d.candidate, sc = c.scorecard;
-      const back = `<button class="ghost" data-act="sd-back">← Back</button>`;
+      const canPaper = c.trade_plan != null && !["open","closed","rejected","expired"].includes(c.state);
+      const back = `<button class="ghost" data-act="sd-back">← Back</button>
+        ${canPaper ? `<button data-act="sd-paper" data-id="${c.id}">Open paper trade</button>` : ""}`;
       const gateCls = c.entry_allowed === false ? "regime-stop" : "regime-ok";
       const gate = c.entry_allowed == null ? "" :
         `<div class="banner ${gateCls}" style="margin-top:8px"><b>Entry gates:</b>
@@ -658,12 +660,54 @@
         <tbody>${rows}</tbody></table>`;
     }
 
+    async function renderSdPositions() {
+      const ps = await api("GET", "/short-duration/positions?status=open");
+      const toolbar = `<div style="margin-bottom:10px">
+        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <button class="ghost" data-act="sd-monitor">Mark &amp; check exits</button>
+        <span class="muted">Open short-duration paper positions. Intraday time-stops apply. Refreshes every 5s.</span></div>`;
+      if (!ps.length) return toolbar + `<div class="empty">No open short-duration paper positions. Open one from a candidate's detail.</div>`;
+      const rows = ps.map(p => `<tr>
+        <td><strong>${p.symbol}</strong></td><td>${p.strategy||"—"} <span class="muted">${p.dte_category}</span></td>
+        <td>${p.direction}</td>
+        <td class="num">${fmt(p.entry_net)}</td>
+        <td class="num">${p.current_net==null?"—":fmt(p.current_net)}</td>
+        <td class="num ${cls(p.unrealized_pnl_usd)}">${p.unrealized_pnl_usd==null?"—":(p.unrealized_pnl_usd>=0?"+":"")+"$"+fmt(p.unrealized_pnl_usd,0)}</td>
+        <td class="num">$${fmt(p.max_loss_usd,0)}</td>
+        <td>${p.time_of_day}</td></tr>`).join("");
+      return toolbar + `<table><thead><tr><th>Sym</th><th>Structure</th><th>Dir</th>
+        <th class="num">Entry</th><th class="num">Now</th><th class="num">Unreal.</th>
+        <th class="num">Max loss</th><th>Opened</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function perfStatCells(s) {
+      if (!s || !s.trades) return `<td class="num" colspan="6" class="muted">no closed trades</td>`;
+      return `<td class="num">${s.trades}</td><td class="num">${(s.win_rate*100).toFixed(0)}%</td>
+        <td class="num pos">$${fmt(s.avg_win,0)}</td><td class="num neg">$${fmt(s.avg_loss,0)}</td>
+        <td class="num">${s.profit_factor==null?"—":s.profit_factor}</td>
+        <td class="num ${cls(s.total_pnl)}">${(s.total_pnl>=0?"+":"")+"$"+fmt(s.total_pnl,0)}</td>`;
+    }
+    function perfGroup(title, obj) {
+      const rows = Object.entries(obj||{}).map(([k,s]) => `<tr><td>${k}</td>${perfStatCells(s)}</tr>`).join("");
+      return `<b>${title}</b><table style="margin:4px 0 14px"><thead><tr><th></th><th class="num">Trades</th>
+        <th class="num">Win%</th><th class="num">Avg win</th><th class="num">Avg loss</th>
+        <th class="num">PF</th><th class="num">P&amp;L</th></tr></thead>
+        <tbody>${rows||`<tr><td colspan="7" class="muted">none</td></tr>`}</tbody></table>`;
+    }
     async function renderSdPerformance() {
-      return `<div class="card"><h3>Performance & Journal</h3>
-        <p class="muted">Short-duration performance reporting (by 0DTE vs 1–5DTE, strategy, regime,
-        time-of-day, DTE, news/flow-confirmed, score band) is delivered in Phase 5 once paper
-        trading is wired. The decision warehouse and calibration engine it reuses are already live
-        under Core Research → Calibration.</p></div>`;
+      const p = await api("GET", "/short-duration/performance");
+      const o = p.overall || {};
+      const head = `<div class="banner"><h2>Performance & Journal</h2>
+        <div class="sub">${o.trades||0} closed · ${p.open_positions||0} open ·
+          win rate ${o.win_rate==null?"—":(o.win_rate*100).toFixed(0)+"%"} ·
+          profit factor ${o.profit_factor==null?"—":o.profit_factor} ·
+          expectancy ${o.expectancy==null?"—":"$"+fmt(o.expectancy,2)} ·
+          total ${o.total_pnl==null?"—":(o.total_pnl>=0?"+":"")+"$"+fmt(o.total_pnl,0)}</div></div>`;
+      if (!o.trades) return head + `<div class="empty">No closed paper trades yet — open some from candidates, then Mark &amp; check exits on the Positions page.</div>`;
+      return head + perfGroup("By DTE", p.by_dte) + perfGroup("By strategy", p.by_strategy)
+        + perfGroup("By regime", p.by_regime) + perfGroup("By time of day", p.by_time_of_day)
+        + perfGroup("By score band", p.by_score_band) + perfGroup("News-confirmed", p.by_news_confirmed)
+        + perfGroup("Flow-confirmed", p.by_flow_confirmed) + perfGroup("By symbol", p.by_symbol);
     }
 
     async function renderSdConfig() {
@@ -685,7 +729,7 @@
         case "command": return await renderSdCommand();
         case "scanner": return await renderSdScanner();
         case "candidates": return await renderSdCandidates();
-        case "positions": return await renderPositions();
+        case "positions": return await renderSdPositions();
         case "news": return await renderSdNews();
         case "events": return await renderSdEvents();
         case "performance": return await renderSdPerformance();
@@ -778,6 +822,14 @@
             await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/reject`); render();
           } else if (act === "sd-back") {
             state.sdDetail = null; render();
+          } else if (act === "sd-paper") {
+            actBtn.disabled = true; actBtn.textContent = "Opening…";
+            try { await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/paper`); }
+            finally { render(); }
+          } else if (act === "sd-monitor") {
+            actBtn.disabled = true; actBtn.textContent = "Monitoring…";
+            try { const r = await api("POST", "/short-duration/positions/monitor");
+              alert(`Marked ${r.length} position(s).`); } finally { render(); }
           }
         } catch (err) { showErr(err); }
         return;

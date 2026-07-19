@@ -343,8 +343,23 @@ of existing components, tests, docs, no regressions, **live trading off**.
   profit, breakevens, R:R), max risk, and the entry-gate verdict; the dashboard
   detail renders a Contract & risk card + gate status. Config adds the risk
   knobs. 10 new tests. Still no order — gates feed paper trading (Phase 5).
-- **Phase 5 — Paper trading:** simulated fills at bid/ask + slippage, position
-  lifecycle with intraday time-stops, journal, performance reports.
+- **Phase 5 — Paper trading. ✅ DELIVERED.** `app/shortduration/paper.py` opens
+  simulated positions from armed candidates (reusing the signed-net paper engine
+  for fills/slippage/MFE/MAE), advancing the candidate ARMED → TRIGGERED → OPEN
+  (the paper/research state path; live still needs PROPOSED → APPROVED + the
+  ExecutionGuard). `monitor_short_duration_positions` marks each open position
+  from the live chain and applies exits — profit/stop (paper engine) PLUS the new
+  INTRADAY time-stops (0DTE force-close by 15:45 ET; DTE time-stop for 1–5DTE;
+  expiry) — closing the paper trade and the candidate. New `short_duration_trades`
+  table (+ migration 0003) tags each trade with strategy / regime / time-of-day /
+  DTE / score band / news+flow confirmation for attribution. `daily_risk_state`
+  computes today's realized P&L + trailing consecutive losses + open count and
+  now feeds the Phase-4 entry gates (loop closed). `short_duration_performance`
+  reports overall + sliced (by DTE, strategy, symbol, regime, time-of-day, score
+  band, news-confirmed, flow-confirmed) win rate / avg win-loss / profit factor /
+  expectancy / P&L. API: open-paper / positions / monitor / performance. Dashboard:
+  Open Positions page + real Performance & Journal page + a paper button on the
+  candidate detail. 7 new tests. Every fill simulated — no live order.
 - **Phase 6 — Validation:** full test matrix, load/rate-limit/latency, backtest
   classification, failure simulations.
 - **Phase 7 — Human-approved live proposals:** NOT enabled without explicit

@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     short_duration_enabled: bool = False
     short_duration_opening_range_minutes: int = 15
     short_duration_max_dte: int = 5
+    # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
+    short_duration_watchlist_score: float = 0.5
+    short_duration_arm_score: float = 0.7
 
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%

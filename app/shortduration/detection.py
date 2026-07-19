@@ -22,6 +22,8 @@ from app.domain.enums import CandidateState, DTECategory
 from app.domain.shortduration import (
     CandidateTransition,
     ContractRecommendation,
+    NewsScore,
+    ScoreCard,
     ShortDurationCandidate,
     ShortDurationRegimeState,
 )
@@ -30,7 +32,11 @@ from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
 from app.shortduration.levels import compute_intraday_levels
+from app.shortduration.scoring.engine import score_candidate
+from app.shortduration.scoring.flow_decay import analyze_flow
+from app.shortduration.scoring.news import best_news_score
 from app.shortduration.service import build_market_regime
+from app.shortduration.state import classify_initial_state, transition
 from app.shortduration.strategies.base import SetupContext, StrategyDetection
 from app.shortduration.strategies.catalyst_continuation import CatalystContinuation
 from app.shortduration.strategies.orb import OpeningRangeBreakout
@@ -72,6 +78,11 @@ async def build_context(
             (ctx.quote.price - ctx.quote.prev_close) / ctx.quote.prev_close * 100, 3
         )
 
+    # Flow is used by both categories — 0DTE flow-quality and 1-5DTE
+    # multi-session-flow are both material factors in the scoring models.
+    ctx.flow = await _safe(
+        registry.options_flow_provider().get_flow_alerts(symbol, limit=50), "flow"
+    ) or []
     if dte == DTECategory.SHORT_DTE:
         ctx.daily = await _safe(market.get_price_history(symbol, lookback_days=252), "daily")
         ctx.catalysts = await _safe(
@@ -79,10 +90,6 @@ async def build_context(
         ) or []
         ctx.news = await _safe(
             registry.news_provider().get_news([symbol], limit=10), "news"
-        ) or []
-    else:
-        ctx.flow = await _safe(
-            registry.options_flow_provider().get_flow_alerts(symbol, limit=50), "flow"
         ) or []
 
     avg_vol = None
@@ -97,7 +104,12 @@ async def build_context(
     return ctx
 
 
-def _candidate_from(det: StrategyDetection, symbol: str, now: datetime) -> ShortDurationCandidate:
+def _candidate_from(
+    det: StrategyDetection, symbol: str, now: datetime,
+    card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
+) -> ShortDurationCandidate:
+    reasons = list(det.reasons)
+    reasons.append(card.summary)
     return ShortDurationCandidate(
         id=uuid.uuid4().hex[:12],
         symbol=symbol,
@@ -105,9 +117,9 @@ def _candidate_from(det: StrategyDetection, symbol: str, now: datetime) -> Short
         strategy=det.strategy,
         direction=det.direction,
         detected_at=now,
-        regime=None,
-        score=det.setup_score,
-        confidence=det.setup_score,
+        regime=regime.regime,
+        score=card.normalized,  # scored total replaces the provisional setup score
+        confidence=card.overall_confidence,
         entry_trigger=det.entry_trigger,
         invalidation=det.invalidation,
         targets=det.targets,
@@ -115,13 +127,16 @@ def _candidate_from(det: StrategyDetection, symbol: str, now: datetime) -> Short
             description="Contract selection lands in Phase 4 (defined-risk, sized to policy)."
         ),
         state=CandidateState.DETECTED,
-        reasons=det.reasons,
+        data_quality_score=card.data_quality,
+        reasons=reasons,
+        scorecard=card,
+        news_score=news,
     )
 
 
 async def _detect_symbol(
     symbol: str, regime: ShortDurationRegimeState, now: datetime, dte: DTECategory
-) -> tuple[str, list[StrategyDetection]]:
+) -> tuple[str, SetupContext, list[StrategyDetection]]:
     ctx = await build_context(symbol, regime, now, dte)
     out: list[StrategyDetection] = []
     for strat in default_strategies(dte):
@@ -132,15 +147,44 @@ async def _detect_symbol(
             det = None
         if det is not None:
             out.append(det)
-    return symbol, out
+    return symbol, ctx, out
+
+
+async def _score_symbol(
+    symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime
+) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None]]:
+    """Fetch chain + IV once for a symbol that produced setups, then score each
+    detection. Chains are fetched ONLY for symbols with detections — a handful,
+    not the whole universe."""
+    chain = iv = None
+    try:
+        chain = await registry.options_chain_provider().get_option_chain(symbol, expirations=2)
+    except Exception as exc:  # noqa: BLE001 - liquidity scored as unknown on miss
+        log.warning("sd_score_chain_failed", symbol=symbol, error=str(exc))
+    try:
+        iv = await registry.options_chain_provider().get_iv_context(symbol)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
+
+    rel_vol = ctx.levels.relative_volume if ctx.levels else None
+    scored = []
+    for det in dets:
+        fa = analyze_flow(ctx.flow, now, det.direction)
+        news = best_news_score(
+            ctx.news, for_symbol=symbol, change_pct=ctx.change_pct, rel_volume=rel_vol, flow=fa
+        )
+        card = score_candidate(ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa)
+        scored.append((det, card, news))
+    return scored
 
 
 async def run_detection(
     dte: DTECategory, *, now: datetime | None = None, universe: list[str] | None = None
 ) -> list[ShortDurationCandidate]:
-    """Detect real setups across the universe for a DTE category and persist the
-    resulting candidates. Open-position API priority is unaffected — this runs at
-    CANDIDATES priority."""
+    """Detect real setups across the universe, SCORE them with the per-DTE model,
+    classify their initial state, and persist candidates + the full transition
+    trail. Runs at CANDIDATES priority so open-position monitoring keeps its
+    precedence."""
     from app.db import repository
 
     now = now or datetime.now(UTC)
@@ -148,31 +192,55 @@ async def run_detection(
     regime, _levels, _breadth = await build_market_regime(now=now, universe=syms)
 
     with use_priority(Priority.CANDIDATES):
-        results = await bounded_gather(
+        detected = await bounded_gather(
             [_detect_symbol(s, regime, now, dte) for s in syms],
+            limit=settings.tier_concurrency,
+        )
+        with_dets = [(s, ctx, dets) for r in detected if r for (s, ctx, dets) in [r] if dets]
+        scored_rows = await bounded_gather(
+            [_score_symbol(s, ctx, dets, now) for (s, ctx, dets) in with_dets],
             limit=settings.tier_concurrency,
         )
 
     created: list[ShortDurationCandidate] = []
-    for res in results:
-        if not res:
+    for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
+        if not scored:
             continue
-        symbol, dets = res
-        for det in dets:
-            cand = _candidate_from(det, symbol, now)
-            cand.regime = regime.regime
+        for det, card, news in scored:
+            cand = _candidate_from(det, symbol, now, card, news, regime)
+            transitions = _classify_transitions(cand, det, now)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
-            await asyncio.to_thread(
-                repository.append_candidate_transition,
-                CandidateTransition(
-                    candidate_id=cand.id, from_state=None, to_state=CandidateState.DETECTED,
-                    at=now, trigger=f"detection:{det.strategy.value}", actor="system",
-                    reason=det.reasons[0] if det.reasons else "Setup detected.",
-                    score_at=cand.score,
-                ),
-            )
+            for tr in transitions:
+                await asyncio.to_thread(repository.append_candidate_transition, tr)
             created.append(cand)
-    # Highest-conviction first for the boards.
+
     created.sort(key=lambda c: c.score, reverse=True)
     log.info("sd_detection", dte=dte.value, detected=len(created))
     return created
+
+
+def _classify_transitions(
+    cand: ShortDurationCandidate, det: StrategyDetection, now: datetime
+) -> list[CandidateTransition]:
+    """Record DETECTED -> EVALUATING -> (WATCHLIST|ARMED) from the score."""
+    trail = [
+        CandidateTransition(
+            candidate_id=cand.id, from_state=None, to_state=CandidateState.DETECTED, at=now,
+            trigger=f"detection:{det.strategy.value}", actor="system",
+            reason=det.reasons[0] if det.reasons else "Setup detected.", score_at=cand.score,
+        )
+    ]
+    trail.append(
+        transition(cand, CandidateState.EVALUATING, trigger="scored", actor="system",
+                   reason=cand.scorecard.summary if cand.scorecard else "Scored.", at=now)
+    )
+    target = classify_initial_state(
+        cand.score, watchlist_at=settings.short_duration_watchlist_score,
+        arm_at=settings.short_duration_arm_score,
+    )
+    if target != CandidateState.EVALUATING:
+        trail.append(
+            transition(cand, target, trigger="score_threshold", actor="system",
+                       reason=f"Score {cand.score:.2f} crossed the {target.value} threshold.", at=now)
+        )
+    return trail

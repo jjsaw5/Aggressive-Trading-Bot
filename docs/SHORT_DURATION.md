@@ -310,9 +310,22 @@ of existing components, tests, docs, no regressions, **live trading off**.
   setup-first candidates (state DETECTED, provisional setup_score, entry trigger
   + invalidation + reasons) — replacing the Phase-1 context stub. Still no
   contract, no order. 12 new tests.
-- **Phase 3 — Scoring & candidate state:** separate 0DTE / 1–5DTE scoring models,
-  candidate state machine + transition log, explainability, news scoring, flow
-  decay, data-quality score.
+- **Phase 3 — Scoring & candidate state. ✅ DELIVERED.** Two SEPARATE weighted
+  models in `app/shortduration/scoring/` (0DTE: intraday-structure 20 / market 15
+  / relvol-momentum 15 / flow 15 / liquidity 15 / vol 10 / catalyst-news 5 / R:R
+  5. 1–5DTE: daily-trend 20 / catalyst-news 15 / multi-session-flow 15 / market
+  10 / vol 10 / liquidity 10 / technical-entry 10 / R:R 10), each factor carrying
+  raw × weight = points + a plain-English reason. Named sub-scores (data-quality,
+  liquidity, news/flow confidence, market alignment, execution, risk) + a
+  data-quality-tempered overall confidence. News scoring (7-factor weighted +
+  headline-similarity dedup + keyword direction classifier), flow decay
+  (age-bucket weighting + opening/opposing/repeated-strike analysis — the
+  provider label is an input, not truth), and a data-quality score that flags
+  missing/stale inputs and lowers confidence (missing is never neutral). Full
+  candidate state machine (legal-transition-enforced) wired into detection:
+  DETECTED → EVALUATING → WATCHLIST/ARMED by score threshold, every transition
+  audited. The dashboard renders the full breakdown + transition trail on click.
+  14 new tests. Still no contract/order.
 - **Phase 4 — Contract selection & risk:** 0DTE / 1–5DTE contract ranking, spread
   comparison, sizing, liquidity rejection, event/time restrictions, daily-loss
   controls.

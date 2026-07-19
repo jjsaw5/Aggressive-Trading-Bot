@@ -241,11 +241,13 @@ def test_short_duration_scan_and_state_machine() -> None:
     cands = c.get("/short-duration/0dte/candidates").json()
     assert cands
     cid = cands[0]["id"]
-    assert cands[0]["state"] == "detected"
+    # Candidates are scored + classified past DETECTED, and carry a scorecard.
+    assert cands[0]["state"] in {"evaluating", "watchlist", "armed"}
+    assert cands[0]["scorecard"] is not None
 
     armed = c.post(f"/short-duration/candidates/{cid}/arm").json()
     assert armed["candidate"]["state"] == "armed"
-    # Transition audit trail: detected -> armed recorded.
+    # Transition audit trail: the DETECTED origin and the ARMED target are recorded.
     tos = [t["to_state"] for t in armed["transitions"]]
     assert "detected" in tos and "armed" in tos
 

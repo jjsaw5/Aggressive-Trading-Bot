@@ -170,8 +170,9 @@ async def test_run_detection_persists_and_ranks() -> None:
     from app.shortduration.detection import run_detection
 
     cands = await run_detection(DTECategory.SHORT_DTE, now=_NOW)
-    # Mock universe should yield at least one setup; all persisted as DETECTED.
-    assert all(c.state == CandidateState.DETECTED for c in cands)
+    # Mock universe yields setups; each is scored and classified past DETECTED.
+    scored_states = {CandidateState.EVALUATING, CandidateState.WATCHLIST, CandidateState.ARMED}
+    assert all(c.state in scored_states for c in cands)
     assert cands == sorted(cands, key=lambda c: c.score, reverse=True)
     if cands:
         assert cands[0].strategy is not None and cands[0].reasons

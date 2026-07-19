@@ -133,7 +133,7 @@
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
 
     let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
-                  section: "core", sdTab: "command" };
+                  section: "core", sdTab: "command", sdDetail: null };
 
     // Live auto-refresh: poll while a live view is open (Ops/Positions, or the
     // Short-Duration command center / positions).
@@ -500,8 +500,8 @@
     }
 
     function sdCandRows(cands) {
-      if (!cands.length) return `<tr><td colspan="6" class="muted">No candidates. Run a scan — Phase 1 creates context-only snapshots.</td></tr>`;
-      return cands.map(c => `<tr>
+      if (!cands.length) return `<tr><td colspan="6" class="muted">No setups detected. Run a scan.</td></tr>`;
+      return cands.map(c => `<tr class="clickable" data-cid="${c.id}">
         <td><strong>${c.symbol}</strong></td>
         <td><span class="pill">${c.dte_category}</span></td>
         <td>${c.direction}</td>
@@ -512,6 +512,41 @@
           <button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
           <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button></td>
       </tr>`).join("");
+    }
+
+    async function renderSdDetail(cid) {
+      const d = await api("GET", `/short-duration/candidates/${cid}`);
+      const c = d.candidate, sc = c.scorecard;
+      const back = `<button class="ghost" data-act="sd-back">← Back</button>`;
+      const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
+        <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
+        <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
+          · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}</div>
+        <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>`;
+      let factors = `<div class="muted">No scorecard.</div>`;
+      if (sc) {
+        const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>
+          <td class="num">${(f.raw*100).toFixed(0)}%</td><td class="num">${f.weight}</td>
+          <td class="num"><strong>${f.points.toFixed(1)}</strong></td>
+          <td class="muted">${f.explanation}</td></tr>`).join("");
+        factors = `<h3>Score breakdown — ${sc.total.toFixed(0)}/100</h3>
+          <table><thead><tr><th>Factor</th><th class="num">Quality</th><th class="num">Weight</th>
+          <th class="num">Points</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+      const comp = sc && sc.components ? `<h3 style="margin-top:14px">Sub-scores</h3><div class="kv">` +
+        Object.entries(sc.components).map(([k,v]) =>
+          `<div>${k.replace(/_/g," ")}</div><div>${v.value==null?"—":(v.value*100).toFixed(0)+"%"} <span class="muted">${v.explanation||""}</span></div>`).join("") +
+        `</div>` : "";
+      const news = c.news_score ? `<h3 style="margin-top:14px">News</h3>
+        <div class="kv"><div>Total</div><div>${(c.news_score.total*100).toFixed(0)}% ${c.news_score.is_duplicate?'<span class="warn">(duplicate)</span>':""}</div>
+        <div>Breakdown</div><div class="muted">${c.news_score.explanation}</div></div>` : "";
+      const trs = (d.transitions||[]).map(t =>
+        `<tr><td>${t.from_state||"—"} → <strong>${t.to_state}</strong></td><td>${t.trigger}</td>
+         <td>${t.actor}</td><td class="muted">${t.reason}</td></tr>`).join("");
+      const trail = `<h3 style="margin-top:14px">State transitions</h3>
+        <table><thead><tr><th>Transition</th><th>Trigger</th><th>Actor</th><th>Reason</th></tr></thead><tbody>${trs}</tbody></table>`;
+      return back + head + `<div class="card">${factors}${comp}${news}${trail}</div>`;
     }
     function sdCandTable(cands) {
       return `<table><thead><tr><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
@@ -625,6 +660,7 @@
     }
 
     async function renderSd() {
+      if (state.sdDetail) return await renderSdDetail(state.sdDetail);
       switch (state.sdTab) {
         case "command": return await renderSdCommand();
         case "scanner": return await renderSdScanner();
@@ -652,7 +688,7 @@
     }
 
     function switchSection(section) {
-      state.section = section;
+      state.section = section; state.sdDetail = null;
       document.querySelectorAll(".sections button").forEach(x =>
         x.classList.toggle("active", x.dataset.section === section));
       const short = section === "short";
@@ -674,7 +710,8 @@
     document.querySelectorAll("#sdTabs button").forEach(b =>
       b.addEventListener("click", () => {
         document.querySelectorAll("#sdTabs button").forEach(x => x.classList.remove("active"));
-        b.classList.add("active"); state.sdTab = b.dataset.sdtab; manageOpsRefresh(); render();
+        b.classList.add("active"); state.sdTab = b.dataset.sdtab; state.sdDetail = null;
+        manageOpsRefresh(); render();
       }));
 
     $("#view").addEventListener("click", async (e) => {
@@ -719,12 +756,14 @@
             await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/arm`); render();
           } else if (act === "sd-reject") {
             await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/reject`); render();
+          } else if (act === "sd-back") {
+            state.sdDetail = null; render();
           }
         } catch (err) { showErr(err); }
         return;
       }
       const row = e.target.closest("tr.clickable");
-      if (row && state.tab === "candidates") {
+      if (row && state.section === "core" && state.tab === "candidates") {
         const sym = row.dataset.sym;
         const c = state.candidates.find(x => x.symbol === sym);
         const d = $("#d-" + sym);
@@ -739,6 +778,10 @@
           d.hidden = !d.hidden;
           if (d.hidden) state.expandedPos.delete(sym); else state.expandedPos.add(sym);
         }
+      }
+      const sdRow = e.target.closest("tr[data-cid]");
+      if (sdRow && state.section === "short") {
+        state.sdDetail = sdRow.dataset.cid; render();
       }
     });
 

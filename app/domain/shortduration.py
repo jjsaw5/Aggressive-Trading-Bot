@@ -248,6 +248,9 @@ class ShortDurationCandidate(BaseModel):
     data_quality_score: float | None = None
     reasons: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
+    # Scoring (Phase 3). scorecard carries the full explainable breakdown.
+    scorecard: ScoreCard | None = None
+    news_score: NewsScore | None = None
 
 
 class CandidateTransition(BaseModel):
@@ -261,3 +264,57 @@ class CandidateTransition(BaseModel):
     actor: str = "system"  # "system" | a user id
     reason: str = ""
     score_at: float | None = None
+
+
+# --- Scoring models (pure; the scoring engine populates them) ----------------
+
+
+class FactorScore(BaseModel):
+    """One weighted factor in a DTE scoring model."""
+
+    key: str
+    label: str
+    weight: float  # points out of 100
+    raw: float  # [0,1] quality of this factor
+    points: float  # raw * weight
+    explanation: str = ""
+
+
+class ScoreComponent(BaseModel):
+    """A named sub-score in [0,1] with its rationale. `None` = input unavailable
+    (unknown), never zero."""
+
+    value: float | None = None
+    explanation: str = ""
+
+
+class NewsScore(BaseModel):
+    """Weighted news classification (source authority .. flow confirmation)."""
+
+    total: float  # [0,1]
+    source_authority: float
+    novelty: float
+    materiality: float
+    relevance: float
+    price_confirmed: float
+    volume_confirmed: float
+    flow_confirmed: float
+    is_duplicate: bool = False
+    direction: Direction | None = None
+    explanation: str = ""
+
+
+class ScoreCard(BaseModel):
+    """Full, explainable score for a short-duration candidate."""
+
+    dte_category: str
+    total: float  # [0,100]
+    overall_confidence: float  # [0,1] — total tempered by data quality
+    factors: list[FactorScore] = Field(default_factory=list)
+    components: dict[str, ScoreComponent] = Field(default_factory=dict)
+    data_quality: float = 0.0  # [0,1]
+    summary: str = ""
+
+    @property
+    def normalized(self) -> float:
+        return round(self.total / 100.0, 4)

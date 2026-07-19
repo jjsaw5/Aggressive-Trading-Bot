@@ -298,8 +298,18 @@ of existing components, tests, docs, no regressions, **live trading off**.
   XSP viability spike done (§4.1). **No execution, no real detection** — boards
   populate from a context-only scan stub explicitly labeled non-actionable.
   Providers/module gated off by default; live trading unchanged.
-- **Phase 2 — Strategy detection (subset):** 0DTE opening-range breakout, 0DTE
-  VWAP continuation; 1–5DTE trend continuation, 1–5DTE catalyst continuation.
+- **Phase 2 — Strategy detection (subset). ✅ DELIVERED.** Four independent,
+  configurable detectors in `app/shortduration/strategies/`: 0DTE opening-range
+  breakout (confirmed close beyond the range, not a wick; VWAP-aligned; relvol
+  gate), 0DTE VWAP continuation (above/below VWAP + sloped structure + pullback
+  held VWAP + volume expansion); 1–5DTE trend continuation (reuses
+  `analyze_price_action` for the daily trend + intraday alignment), 1–5DTE
+  catalyst continuation (catalyst + **mandatory multi-session price/volume
+  follow-through** — headline alone never triggers). `detection.py` builds a
+  per-symbol `SetupContext`, runs the DTE's detectors, and persists real
+  setup-first candidates (state DETECTED, provisional setup_score, entry trigger
+  + invalidation + reasons) — replacing the Phase-1 context stub. Still no
+  contract, no order. 12 new tests.
 - **Phase 3 — Scoring & candidate state:** separate 0DTE / 1–5DTE scoring models,
   candidate state machine + transition log, explainability, news scoring, flow
   decay, data-quality score.

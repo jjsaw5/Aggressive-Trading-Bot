@@ -32,6 +32,7 @@ from app.engine.universe import DEFAULT_UNIVERSE
 from app.providers import registry
 from app.shortduration import service
 from app.shortduration.breadth import BreadthProxy
+from app.shortduration.detection import run_detection
 
 router = APIRouter(prefix="/short-duration", tags=["short-duration"])
 
@@ -151,19 +152,19 @@ async def candidate_detail(candidate_id: str) -> CandidateDetail:
 
 @router.post("/scans/0dte", response_model=ScanResult)
 async def scan_0dte() -> ScanResult:
-    created = await service.run_context_scan(DTECategory.ZERO_DTE)
+    created = await run_detection(DTECategory.ZERO_DTE)
     return ScanResult(
         dte_category="0dte", created=len(created),
-        note="Context-only snapshot (Phase 1). Strategy detection lands in Phase 2.",
+        note="Opening-range breakout + VWAP continuation. Setups only — no contract/order yet.",
     )
 
 
 @router.post("/scans/1-5dte", response_model=ScanResult)
 async def scan_short_dte() -> ScanResult:
-    created = await service.run_context_scan(DTECategory.SHORT_DTE)
+    created = await run_detection(DTECategory.SHORT_DTE)
     return ScanResult(
         dte_category="1-5dte", created=len(created),
-        note="Context-only snapshot (Phase 1). Strategy detection lands in Phase 2.",
+        note="Trend + catalyst continuation. Setups only — no contract/order yet.",
     )
 
 

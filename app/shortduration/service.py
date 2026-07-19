@@ -1,29 +1,24 @@
-"""Short-duration orchestration service (read-only, Phase 1).
+"""Short-duration orchestration service (read-only market context).
 
 Fetches data through the provider registry, computes intraday levels + breadth +
 regime, and pulls news/events. Kept out of the API layer so routes stay thin and
 the logic is unit-testable with a mock provider. Concurrency is bounded and open
 positions are not touched here (Tier 4 owns those).
 
-Phase 1 has NO strategy detection: `run_context_scan` produces context-only
-candidates that capture the current market posture so the boards, persistence,
-and state machine are exercised. Real detection replaces the scoring in Phase 2 —
-these candidates are explicitly labeled non-actionable.
+Strategy detection lives in `app/shortduration/detection.py` (Phase 2), which
+reuses `build_market_regime` from here. This module stays detection-free — it is
+the shared market-context layer.
 """
 
 from __future__ import annotations
 
 import asyncio
-import uuid
 from datetime import UTC, datetime
 
-from app.domain.enums import CandidateState, Direction, DTECategory
 from app.domain.shortduration import (
-    CandidateTransition,
     EconomicEvent,
     IntradayLevels,
     NewsItem,
-    ShortDurationCandidate,
     ShortDurationRegimeState,
 )
 from app.engine.universe import DEFAULT_UNIVERSE
@@ -141,66 +136,3 @@ async def get_events(*, now: datetime | None = None) -> list[EconomicEvent]:
     except Exception as exc:  # noqa: BLE001
         log.warning("sd_events_failed", error=str(exc))
         return []
-
-
-def _context_candidate(
-    symbol: str, dte: DTECategory, levels: IntradayLevels, regime: ShortDurationRegimeState, now: datetime
-) -> ShortDurationCandidate:
-    """A NON-actionable context snapshot (Phase 1). Direction reflects current
-    posture vs VWAP; score stays 0 because no setup has been confirmed yet."""
-    above = levels.above_vwap
-    direction = (
-        Direction.BULLISH if above else Direction.BEARISH if above is False else Direction.NEUTRAL
-    )
-    reasons = ["Context snapshot only — strategy detection lands in Phase 2."]
-    if levels.vwap is not None and levels.last is not None:
-        reasons.append(f"{'Above' if above else 'Below'} VWAP ({levels.last:g} vs {levels.vwap:g}).")
-    if levels.relative_volume is not None:
-        reasons.append(f"Relative volume ~{levels.relative_volume:g}x.")
-    return ShortDurationCandidate(
-        id=uuid.uuid4().hex[:12],
-        symbol=symbol,
-        dte_category=dte,
-        direction=direction,
-        detected_at=now,
-        regime=regime.regime,
-        score=0.0,
-        confidence=0.0,
-        state=CandidateState.DETECTED,
-        reasons=reasons,
-    )
-
-
-async def run_context_scan(
-    dte: DTECategory, *, now: datetime | None = None, universe: list[str] | None = None
-) -> list[ShortDurationCandidate]:
-    """Phase-1 scan stub: snapshot market context for each universe symbol into
-    context-only candidates (persisted, with a state transition). This exercises
-    the boards + state machine; Phase 2 replaces it with real detection."""
-    from app.db import repository
-
-    now = now or datetime.now(UTC)
-    regime, levels, _ = await build_market_regime(now=now, universe=universe)
-    out: list[ShortDurationCandidate] = []
-    for sym in universe or DEFAULT_UNIVERSE:
-        lv = levels.get(sym)
-        if lv is None:
-            continue
-        cand = _context_candidate(sym, dte, lv, regime, now)
-        await asyncio.to_thread(repository.save_short_duration_candidate, cand)
-        await asyncio.to_thread(
-            repository.append_candidate_transition,
-            CandidateTransition(
-                candidate_id=cand.id,
-                from_state=None,
-                to_state=CandidateState.DETECTED,
-                at=now,
-                trigger="context_scan",
-                actor="system",
-                reason="Context snapshot created.",
-                score_at=0.0,
-            ),
-        )
-        out.append(cand)
-    log.info("sd_context_scan", dte=dte.value, count=len(out))
-    return out

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from app.config import settings
 from app.domain.enums import CandidateState, DTECategory
@@ -31,7 +31,15 @@ from app.engine.universe import DEFAULT_UNIVERSE
 from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
+from app.shortduration.contracts import ContractResult, select_short_duration_contract
 from app.shortduration.levels import compute_intraday_levels
+from app.shortduration.risk import (
+    DailyRiskState,
+    EntryGate,
+    evaluate_entry_gates,
+    short_duration_policy,
+)
+from app.shortduration.scoring.data_quality import quote_is_stale
 from app.shortduration.scoring.engine import score_candidate
 from app.shortduration.scoring.flow_decay import analyze_flow
 from app.shortduration.scoring.news import best_news_score
@@ -45,6 +53,18 @@ from app.shortduration.strategies.vwap_continuation import VWAPTrendContinuation
 from app.tiers.concurrency import bounded_gather
 
 log = get_logger(__name__)
+
+
+def _target_expirations(dte: DTECategory, today: date) -> list[date]:
+    """The expiration dates a DTE category trades. Providers return contracts for
+    whichever of these they actually list (liquid names have daily/weekly ones)."""
+    from datetime import timedelta
+
+    if dte == DTECategory.ZERO_DTE:
+        offsets = range(0, 2)  # today (+ next day as a fallback if today isn't listed)
+    else:
+        offsets = range(1, settings.short_duration_max_dte + 1)
+    return [today + timedelta(days=i) for i in offsets]
 
 
 def default_strategies(dte: DTECategory) -> list:
@@ -107,9 +127,14 @@ async def build_context(
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
+    contract: ContractResult, gate: EntryGate,
 ) -> ShortDurationCandidate:
     reasons = list(det.reasons)
     reasons.append(card.summary)
+    if contract.recommendation.description:
+        reasons.append(f"Contract: {contract.recommendation.description}.")
+    plan = contract.plan
+    rr = plan.risk.reward_to_risk if plan and plan.risk else None
     return ShortDurationCandidate(
         id=uuid.uuid4().hex[:12],
         symbol=symbol,
@@ -118,19 +143,22 @@ def _candidate_from(
         direction=det.direction,
         detected_at=now,
         regime=regime.regime,
-        score=card.normalized,  # scored total replaces the provisional setup score
+        score=card.normalized,
         confidence=card.overall_confidence,
         entry_trigger=det.entry_trigger,
         invalidation=det.invalidation,
         targets=det.targets,
-        contract=ContractRecommendation(
-            description="Contract selection lands in Phase 4 (defined-risk, sized to policy)."
-        ),
+        contract=contract.recommendation,
+        max_risk_usd=plan.risk.max_loss_usd if plan else None,
+        reward_to_risk=rr,
         state=CandidateState.DETECTED,
         data_quality_score=card.data_quality,
         reasons=reasons,
         scorecard=card,
         news_score=news,
+        entry_allowed=gate.allowed,
+        entry_notes=gate.reasons,
+        reject_reasons=[r.value for r in contract.reject_reasons] + [r.value for r in gate.reject_reasons],
     )
 
 
@@ -152,13 +180,19 @@ async def _detect_symbol(
 
 async def _score_symbol(
     symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime
-) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None]]:
-    """Fetch chain + IV once for a symbol that produced setups, then score each
-    detection. Chains are fetched ONLY for symbols with detections — a handful,
-    not the whole universe."""
+) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None, ContractResult, EntryGate]]:
+    """For a symbol that produced setups: fetch the chain + IV once, select a
+    sized defined-risk contract per detection, score with the real structure, and
+    evaluate the entry gates. Chain fetches happen ONLY for symbols with
+    detections — a handful, not the whole universe."""
     chain = iv = None
+    dte = dets[0].dte_category  # all detections in a scan share the DTE category
     try:
-        chain = await registry.options_chain_provider().get_option_chain(symbol, expirations=2)
+        # Fetch the NEAR-TERM expirations this category trades, not the default
+        # ~30-DTE window get_option_chain returns.
+        chain = await registry.options_chain_provider().get_option_chain_for_expirations(
+            symbol, _target_expirations(dte, now.date())
+        )
     except Exception as exc:  # noqa: BLE001 - liquidity scored as unknown on miss
         log.warning("sd_score_chain_failed", symbol=symbol, error=str(exc))
     try:
@@ -167,14 +201,29 @@ async def _score_symbol(
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
 
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
+    stale = quote_is_stale(ctx, now)
+    equity = settings.account_equity_usd
+    daily = DailyRiskState()  # Phase 5 populates realized P&L / consecutive losses
     scored = []
     for det in dets:
         fa = analyze_flow(ctx.flow, now, det.direction)
         news = best_news_score(
             ctx.news, for_symbol=symbol, change_pct=ctx.change_pct, rel_volume=rel_vol, flow=fa
         )
-        card = score_candidate(ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa)
-        scored.append((det, card, news))
+        contract = ContractResult(None, ContractRecommendation(description=""))
+        if chain is not None:
+            contract = select_short_duration_contract(
+                chain, det.direction, det.dte_category,
+                policy=short_duration_policy(det.dte_category), as_of=now.date(),
+            )
+        card = score_candidate(
+            ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
+        )
+        gate = evaluate_entry_gates(
+            dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
+            quote_stale=stale, daily=daily, equity=equity,
+        )
+        scored.append((det, card, news, contract, gate))
     return scored
 
 
@@ -206,9 +255,9 @@ async def run_detection(
     for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
         if not scored:
             continue
-        for det, card, news in scored:
-            cand = _candidate_from(det, symbol, now, card, news, regime)
-            transitions = _classify_transitions(cand, det, now)
+        for det, card, news, contract, gate in scored:
+            cand = _candidate_from(det, symbol, now, card, news, regime, contract, gate)
+            transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
             for tr in transitions:
                 await asyncio.to_thread(repository.append_candidate_transition, tr)
@@ -220,9 +269,10 @@ async def run_detection(
 
 
 def _classify_transitions(
-    cand: ShortDurationCandidate, det: StrategyDetection, now: datetime
+    cand: ShortDurationCandidate, det: StrategyDetection, now: datetime, *, tradeable: bool
 ) -> list[CandidateTransition]:
-    """Record DETECTED -> EVALUATING -> (WATCHLIST|ARMED) from the score."""
+    """DETECTED -> EVALUATING, then either REJECTED (no tradeable defined-risk
+    contract) or WATCHLIST/ARMED from the score."""
     trail = [
         CandidateTransition(
             candidate_id=cand.id, from_state=None, to_state=CandidateState.DETECTED, at=now,
@@ -234,6 +284,15 @@ def _classify_transitions(
         transition(cand, CandidateState.EVALUATING, trigger="scored", actor="system",
                    reason=cand.scorecard.summary if cand.scorecard else "Scored.", at=now)
     )
+    if not tradeable:
+        # A valid setup with no liquid, defined-risk contract that fits the cap is
+        # rejected — visibly, with the reason, not silently dropped.
+        why = "; ".join(cand.reject_reasons) or "No tradeable defined-risk contract."
+        trail.append(
+            transition(cand, CandidateState.REJECTED, trigger="no_contract", actor="system",
+                       reason=why, at=now)
+        )
+        return trail
     target = classify_initial_state(
         cand.score, watchlist_at=settings.short_duration_watchlist_score,
         arm_at=settings.short_duration_arm_score,

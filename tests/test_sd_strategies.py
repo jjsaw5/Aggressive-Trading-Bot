@@ -170,8 +170,10 @@ async def test_run_detection_persists_and_ranks() -> None:
     from app.shortduration.detection import run_detection
 
     cands = await run_detection(DTECategory.SHORT_DTE, now=_NOW)
-    # Mock universe yields setups; each is scored and classified past DETECTED.
-    scored_states = {CandidateState.EVALUATING, CandidateState.WATCHLIST, CandidateState.ARMED}
+    # Mock universe yields setups; each is scored and classified past DETECTED,
+    # or REJECTED when no liquid defined-risk contract fits the cap (Phase 4).
+    scored_states = {CandidateState.EVALUATING, CandidateState.WATCHLIST,
+                     CandidateState.ARMED, CandidateState.REJECTED}
     assert all(c.state in scored_states for c in cands)
     assert cands == sorted(cands, key=lambda c: c.score, reverse=True)
     if cands:

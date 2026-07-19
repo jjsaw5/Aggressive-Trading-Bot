@@ -161,15 +161,22 @@ def multi_session_flow(flow: FlowAnalysis | None) -> ScoreComponent:
     return ScoreComponent(value=round(val, 3), explanation=flow.explanation)
 
 
-def risk_reward(ctx: SetupContext, direction: Direction) -> ScoreComponent:
-    # Provisional until Phase 4 sizes a defined-risk structure. Uses proximity to
-    # the invalidation as a rough asymmetry proxy.
+def risk_reward(ctx: SetupContext, direction: Direction, plan=None) -> ScoreComponent:
+    # With a sized defined-risk plan (Phase 4), use the real reward-to-risk.
+    if plan is not None and plan.risk is not None:
+        rr = plan.risk.reward_to_risk
+        if rr is not None:
+            return ScoreComponent(value=round(min(1.0, rr / 2.0), 3),
+                                  explanation=f"defined-risk R:R {rr:g}:1")
+        # Long single option: upside open-ended, capped risk -> favorable but scenario-based.
+        return ScoreComponent(value=0.65, explanation="long option — capped risk, open upside")
+    # No plan yet: proximity-to-invalidation proxy.
     lv = ctx.levels
     if lv is None or lv.last is None or lv.vwap is None:
-        return ScoreComponent(value=0.4, explanation="Provisional — sized in Phase 4.")
+        return ScoreComponent(value=0.4, explanation="Provisional — awaiting a sized structure.")
     dist = abs(lv.last - lv.vwap) / lv.last if lv.last else 0.0
-    val = min(0.8, 0.4 + dist * 10)  # tighter invalidation -> better R:R proxy
-    return ScoreComponent(value=round(val, 3), explanation="Provisional (VWAP-distance proxy); sized in Phase 4.")
+    val = min(0.8, 0.4 + dist * 10)
+    return ScoreComponent(value=round(val, 3), explanation="Provisional (VWAP-distance proxy).")
 
 
 def technical_entry(ctx: SetupContext, direction: Direction) -> ScoreComponent:

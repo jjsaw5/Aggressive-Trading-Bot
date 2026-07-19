@@ -41,6 +41,7 @@ def score_candidate(
     iv: IVContext | None = None,
     news_score: NewsScore | None = None,
     flow_analysis: FlowAnalysis | None = None,
+    trade_plan=None,
 ) -> ScoreCard:
     d: Direction = detection.direction
     flow = flow_analysis or analyze_flow(ctx.flow, ctx.now, d)
@@ -54,7 +55,7 @@ def score_candidate(
     c_liq = C.contract_liquidity(chain, d)
     c_vol = C.volatility_suitability(iv)
     c_cat = C.catalyst_news(ctx, news_score)
-    c_rr = C.risk_reward(ctx, d)
+    c_rr = C.risk_reward(ctx, d, trade_plan)
     c_daily = C.daily_trend(ctx, d)
     c_msflow = C.multi_session_flow(flow)
     c_tech = C.technical_entry(ctx, d)

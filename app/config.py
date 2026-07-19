@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7
+    # Risk controls (Phase 4). Per-DTE per-trade risk %, tighter than the core
+    # scanner; the absolute $ cap (max_defined_risk_per_trade_usd) still applies.
+    short_duration_0dte_risk_pct: float = 0.03  # 2-3% baseline
+    short_duration_1_5dte_risk_pct: float = 0.05  # 3-5% baseline
+    short_duration_max_concurrent: int = 2
+    short_duration_daily_loss_pct: float = 0.05  # halt new trades past -5% on the day
+    short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
+    short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
+    short_duration_0dte_cutoff_et: str = "15:00"  # no new 0DTE entries after 3pm ET
 
     # --- Account / risk policy ---
     # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%

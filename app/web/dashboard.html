@@ -518,12 +518,32 @@
       const d = await api("GET", `/short-duration/candidates/${cid}`);
       const c = d.candidate, sc = c.scorecard;
       const back = `<button class="ghost" data-act="sd-back">← Back</button>`;
+      const gateCls = c.entry_allowed === false ? "regime-stop" : "regime-ok";
+      const gate = c.entry_allowed == null ? "" :
+        `<div class="banner ${gateCls}" style="margin-top:8px"><b>Entry gates:</b>
+         ${c.entry_allowed ? '<span class="pos">CLEAR</span>' : '<span class="warn">BLOCKED</span>'}
+         <span class="muted">${(c.entry_notes||[]).join(" · ")}</span>
+         ${(c.reject_reasons||[]).length ? `<div class="warn" style="margin-top:4px">rejected: ${c.reject_reasons.join(", ")}</div>` : ""}</div>`;
+      const rec = c.contract || {};
+      const legRows = (rec.legs||[]).map(l =>
+        `<tr><td>${l.action.replace(/_/g," ")}</td><td><strong>${l.strike}${l.option_type[0].toUpperCase()}</strong></td>
+         <td>${l.expiration}</td><td class="num">${l.quantity}</td></tr>`).join("");
+      const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
+        <div class="kv">
+          <div>Structure</div><div>${rec.description||"—"}</div>
+          <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
+          <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
+          <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>
+          <div>Est. net / share</div><div>${rec.est_fill_net==null?"—":"$"+rec.est_fill_net}</div>
+        </div>
+        ${legRows?`<table style="margin-top:8px"><thead><tr><th>Leg</th><th>Contract</th><th>Expiry</th><th class="num">Qty</th></tr></thead><tbody>${legRows}</tbody></table>`:`<div class="muted" style="margin-top:6px">${rec.liquidity_note||"No tradeable contract."}</div>`}
+        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. No order is placed.</div></div>`;
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
         <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
           · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
-        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>`;
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + gate + contract;
       let factors = `<div class="muted">No scorecard.</div>`;
       if (sc) {
         const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>

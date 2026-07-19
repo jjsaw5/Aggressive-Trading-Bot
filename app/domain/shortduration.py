@@ -251,6 +251,11 @@ class ShortDurationCandidate(BaseModel):
     # Scoring (Phase 3). scorecard carries the full explainable breakdown.
     scorecard: ScoreCard | None = None
     news_score: NewsScore | None = None
+    # Risk / entry gates (Phase 4).
+    entry_allowed: bool | None = None
+    entry_notes: list[str] = Field(default_factory=list)
+    reject_reasons: list[str] = Field(default_factory=list)
+    reward_to_risk: float | None = None
 
 
 class CandidateTransition(BaseModel):

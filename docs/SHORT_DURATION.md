@@ -326,9 +326,23 @@ of existing components, tests, docs, no regressions, **live trading off**.
   DETECTED → EVALUATING → WATCHLIST/ARMED by score threshold, every transition
   audited. The dashboard renders the full breakdown + transition trail on click.
   14 new tests. Still no contract/order.
-- **Phase 4 — Contract selection & risk:** 0DTE / 1–5DTE contract ranking, spread
-  comparison, sizing, liquidity rejection, event/time restrictions, daily-loss
-  controls.
+- **Phase 4 — Contract selection & risk. ✅ DELIVERED.** `app/shortduration/
+  contracts.py` turns each scored setup into a sized, DEFINED-RISK expression,
+  reusing the core selection + sizing + exit machinery with short-DTE configs
+  (0DTE: 0–1 DTE, wider spread / cheaper mid tolerance; 1–5DTE: 1–5 DTE). Chains
+  are fetched for the NEAR-TERM expirations (via `get_option_chain_for_expirations`,
+  not the ~30-DTE default). Single-leg near-ATM first; if its debit exceeds the
+  per-trade cap, a defined-risk debit vertical; if nothing liquid fits, the setup
+  is REJECTED with the reason (illiquid vs unmanageable-risk) — never forced. The
+  real reward-to-risk now feeds the risk/reward score factor. `app/shortduration/
+  risk.py` adds a tighter per-DTE `short_duration_policy` (2–3% 0DTE / 3–5%
+  1–5DTE, same $ cap, same-day time-stop for 0DTE) and HARD entry gates evaluated
+  independent of score: market-closed / first-N-minutes / 0DTE cutoff, stale
+  quote, daily-loss & consecutive-loss halts, concurrency, and regime blackout /
+  reduce-size. Candidates carry the contract recommendation (legs, max loss/
+  profit, breakevens, R:R), max risk, and the entry-gate verdict; the dashboard
+  detail renders a Contract & risk card + gate status. Config adds the risk
+  knobs. 10 new tests. Still no order — gates feed paper trading (Phase 5).
 - **Phase 5 — Paper trading:** simulated fills at bid/ask + slippage, position
   lifecycle with intraday time-stops, journal, performance reports.
 - **Phase 6 — Validation:** full test matrix, load/rate-limit/latency, backtest

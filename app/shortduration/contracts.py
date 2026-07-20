@@ -30,9 +30,16 @@ from app.risk.trade_plan import build_long_option_plan, build_vertical_spread_pl
 
 # Near-the-money delta band; DTE windows differ by category. 0DTE tolerates a
 # slightly wider spread and cheaper contracts (ATM 0DTE premium can be small).
+# moneyness_fallback_pct picks the near-ATM strike when provider greeks are
+# missing/degenerate (common for single-stock 0DTE), so those names aren't
+# silently rejected. 0DTE deltas roll off fast, so keep its band tighter.
 _SEL = {
-    DTECategory.ZERO_DTE: SelectionConfig(min_dte=0, max_dte=1, target_delta=0.5, min_delta=0.35, max_delta=0.68),
-    DTECategory.SHORT_DTE: SelectionConfig(min_dte=1, max_dte=5, target_delta=0.5, min_delta=0.35, max_delta=0.65),
+    DTECategory.ZERO_DTE: SelectionConfig(
+        min_dte=0, max_dte=1, target_delta=0.5, min_delta=0.35, max_delta=0.68,
+        moneyness_fallback_pct=0.03),
+    DTECategory.SHORT_DTE: SelectionConfig(
+        min_dte=1, max_dte=5, target_delta=0.5, min_delta=0.35, max_delta=0.65,
+        moneyness_fallback_pct=0.05),
 }
 _LIQ = {
     DTECategory.ZERO_DTE: OptionLiquidityConfig(

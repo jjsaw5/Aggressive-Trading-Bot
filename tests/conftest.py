@@ -33,6 +33,7 @@ for _var in (
 # Pin runtime toggles a local .env might flip, so tests stay hermetic.
 os.environ["ALERTS_ENABLED"] = "false"
 os.environ["ALERTS_CHANNEL"] = "console"
+os.environ["SHORT_DURATION_PAPER_UNCONSTRAINED"] = "false"  # tests assert the real caps
 # Disable the provider cache + rate limiter globally so call-count assertions
 # are deterministic; both are exercised directly in their own test modules.
 os.environ["CACHE_ENABLED"] = "false"

@@ -38,6 +38,11 @@ class SelectionConfig:
     target_delta: float = 0.45
     min_delta: float = 0.30
     max_delta: float = 0.60
+    # Opt-in moneyness fallback: when a liquid contract's delta is missing or
+    # degenerate (0.0/1.0 — common for provider 0DTE single-stock greeks), accept
+    # it if |strike/spot - 1| <= this band, picking the closest-to-ATM strike.
+    # None (default) keeps the strict delta-only behavior for the core scanner.
+    moneyness_fallback_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,20 @@ class SpreadChoice:
         return None
 
 
+def _moneyness_fit(c, chain, sel: SelectionConfig) -> float | None:
+    """ATM-closeness proxy [0,1] for when delta is missing/degenerate, or None if
+    the fallback is disabled or the strike is outside the moneyness band. Only the
+    near-ATM strikes (|strike/spot - 1| <= band) qualify; closest to ATM scores 1."""
+    band = sel.moneyness_fallback_pct
+    spot = chain.underlying_price
+    if not band or not spot or spot <= 0 or not c.strike:
+        return None
+    money = abs(c.strike / spot - 1.0)
+    if money > band:
+        return None
+    return round(1.0 - money / band, 4)
+
+
 def select_long_contract(
     chain: OptionChain,
     direction: Direction,
@@ -99,10 +118,15 @@ def select_long_contract(
             continue  # failed hard liquidity gate
 
         delta = abs(c.greeks.delta) if c.greeks.delta is not None else None
-        if delta is None or not (sel.min_delta <= delta <= sel.max_delta):
+        by_delta = delta is not None and 0.0 < delta < 1.0 and sel.min_delta <= delta <= sel.max_delta
+        money = _moneyness_fit(c, chain, sel) if not by_delta else None
+        if not by_delta and money is None:
             continue
 
-        delta_fit = 1.0 - abs(delta - sel.target_delta) / sel.target_delta
+        # Fit uses the real delta when usable; otherwise the ATM-closeness proxy.
+        delta_fit = (
+            1.0 - abs(delta - sel.target_delta) / sel.target_delta if by_delta else money
+        )
         liq_score = option_liquidity_score(c, liq)
         # DTE fit: prefer the middle of the window.
         mid_dte = (sel.min_dte + sel.max_dte) / 2
@@ -145,16 +169,22 @@ def select_vertical_spread(
     else:
         return None
 
-    # Candidate long legs: in the target delta band, right DTE, liquid.
+    # Candidate long legs: in the target delta band (or near-ATM by moneyness when
+    # delta is missing/degenerate), right DTE, liquid.
+    def _leg_ok(c) -> bool:
+        if c.mid is None or gate_option(c, liq):
+            return False
+        d = abs(c.greeks.delta) if c.greeks.delta is not None else None
+        if d is not None and 0.0 < d < 1.0 and sel.min_delta <= d <= sel.max_delta:
+            return True
+        return _moneyness_fit(c, chain, sel) is not None
+
     legs = [
         c
         for c in chain.contracts
         if c.option_type == want
         and sel.min_dte <= c.dte(as_of) <= sel.max_dte
-        and not gate_option(c, liq)
-        and c.greeks.delta is not None
-        and sel.min_delta <= abs(c.greeks.delta) <= sel.max_delta
-        and c.mid is not None
+        and _leg_ok(c)
     ]
     if not legs:
         return None

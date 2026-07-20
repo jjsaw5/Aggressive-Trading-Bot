@@ -21,6 +21,35 @@ AFFORDABLE_UNIVERSE: list[str] = [
     "F", "SOFI", "PLTR", "INTC", "T", "PFE", "BAC", "CCL", "NIO", "RIVN",
 ]
 
+# --- Short-duration universes ------------------------------------------------
+# 0DTE is restricted to names that reliably list SAME-DAY expirations: the index
+# ETFs and the mega-caps that now carry dailies. Trading "0DTE" on a name without
+# a daily listing is impossible, so a broad list would only add rejected rows.
+ZERO_DTE_UNIVERSE: list[str] = [
+    "SPY", "QQQ", "IWM", "DIA",
+    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "TSLA", "NFLX",
+]
+
+# 1-5DTE casts a wide net: broadly liquid, actively-optioned names across a range
+# of prices so defined-risk structures fit tight per-trade caps. The cheaper
+# names are deliberately included so more setups clear the risk cap instead of
+# rejecting as `risk_unmanageable`.
+SHORT_DURATION_UNIVERSE: list[str] = [
+    # index / sector ETFs
+    "SPY", "QQQ", "IWM", "DIA", "XLF", "XLE", "XLK", "SMH", "GLD",
+    # mega-cap tech / semis
+    "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "TSLA", "NFLX", "AVGO", "MU",
+    # liquid large-caps
+    "JPM", "BAC", "WFC", "C", "DIS", "UBER", "PYPL", "BABA", "COIN", "PLTR",
+    # lower-priced, high-volume names (fit tighter per-trade caps)
+    "F", "SOFI", "INTC", "T", "PFE", "CCL", "AAL", "NIO", "RIVN", "MARA", "RIOT", "SNAP",
+]
+
+
+def short_duration_universe(is_zero_dte: bool) -> list[str]:
+    """The default scan universe for a short-duration DTE category."""
+    return list(ZERO_DTE_UNIVERSE if is_zero_dte else SHORT_DURATION_UNIVERSE)
+
 
 class UniverseConfig(BaseModel):
     """Configurable universe + hard gating toggles for excluded categories.

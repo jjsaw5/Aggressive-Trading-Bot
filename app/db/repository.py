@@ -342,17 +342,29 @@ def save_short_duration_candidate(candidate: ShortDurationCandidate) -> None:
 
 
 def list_short_duration_candidates(
-    *, dte_category: str | None = None, states: list[str] | None = None, limit: int = 100
+    *, dte_category: str | None = None, states: list[str] | None = None,
+    limit: int = 100, ranked: bool = True,
 ) -> list[ShortDurationCandidate]:
+    """Candidates for the board. With ``ranked`` (default), repeated scans of the
+    same setup are collapsed to the freshest row and the result is ordered by
+    actionability (ready-to-trade first) rather than scan time. A generous recent
+    window is loaded pre-rank so a high-ranking older setup is not truncated by
+    the chronological fetch before ranking is applied."""
+    from app.shortduration.ranking import rank_candidates
+
+    fetch = max(limit * 5, 300) if ranked else limit
     with SessionLocal() as session:
         stmt = select(ShortDurationCandidateRow)
         if dte_category:
             stmt = stmt.where(ShortDurationCandidateRow.dte_category == dte_category)
         if states:
             stmt = stmt.where(ShortDurationCandidateRow.state.in_(states))
-        stmt = stmt.order_by(ShortDurationCandidateRow.detected_at.desc()).limit(limit)
+        stmt = stmt.order_by(ShortDurationCandidateRow.detected_at.desc()).limit(fetch)
         rows = session.execute(stmt).scalars().all()
-        return [ShortDurationCandidate.model_validate(r.payload) for r in rows]
+        cands = [ShortDurationCandidate.model_validate(r.payload) for r in rows]
+    if ranked:
+        cands = rank_candidates(cands)
+    return cands[:limit]
 
 
 def get_short_duration_candidate(candidate_id: str) -> ShortDurationCandidate | None:

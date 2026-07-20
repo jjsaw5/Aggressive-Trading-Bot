@@ -162,3 +162,45 @@ def test_entry_gate_blocks_when_regime_disallows() -> None:
 def test_gate_config_parses_cutoff() -> None:
     cfg = RiskGateConfig.from_settings()
     assert isinstance(cfg.cutoff_0dte_et, time)
+
+
+def test_plural_offers_both_long_and_spread_when_unconstrained(monkeypatch) -> None:
+    """With the cap lifted, the plural selector returns BOTH a single-leg long and
+    a defined-risk spread as separate pickable expressions."""
+    from app.config import settings
+    from app.shortduration.contracts import select_short_duration_contracts
+
+    monkeypatch.setattr(settings, "short_duration_paper_unconstrained", True, raising=False)
+    res = select_short_duration_contracts(
+        _chain(dte=3, otype=OptionType.CALL), Direction.BULLISH, DTECategory.SHORT_DTE,
+        policy=short_duration_policy(DTECategory.SHORT_DTE), as_of=date(2026, 7, 17),
+    )
+    leg_counts = sorted(len(r.recommendation.legs) for r in res if r.is_tradeable)
+    assert leg_counts == [1, 2]  # one single-leg long + one two-leg spread
+
+
+def test_moneyness_fallback_selects_atm_when_delta_missing(monkeypatch) -> None:
+    """When provider greeks are degenerate (delta 0 for a liquid ATM contract) the
+    0DTE selector falls back to moneyness and still finds a near-ATM contract,
+    instead of rejecting a genuinely liquid name."""
+    from app.config import settings
+    from app.shortduration.contracts import select_short_duration_contracts
+
+    monkeypatch.setattr(settings, "short_duration_paper_unconstrained", True, raising=False)
+    now = datetime(2026, 7, 17, 15, 0, tzinfo=UTC)
+    # Liquid 0DTE calls around spot 100, but every delta is 0.0 (missing greeks).
+    contracts = [
+        _contract(k, OptionType.CALL, dte=0, bid=b, ask=b + 0.05, oi=4000, vol=5000, delta=0.0)
+        for k, b in [(99, 1.4), (100, 0.9), (101, 0.5), (102, 0.25), (105, 0.05)]
+    ]
+    chain = OptionChain(symbol="SPY", underlying_price=100.0, contracts=contracts,
+                        as_of=now, source="test")
+    res = select_short_duration_contracts(
+        chain, Direction.BULLISH, DTECategory.ZERO_DTE,
+        policy=short_duration_policy(DTECategory.ZERO_DTE), as_of=date(2026, 7, 17),
+    )
+    tradeable = [r for r in res if r.is_tradeable]
+    assert tradeable, "moneyness fallback should yield at least the single-leg long"
+    # The chosen long leg is a near-ATM strike (within the 3% 0DTE band of spot 100).
+    long_leg = next(r for r in tradeable if len(r.recommendation.legs) == 1)
+    assert abs(long_leg.recommendation.legs[0]["strike"] - 100.0) <= 3.0

@@ -291,7 +291,7 @@ class FMPProvider(
             )
         return out
 
-    # --- Economic calendar (grounded on /stable/economics-calendar) ---
+    # --- Economic calendar (grounded on /stable/economic-calendar) ---
     async def get_economic_events(
         self, *, from_date: date | None = None, to_date: date | None = None
     ) -> list[EconomicEvent]:
@@ -300,7 +300,7 @@ class FMPProvider(
             params["from"] = from_date.isoformat()
         if to_date is not None:
             params["to"] = to_date.isoformat()
-        data = await self._http.get_json("/stable/economics-calendar", params)
+        data = await self._http.get_json("/stable/economic-calendar", params)
         rows = data if isinstance(data, list) else []
         out: list[EconomicEvent] = []
         for r in rows:

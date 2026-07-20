@@ -38,6 +38,24 @@ class StrategyType(str, Enum):
     LONG_STRANGLE = "long_strangle"
     IRON_CONDOR = "iron_condor"
 
+    @property
+    def display_name(self) -> str:
+        """Broker-aligned label (matches how Robinhood names the order ticket), so
+        a suggested play maps 1:1 to what the user builds. Debit/credit is explicit
+        to avoid confusing a bearish put debit spread with a bullish put credit
+        spread."""
+        return {
+            StrategyType.LONG_CALL: "Long Call",
+            StrategyType.LONG_PUT: "Long Put",
+            StrategyType.BULL_CALL_SPREAD: "Call Debit Spread",
+            StrategyType.BEAR_PUT_SPREAD: "Put Debit Spread",
+            StrategyType.BULL_PUT_SPREAD: "Put Credit Spread",
+            StrategyType.BEAR_CALL_SPREAD: "Call Credit Spread",
+            StrategyType.LONG_STRADDLE: "Long Straddle",
+            StrategyType.LONG_STRANGLE: "Long Strangle",
+            StrategyType.IRON_CONDOR: "Iron Condor",
+        }[self]
+
 
 class CandidateStatus(str, Enum):
     RANKED = "ranked"

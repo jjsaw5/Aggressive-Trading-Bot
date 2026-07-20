@@ -72,7 +72,7 @@ def _recommendation(plan: TradePlan, note: str) -> ContractRecommendation:
         for lg in plan.legs
     ]
     return ContractRecommendation(
-        description=f"{plan.strategy.value.replace('_', ' ')} x{plan.contracts}",
+        description=f"{plan.strategy.display_name} x{plan.contracts}",
         legs=legs,
         max_loss_usd=plan.risk.max_loss_usd,
         max_profit_usd=plan.risk.max_profit_usd,

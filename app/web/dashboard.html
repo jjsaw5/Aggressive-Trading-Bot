@@ -84,12 +84,23 @@
     .card h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
     .countdown { font-size: 22px; font-variant-numeric: tabular-nums; }
     .proxy-note { font-size: 11px; color: var(--muted); font-style: italic; }
+    .search { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+    .search input { min-width: 180px; text-transform: uppercase; }
+    .report-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; }
+    .report-head .price { font-size: 26px; font-weight: 600; }
+    .stat { display: flex; flex-direction: column; }
+    .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .stat .v { font-size: 15px; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
   <header>
     <h1>Aggressive Trading Bot <span class="muted">— Research &amp; Decision Support</span></h1>
     <span id="cfg" class="muted"></span>
+    <span class="search">
+      <input id="symSearch" type="text" placeholder="Search a ticker… (e.g. NVDA)" maxlength="8" />
+      <button id="symSearchBtn">Search</button>
+    </span>
   </header>
   <main>
     <div class="sections">
@@ -148,7 +159,7 @@
     const stratLabel = (s) => STRAT_LABEL[s] || (s || "—");
 
     let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
-                  section: "core", sdTab: "command", sdDetail: null };
+                  section: "core", sdTab: "command", sdDetail: null, search: null };
 
     // Live auto-refresh: poll while a live view is open (Ops/Positions, or the
     // Short-Duration command center / positions).
@@ -827,9 +838,62 @@
       }
     }
 
+    async function renderSymbolReport(sym) {
+      let r;
+      try { r = await api("GET", `/research/symbol/${encodeURIComponent(sym)}`); }
+      catch (e) {
+        return `<button class="ghost" data-act="search-close">← Back</button>
+          <div class="err">Search failed for ${sym}: ${e.message || e}</div>`;
+      }
+      const q = r.quote || {};
+      const chg = r.change_pct, chgCls = chg == null ? "" : (chg >= 0 ? "pos" : "neg");
+      const st = (k, v) => `<div class="stat"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+      const head = `<div class="card"><div class="report-head">
+        <span class="price">${r.symbol}</span>
+        <span class="price">${q.price == null ? "—" : fmt(q.price)}</span>
+        <span class="${chgCls}" style="font-size:16px">${chg == null ? "" : (chg >= 0 ? "+" : "") + fmt(chg) + "%"}</span>
+        ${st("IV30", r.iv && r.iv.iv30 != null ? pct(r.iv.iv30) : "—")}
+        ${st("Rel vol", r.levels && r.levels.relative_volume != null ? r.levels.relative_volume + "×" : "—")}
+        ${st("VWAP", r.levels && r.levels.vwap != null ? fmt(r.levels.vwap) : "—")}
+        ${st("Prev close", q.prev_close == null ? "—" : fmt(q.prev_close))}
+        ${st("Next earnings", r.earnings ? r.earnings.report_date : "—")}
+        ${st("Sector", r.fundamentals && r.fundamentals.sector ? r.fundamentals.sector : "—")}
+      </div></div>`;
+      const f = r.flow || {};
+      const flowTop = (f.top || []).map(a => `<tr><td>${(a.option_type || "").toUpperCase()}</td>
+        <td class="num">${a.strike}</td><td>${a.expiration || "—"}</td>
+        <td class="num">$${fmt(a.premium, 0)}</td>
+        <td>${a.is_sweep ? '<span class="warn">SWEEP</span>' : "block"}</td>
+        <td class="num ${a.sentiment > 0 ? "pos" : a.sentiment < 0 ? "neg" : ""}">${a.sentiment == null ? "—" : fmt(a.sentiment)}</td></tr>`).join("");
+      const flowCard = `<div class="card"><h3>Options flow${f.alerts ? ` — ${f.calls}c / ${f.puts}p · $${fmt(f.total_premium_usd, 0)} · sentiment ${f.net_sentiment == null ? "—" : fmt(f.net_sentiment)}` : ""}</h3>
+        ${f.alerts ? `<table><thead><tr><th>Type</th><th class="num">Strike</th><th>Exp</th><th class="num">Premium</th><th>Kind</th><th class="num">Sent</th></tr></thead><tbody>${flowTop}</tbody></table>` : '<div class="muted">No unusual flow.</div>'}</div>`;
+      const newsRows = (r.news || []).slice(0, 10).map(n => `<tr><td>${n.headline}</td><td class="muted">${n.source || ""}</td></tr>`).join("");
+      const newsCard = `<div class="card"><h3>News</h3>${newsRows ? `<table><tbody>${newsRows}</tbody></table>` : '<div class="muted">No recent news.</div>'}</div>`;
+      const catRows = (r.catalysts || []).map(c => `<tr><td>${c.event_type || ""}</td><td>${c.event_date || ""}</td><td class="muted">${c.description || ""}</td></tr>`).join("");
+      const earnRow = r.earnings ? `<tr><td>earnings</td><td>${r.earnings.report_date}</td><td class="muted">${r.earnings.time_of_day || ""}</td></tr>` : "";
+      const catCard = `<div class="card"><h3>Catalysts</h3>${(earnRow || catRows) ? `<table><tbody>${earnRow}${catRows}</tbody></table>` : '<div class="muted">None upcoming.</div>'}</div>`;
+      const swingRows = (r.swing || []).map(c => `<tr>
+        <td><strong>${c.symbol}</strong></td><td>${c.direction}</td>
+        <td class="num">${c.composite_score == null ? "—" : (c.composite_score * 100).toFixed(0)}</td>
+        <td>${c.trade_plan ? stratLabel(c.trade_plan.strategy) : "—"}</td>
+        <td class="num">${c.trade_plan && c.trade_plan.risk ? "$" + fmt(c.trade_plan.risk.max_loss_usd, 0) : "—"}</td>
+        <td><span class="pill">${c.status}</span></td></tr>`).join("");
+      const swingCard = `<div class="card"><h3>Swing plays (core)</h3>${swingRows ? `<table><thead><tr><th>Sym</th><th>Dir</th><th class="num">Score</th><th>Structure</th><th class="num">Risk</th><th>Status</th></tr></thead><tbody>${swingRows}</tbody></table>` : '<div class="muted">No swing setup detected.</div>'}</div>`;
+      const sdAll = [...(r.zero_dte || []), ...(r.one_five_dte || [])];
+      const sdCard = `<div class="card"><h3>Short-duration plays (0DTE + 1–5DTE)</h3>${sdCandTable(sdAll)}</div>`;
+      const errNote = Object.keys(r.errors || {}).length ? `<div class="muted" style="margin:6px 0">Some sections unavailable: ${Object.keys(r.errors).join(", ")}.</div>` : "";
+      return `<div style="margin-bottom:10px"><button class="ghost" data-act="search-close">← Back</button>
+        <button class="ghost" data-act="search-refresh" data-sym="${r.symbol}">Refresh</button>
+        <span class="muted">Live research · ${new Date().toLocaleTimeString()} · setups from the engines, not the news</span></div>
+        ${head}${errNote}
+        <div style="height:14px"></div>${sdCard}
+        <div style="height:14px"></div><div class="autogrid">${swingCard}${flowCard}${newsCard}${catCard}</div>`;
+    }
+
     async function render() {
       showErr(null);
       try {
+        if (state.search) { $("#view").innerHTML = await renderSymbolReport(state.search); return; }
         if (state.section === "short") { $("#view").innerHTML = await renderSd(); return; }
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
         else if (state.tab === "positions") $("#view").innerHTML = await renderPositions();
@@ -841,7 +905,7 @@
     }
 
     function switchSection(section) {
-      state.section = section; state.sdDetail = null;
+      state.section = section; state.sdDetail = null; state.search = null;
       document.querySelectorAll(".sections button").forEach(x =>
         x.classList.toggle("active", x.dataset.section === section));
       const short = section === "short";
@@ -851,6 +915,15 @@
       manageOpsRefresh(); render();
     }
 
+    // Symbol search (works from any section)
+    function doSearch() {
+      const sym = ($("#symSearch").value || "").trim().toUpperCase();
+      if (!sym) { state.search = null; render(); return; }
+      state.search = sym; render();
+    }
+    $("#symSearchBtn").addEventListener("click", doSearch);
+    $("#symSearch").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
     // Event delegation
     $("#scan").addEventListener("click", runScan);
     document.querySelectorAll(".sections button").forEach(b =>
@@ -858,12 +931,12 @@
     document.querySelectorAll("#coreTabs button").forEach(b =>
       b.addEventListener("click", () => {
         document.querySelectorAll("#coreTabs button").forEach(x => x.classList.remove("active"));
-        b.classList.add("active"); state.tab = b.dataset.tab; manageOpsRefresh(); render();
+        b.classList.add("active"); state.tab = b.dataset.tab; state.search = null; manageOpsRefresh(); render();
       }));
     document.querySelectorAll("#sdTabs button").forEach(b =>
       b.addEventListener("click", () => {
         document.querySelectorAll("#sdTabs button").forEach(x => x.classList.remove("active"));
-        b.classList.add("active"); state.sdTab = b.dataset.sdtab; state.sdDetail = null;
+        b.classList.add("active"); state.sdTab = b.dataset.sdtab; state.sdDetail = null; state.search = null;
         manageOpsRefresh(); render();
       }));
 
@@ -909,6 +982,10 @@
             await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/arm`); render();
           } else if (act === "sd-reject") {
             await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/reject`); render();
+          } else if (act === "search-close") {
+            state.search = null; render();
+          } else if (act === "search-refresh") {
+            render();
           } else if (act === "sd-back") {
             state.sdDetail = null; render();
           } else if (act === "sd-paper") {

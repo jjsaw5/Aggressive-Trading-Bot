@@ -54,6 +54,8 @@ class IntradayLevels(BaseModel):
     prior_day_high: float | None = None
     prior_day_low: float | None = None
     relative_volume: float | None = None  # session volume vs typical to-this-point
+    relative_volume_method: str | None = None  # "profile" | "flat_estimate" | "unavailable"
+    relative_volume_estimated: bool = False    # True when the baseline is a weak/flat fallback
     computed_at: datetime
     source: str = "unknown"
 

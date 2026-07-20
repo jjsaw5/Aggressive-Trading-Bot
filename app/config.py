@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     short_duration_enabled: bool = False
     short_duration_opening_range_minutes: int = 15
     short_duration_max_dte: int = 5
+    # Intraday volume profile (time-of-day relative volume). When enabled, relvol
+    # uses a historical per-minute median cumulative-volume baseline instead of the
+    # flat proration. A thin/absent profile degrades to a LABELLED estimate (or
+    # unavailable) — never silently equivalent-quality.
+    short_duration_use_volume_profile: bool = True
+    short_duration_volume_profile_sessions: int = 20        # lookback (completed sessions)
+    short_duration_volume_profile_min_sessions: int = 10    # minimum usable before "estimated"
+    short_duration_volume_profile_use_median: bool = True   # median vs mean baseline
+    short_duration_volume_profile_cache_minutes: int = 360  # profile is stable within a day
+    short_duration_volume_profile_allow_fallback: bool = True
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7

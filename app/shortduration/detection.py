@@ -115,8 +115,13 @@ async def build_context(
     if ctx.daily and ctx.daily.candles:
         vols = [c.volume for c in ctx.daily.candles if c.volume]
         avg_vol = sum(vols) / len(vols) if vols else None
+    from app.shortduration.levels import rth_bars
+    from app.shortduration.volume_profile import relative_volume_now
+    rv_reading = await relative_volume_now(
+        symbol, rth_bars(ctx.bars_1m), now=now, avg_daily_volume=avg_vol
+    )
     ctx.levels = compute_intraday_levels(
-        symbol, ctx.bars_1m, avg_daily_volume=avg_vol, now=now,
+        symbol, ctx.bars_1m, avg_daily_volume=avg_vol, relative_volume_reading=rv_reading, now=now,
         opening_range_minutes=settings.short_duration_opening_range_minutes,
         source=registry.intraday_provider().name,
     )

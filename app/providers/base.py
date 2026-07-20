@@ -146,10 +146,13 @@ class IntradayProvider(Provider):
 
     @abc.abstractmethod
     async def get_intraday_bars(
-        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None,
+        from_date: date | None = None, to_date: date | None = None,
     ) -> list[IntradayBar]:
         """Chronological bars for the given interval ("1min"|"5min"). When
-        `session_date` is None, returns the most recent session available."""
+        `session_date` is None, returns the most recent session available. Pass
+        `from_date`/`to_date` for a multi-session range (used to build the
+        historical intraday volume profile); `session_date` takes precedence."""
         ...
 
 

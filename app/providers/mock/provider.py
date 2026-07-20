@@ -356,10 +356,23 @@ class MockProvider(
 
     # --- Intraday / news / economic calendar (deterministic) ---
     async def get_intraday_bars(
-        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None,
+        from_date: date | None = None, to_date: date | None = None,
     ) -> list[IntradayBar]:
         """A synthetic RTH session (09:30-16:00 ET) of seeded GBM bars, so VWAP,
-        opening range, and relative volume can be computed deterministically."""
+        opening range, and relative volume can be computed deterministically. A
+        `from_date`/`to_date` range yields concatenated weekday sessions (used to
+        build the intraday volume profile in tests)."""
+        if session_date is None and (from_date is not None or to_date is not None):
+            end = to_date or self._now.astimezone(_ET_TZ).date()
+            start = from_date or (end - timedelta(days=30))
+            out: list[IntradayBar] = []
+            d = start
+            while d <= end:
+                if d.weekday() < 5:
+                    out.extend(await self.get_intraday_bars(symbol, interval=interval, session_date=d))
+                d = d + timedelta(days=1)
+            return out
         step = 1 if interval == "1min" else 5
         d = session_date or self._now.astimezone(_ET_TZ).date()
         open_et = datetime.combine(d, time(9, 30), tzinfo=_ET_TZ)

@@ -224,7 +224,8 @@ class FMPProvider(
     # --- Intraday bars (grounded on /stable/historical-chart/{interval}; field
     # mapping validated defensively — see module note and docs/SHORT_DURATION.md) ---
     async def get_intraday_bars(
-        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None,
+        from_date: date | None = None, to_date: date | None = None,
     ) -> list[IntradayBar]:
         if interval not in ("1min", "5min"):
             raise ValueError("interval must be '1min' or '5min'")
@@ -232,6 +233,11 @@ class FMPProvider(
         if session_date is not None:
             params["from"] = session_date.isoformat()
             params["to"] = session_date.isoformat()
+        elif from_date is not None or to_date is not None:
+            if from_date is not None:
+                params["from"] = from_date.isoformat()
+            if to_date is not None:
+                params["to"] = to_date.isoformat()
         data = await self._http.get_json(f"/stable/historical-chart/{interval}", params)
         rows = data if isinstance(data, list) else []
         bars: list[IntradayBar] = []

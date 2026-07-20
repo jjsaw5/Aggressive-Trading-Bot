@@ -49,8 +49,14 @@ async def _symbol_levels(symbol: str, now: datetime) -> tuple[str, IntradayLevel
             avg_vol = sum(vols) / len(vols) if vols else None
         except Exception:  # noqa: BLE001 - avg volume is optional context
             avg_vol = None
+        from app.shortduration.levels import rth_bars
+        from app.shortduration.volume_profile import relative_volume_now
+        rv_reading = await relative_volume_now(
+            symbol, rth_bars(bars), now=now, avg_daily_volume=avg_vol
+        )
         levels = compute_intraday_levels(
-            symbol, bars, avg_daily_volume=avg_vol, now=now, source=intraday.name
+            symbol, bars, avg_daily_volume=avg_vol, relative_volume_reading=rv_reading,
+            now=now, source=intraday.name
         )
         change_pct = None
         if quote.prev_close and quote.prev_close > 0:

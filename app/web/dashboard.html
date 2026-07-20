@@ -138,6 +138,14 @@
     const fmt = (v, d = 2) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
+    // Broker-aligned play names (match Robinhood's order-ticket labels).
+    const STRAT_LABEL = {
+      long_call: "Long Call", long_put: "Long Put",
+      bull_call_spread: "Call Debit Spread", bear_put_spread: "Put Debit Spread",
+      bull_put_spread: "Put Credit Spread", bear_call_spread: "Call Credit Spread",
+      long_straddle: "Long Straddle", long_strangle: "Long Strangle", iron_condor: "Iron Condor",
+    };
+    const stratLabel = (s) => STRAT_LABEL[s] || (s || "—");
 
     let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
                   section: "core", sdTab: "command", sdDetail: null };
@@ -223,7 +231,7 @@
       const maxLoss = p.risk ? `$${fmt(p.risk.max_loss_usd, 0)}` : "—";
       const maxProfit = (p.risk && p.risk.max_profit_usd != null) ? `$${fmt(p.risk.max_profit_usd, 0)}` : "uncapped";
       return `<div style="margin-top:10px"><b>Order ticket</b>
-        <span class="muted">(${p.strategy} x${p.contracts}${width})</span>
+        <span class="muted">(${stratLabel(p.strategy)} x${p.contracts}${width})</span>
         <table style="margin-top:4px"><thead><tr><th>Side</th><th>Contract</th><th>Expiration</th><th class="num">Mid</th></tr></thead>
         <tbody>${legRows}</tbody></table>
         <div class="muted" style="margin-top:4px">Enter as ONE spread order — net <b>${kind} ~$${fmt(Math.abs(net))}/share</b>,
@@ -273,7 +281,7 @@
       const ps = await api("GET", "/proposals");
       if (!ps.length) return `<div class="empty">No proposals yet.</div>`;
       const rows = ps.map(p => `<tr>
-        <td><strong>${p.symbol}</strong></td><td>${p.trade_plan.strategy}</td>
+        <td><strong>${p.symbol}</strong></td><td>${stratLabel(p.trade_plan.strategy)}</td>
         <td class="num">$${fmt(p.trade_plan.risk.max_loss_usd, 0)}</td>
         <td>${p.status}</td>
         <td class="row-actions">
@@ -289,7 +297,7 @@
       const ts = await api("GET", "/paper");
       if (!ts.length) return `<div class="empty">No paper trades yet.</div>`;
       const rows = ts.map(t => `<tr>
-        <td><strong>${t.symbol}</strong></td><td>${t.trade_plan.strategy}</td>
+        <td><strong>${t.symbol}</strong></td><td>${stratLabel(t.trade_plan.strategy)}</td>
         <td class="num">${fmt(t.entry_fill)}</td>
         <td class="num ${cls(t.mfe_usd)}">${fmt(t.mfe_usd, 0)}</td>
         <td class="num ${cls(t.mae_usd)}">${fmt(t.mae_usd, 0)}</td>
@@ -402,7 +410,7 @@
       if (!ps.length) return toolbar + `<div class="empty">No open positions tracked. Import via POST /paper/import, or Sync from Robinhood.</div>`;
       const rows = ps.map(p => `<tr class="pos-clickable" data-sym="${p.symbol}">
         <td><strong>${p.symbol}</strong></td>
-        <td>${p.strategy} <span class="muted">x${p.contracts}</span></td>
+        <td>${stratLabel(p.strategy)} <span class="muted">x${p.contracts}</span></td>
         <td class="num">${fmt(p.entry_net)}</td>
         <td class="num">${p.current_net == null ? "—" : fmt(p.current_net)}</td>
         <td class="num ${cls(p.pnl_usd)}">${p.pnl_usd == null ? "—" : (p.pnl_usd >= 0 ? "+" : "") + "$" + fmt(p.pnl_usd, 0)}</td>

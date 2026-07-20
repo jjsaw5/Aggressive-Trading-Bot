@@ -27,7 +27,7 @@ from app.domain.shortduration import (
     ShortDurationCandidate,
     ShortDurationRegimeState,
 )
-from app.engine.universe import DEFAULT_UNIVERSE
+from app.engine.universe import short_duration_universe
 from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
@@ -239,7 +239,7 @@ async def run_detection(
     from app.db import repository
 
     now = now or datetime.now(UTC)
-    syms = universe or list(DEFAULT_UNIVERSE)
+    syms = universe or short_duration_universe(dte == DTECategory.ZERO_DTE)
     regime, _levels, _breadth = await build_market_regime(now=now, universe=syms)
 
     with use_priority(Priority.CANDIDATES):

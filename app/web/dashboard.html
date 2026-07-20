@@ -49,6 +49,9 @@
     .pos { color: var(--green); } .neg { color: var(--red); }
     .pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); }
     .rejected { opacity: .55; }
+    tr.bucket td { background: var(--chip); font-weight: 600; font-size: 12px;
+      letter-spacing: .3px; padding: 5px 8px; color: var(--muted); }
+    td.rank { color: var(--muted); font-variant-numeric: tabular-nums; }
     .detail { background: var(--panel); }
     .detail td { white-space: normal; }
     .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
@@ -499,19 +502,41 @@
       </div>`;
     }
 
-    function sdCandRows(cands) {
-      if (!cands.length) return `<tr><td colspan="6" class="muted">No setups detected. Run a scan.</td></tr>`;
-      return cands.map(c => `<tr class="clickable" data-cid="${c.id}">
+    const SD_BUCKET_LABEL = {
+      0: "🟢 Ready to trade", 1: "🟡 Armed — entry blocked", 2: "⚪ Watchlist",
+      3: "🔵 In flight", 4: "▫️ Evaluating", 5: "🔴 Rejected / closed",
+    };
+    function sdBucket(c) {
+      const armed = c.state === "armed" || c.state === "triggered";
+      if (armed) return c.entry_allowed ? 0 : 1;
+      if (c.state === "watchlist") return 2;
+      if (["proposed", "approved", "open", "managing"].includes(c.state)) return 3;
+      if (["rejected", "expired", "closed"].includes(c.state)) return 5;
+      return 4;
+    }
+    function sdRow(c, rank) {
+      const rr = c.reward_to_risk == null ? "—" : c.reward_to_risk.toFixed(2);
+      const risk = c.max_risk_usd == null ? "—" : "$" + Math.round(c.max_risk_usd);
+      const entry = c.entry_allowed
+        ? '<span class="pos">ALLOWED</span>' : '<span class="neg">BLOCKED</span>';
+      const why = (c.reject_reasons && c.reject_reasons.length)
+        ? `<div class="muted" style="font-size:11px">${c.reject_reasons.slice(0, 3).join(", ")}</div>` : "";
+      const acts = sdBucket(c) === 5 ? "" :
+        `<button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
+         <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button>`;
+      return `<tr class="clickable" data-cid="${c.id}">
+        <td class="rank">${rank == null ? "" : rank}</td>
         <td><strong>${c.symbol}</strong></td>
         <td><span class="pill">${c.dte_category}</span></td>
         <td>${c.direction}</td>
-        <td>${c.strategy || "—"}</td>
+        <td>${c.strategy || "—"}${why}</td>
         <td><span class="pill">${c.state}</span></td>
-        <td class="num">${(c.score * 100).toFixed(0)}</td>
-        <td class="row-actions">
-          <button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
-          <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button></td>
-      </tr>`).join("");
+        <td class="num"><strong>${(c.score * 100).toFixed(0)}</strong></td>
+        <td class="num">${rr}</td>
+        <td class="num">${risk}</td>
+        <td>${entry}</td>
+        <td class="row-actions">${acts}</td>
+      </tr>`;
     }
 
     async function renderSdDetail(cid) {
@@ -585,9 +610,35 @@
       return back + head + `<div class="card">${factors}${comp}${news}${trail}</div>`;
     }
     function sdCandTable(cands) {
-      return `<table><thead><tr><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
-        <th>State</th><th class="num">Score</th><th></th></tr></thead>
-        <tbody>${sdCandRows(cands)}</tbody></table>`;
+      if (!cands || !cands.length)
+        return `<div class="empty">No setups detected. Run a scan.</div>`;
+      const COLS = 11;
+      const head = `<thead><tr><th>#</th><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
+        <th>State</th><th class="num">Score</th><th class="num">R:R</th><th class="num">Risk</th>
+        <th>Entry</th><th></th></tr></thead>`;
+      // Sort by actionability (mirrors the backend) so grouping is correct even
+      // for the combined 0DTE+1-5DTE view, which concatenates two ranked lists.
+      const sorted = [...cands].sort((a, b) =>
+        sdBucket(a) - sdBucket(b) ||
+        (b.score || 0) - (a.score || 0) ||
+        (b.reward_to_risk || 0) - (a.reward_to_risk || 0));
+      const live = sorted.filter(c => sdBucket(c) !== 5);
+      const dead = sorted.filter(c => sdBucket(c) === 5);
+      let body = "", lastB = null, rank = 0;
+      live.forEach(c => {
+        const b = sdBucket(c);
+        if (b !== lastB) { body += `<tr class="bucket"><td colspan="${COLS}">${SD_BUCKET_LABEL[b]}</td></tr>`; lastB = b; }
+        body += sdRow(c, ++rank);
+      });
+      if (!body) body = `<tr><td colspan="${COLS}" class="muted">No actionable setups — see rejected below.</td></tr>`;
+      let out = `<table>${head}<tbody>${body}</tbody></table>`;
+      if (dead.length) {
+        const drows = dead.map(c => sdRow(c, null)).join("");
+        out += `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer;padding:6px 0">
+          Rejected / closed (${dead.length}) — expand</summary>
+          <table>${head}<tbody>${drows}</tbody></table></details>`;
+      }
+      return out;
     }
 
     async function renderSdCommand() {

@@ -162,3 +162,18 @@ def test_entry_gate_blocks_when_regime_disallows() -> None:
 def test_gate_config_parses_cutoff() -> None:
     cfg = RiskGateConfig.from_settings()
     assert isinstance(cfg.cutoff_0dte_et, time)
+
+
+def test_plural_offers_both_long_and_spread_when_unconstrained(monkeypatch) -> None:
+    """With the cap lifted, the plural selector returns BOTH a single-leg long and
+    a defined-risk spread as separate pickable expressions."""
+    from app.config import settings
+    from app.shortduration.contracts import select_short_duration_contracts
+
+    monkeypatch.setattr(settings, "short_duration_paper_unconstrained", True, raising=False)
+    res = select_short_duration_contracts(
+        _chain(dte=3, otype=OptionType.CALL), Direction.BULLISH, DTECategory.SHORT_DTE,
+        policy=short_duration_policy(DTECategory.SHORT_DTE), as_of=date(2026, 7, 17),
+    )
+    leg_counts = sorted(len(r.recommendation.legs) for r in res if r.is_tradeable)
+    assert leg_counts == [1, 2]  # one single-leg long + one two-leg spread

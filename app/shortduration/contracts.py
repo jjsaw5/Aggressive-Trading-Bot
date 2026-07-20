@@ -86,6 +86,81 @@ def _any_liquid(chain: OptionChain, direction: Direction, dte: DTECategory, as_o
     )
 
 
+def _long_expression(
+    chain: OptionChain, direction: Direction, dte: DTECategory,
+    policy: RiskPolicy, as_of: date, open_risk_usd: float,
+) -> ContractResult | None:
+    """Near-the-money single leg (defined risk = debit), or None if none fits."""
+    sel, liq = _SEL[dte], _LIQ[dte]
+    choice = select_long_contract(chain, direction, as_of, sel, liq)
+    plan = (
+        build_long_option_plan(choice.contract, direction, policy, as_of, open_risk_usd=open_risk_usd)
+        if choice else None
+    )
+    if plan is None:
+        return None
+    plan.exit_plan = for_trade_plan(plan)
+    return ContractResult(plan, _recommendation(plan, "Near-ATM single leg (max loss = debit)."), [])
+
+
+def _spread_expression(
+    chain: OptionChain, direction: Direction, dte: DTECategory,
+    policy: RiskPolicy, as_of: date, open_risk_usd: float,
+) -> ContractResult | None:
+    """Defined-risk debit vertical sized to the cap, or None if none fits."""
+    sel, liq = _SEL[dte], _LIQ[dte]
+    spread = select_vertical_spread(
+        chain, direction, as_of, max_debit_usd=policy.max_trade_risk_usd, sel=sel, liq=liq
+    )
+    plan = (
+        build_vertical_spread_plan(spread, direction, policy, as_of, open_risk_usd=open_risk_usd)
+        if spread else None
+    )
+    if plan is None:
+        return None
+    plan.exit_plan = for_trade_plan(plan)
+    return ContractResult(plan, _recommendation(plan, "Defined-risk debit vertical."), [])
+
+
+def select_short_duration_contracts(
+    chain: OptionChain,
+    direction: Direction,
+    dte: DTECategory,
+    *,
+    policy: RiskPolicy,
+    as_of: date,
+    open_risk_usd: float = 0.0,
+) -> list[ContractResult]:
+    """EVERY viable defined-risk expression for the setup — the near-ATM single leg
+    AND the defined-risk debit vertical, whichever are available — so the board
+    offers a mix (long + spread) to pick from, each ranked on its own merits. Falls
+    back to a single REJECTED result with a reason when nothing fits."""
+    if direction not in (Direction.BULLISH, Direction.BEARISH):
+        return [ContractResult(
+            None,
+            ContractRecommendation(description="Non-directional setups are not sized in Phase 4."),
+            [RejectReason.NO_VALID_CONTRACT],
+        )]
+    out: list[ContractResult] = []
+    long_res = _long_expression(chain, direction, dte, policy, as_of, open_risk_usd)
+    spread_res = _spread_expression(chain, direction, dte, policy, as_of, open_risk_usd)
+    if long_res is not None:
+        out.append(long_res)
+    if spread_res is not None:
+        out.append(spread_res)
+    if out:
+        return out
+
+    # Nothing fits — say why (traceable, never silently dropped).
+    if not _any_liquid(chain, direction, dte, as_of):
+        reasons = [RejectReason.ILLIQUID_OPTION]
+        why = "No liquid contract in the DTE/delta window (spread/OI/volume gates)."
+    else:
+        reasons = [RejectReason.RISK_UNMANAGEABLE]
+        why = f"No defined-risk structure fits the ${policy.max_trade_risk_usd:g} per-trade cap."
+    return [ContractResult(None, ContractRecommendation(description=why, liquidity_note=why), reasons)]
+
+
 def select_short_duration_contract(
     chain: OptionChain,
     direction: Direction,
@@ -95,45 +170,8 @@ def select_short_duration_contract(
     as_of: date,
     open_risk_usd: float = 0.0,
 ) -> ContractResult:
-    """Pick a defined-risk expression sized to `policy`. Single-leg first, then a
-    debit vertical if the single leg is too costly; reject if nothing fits."""
-    if direction not in (Direction.BULLISH, Direction.BEARISH):
-        return ContractResult(
-            None,
-            ContractRecommendation(description="Non-directional setups are not sized in Phase 4."),
-            [RejectReason.NO_VALID_CONTRACT],
-        )
-    sel, liq = _SEL[dte], _LIQ[dte]
-
-    # 1) Near-the-money single leg (defined risk = debit).
-    choice = select_long_contract(chain, direction, as_of, sel, liq)
-    plan = (
-        build_long_option_plan(choice.contract, direction, policy, as_of, open_risk_usd=open_risk_usd)
-        if choice else None
-    )
-    if plan is not None:
-        plan.exit_plan = for_trade_plan(plan)
-        note = "Single-leg near-ATM fits the risk cap."
-        return ContractResult(plan, _recommendation(plan, note), [])
-
-    # 2) Defined-risk debit vertical sized to the cap.
-    spread = select_vertical_spread(
-        chain, direction, as_of, max_debit_usd=policy.max_trade_risk_usd, sel=sel, liq=liq
-    )
-    plan = (
-        build_vertical_spread_plan(spread, direction, policy, as_of, open_risk_usd=open_risk_usd)
-        if spread else None
-    )
-    if plan is not None:
-        plan.exit_plan = for_trade_plan(plan)
-        note = "Single leg exceeded the risk cap — using a defined-risk debit spread."
-        return ContractResult(plan, _recommendation(plan, note), [])
-
-    # 3) Nothing fits — say why (traceable, never silently dropped).
-    if not _any_liquid(chain, direction, dte, as_of):
-        reasons = [RejectReason.ILLIQUID_OPTION]
-        why = "No liquid contract in the DTE/delta window (spread/OI/volume gates)."
-    else:
-        reasons = [RejectReason.RISK_UNMANAGEABLE]
-        why = f"No defined-risk structure fits the ${policy.max_trade_risk_usd:g} per-trade cap."
-    return ContractResult(None, ContractRecommendation(description=why, liquidity_note=why), reasons)
+    """Single best expression (single leg preferred, then spread, then reject).
+    Kept for callers wanting one structure; the board uses the plural variant."""
+    return select_short_duration_contracts(
+        chain, direction, dte, policy=policy, as_of=as_of, open_risk_usd=open_risk_usd
+    )[0]

@@ -76,7 +76,10 @@ def dedupe_latest(cands: list[ShortDurationCandidate]) -> list[ShortDurationCand
     row for the same setup; the newest reflects current state, so keep it."""
     latest: dict[tuple, ShortDurationCandidate] = {}
     for c in cands:
-        key = (c.symbol, c.strategy, c.dte_category)
+        # Distinct structures (long vs spread) of the same setup are separate
+        # pickable plays, so the contract structure is part of the identity.
+        structure = c.trade_plan.strategy if c.trade_plan else None
+        key = (c.symbol, c.strategy, c.dte_category, structure)
         cur = latest.get(key)
         if cur is None or (c.detected_at and cur.detected_at and c.detected_at > cur.detected_at):
             latest[key] = c

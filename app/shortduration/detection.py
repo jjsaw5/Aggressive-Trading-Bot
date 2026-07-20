@@ -31,7 +31,7 @@ from app.engine.universe import short_duration_universe
 from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
-from app.shortduration.contracts import ContractResult, select_short_duration_contract
+from app.shortduration.contracts import ContractResult, select_short_duration_contracts
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.risk import (
     EntryGate,
@@ -212,20 +212,24 @@ async def _score_symbol(
         news = best_news_score(
             ctx.news, for_symbol=symbol, change_pct=ctx.change_pct, rel_volume=rel_vol, flow=fa
         )
-        contract = ContractResult(None, ContractRecommendation(description=""))
+        # Offer EVERY viable defined-risk expression (long AND spread) as its own
+        # candidate, so the board shows a mix to pick from. Each is scored on its
+        # own structure. A rejected setup yields a single non-tradeable candidate.
+        contracts: list[ContractResult] = [ContractResult(None, ContractRecommendation(description=""))]
         if chain is not None:
-            contract = select_short_duration_contract(
+            contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
                 policy=short_duration_policy(det.dte_category), as_of=now.date(),
             )
-        card = score_candidate(
-            ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
-        )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
             quote_stale=stale, daily=daily, equity=equity,
         )
-        scored.append((det, card, news, contract, gate))
+        for contract in contracts:
+            card = score_candidate(
+                ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
+            )
+            scored.append((det, card, news, contract, gate))
     return scored
 
 

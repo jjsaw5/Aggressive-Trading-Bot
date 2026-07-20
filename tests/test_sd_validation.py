@@ -177,3 +177,19 @@ async def test_scan_stays_bounded_over_larger_universe() -> None:
     assert len(cands) <= len(universe) * 2  # at most a couple strategies per symbol
     assert all(0.0 <= c.score <= 1.0 for c in cands)
     assert cands == sorted(cands, key=lambda c: c.score, reverse=True)
+
+
+def test_paper_unconstrained_lifts_risk_cap(monkeypatch) -> None:
+    """The paper-verification flag lifts the per-trade cap and forces 1 contract,
+    without touching the live guard."""
+    from app.config import settings
+    from app.domain.enums import DTECategory
+    from app.shortduration.risk import short_duration_policy
+
+    base = short_duration_policy(DTECategory.ZERO_DTE)
+    assert base.max_trade_risk_usd <= 100  # normal: tight cap
+
+    monkeypatch.setattr(settings, "short_duration_paper_unconstrained", True, raising=False)
+    lifted = short_duration_policy(DTECategory.ZERO_DTE)
+    assert lifted.max_trade_risk_usd >= 1_000_000
+    assert lifted.max_contracts_per_trade == 1

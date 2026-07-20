@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     # scanner; the absolute $ cap (max_defined_risk_per_trade_usd) still applies.
     short_duration_0dte_risk_pct: float = 0.03  # 2-3% baseline
     short_duration_1_5dte_risk_pct: float = 0.05  # 3-5% baseline
+    # PAPER VERIFICATION MODE. When true, the short-duration per-trade risk cap is
+    # lifted and sizing is forced to 1 contract, so every detected setup becomes an
+    # expressible, comparable paper trade instead of rejecting as risk_unmanageable.
+    # It NEVER affects live execution (the ExecutionGuard double-gate is separate);
+    # it only changes contract sizing for research/paper. Turn OFF for real sizing.
+    short_duration_paper_unconstrained: bool = False
     short_duration_max_concurrent: int = 2
     short_duration_daily_loss_pct: float = 0.05  # halt new trades past -5% on the day
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses

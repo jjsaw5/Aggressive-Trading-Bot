@@ -30,13 +30,22 @@ def short_duration_policy(dte: DTECategory, *, equity: float | None = None) -> R
         if dte == DTECategory.ZERO_DTE
         else settings.short_duration_1_5dte_risk_pct
     )
+    # Paper verification: lift the per-trade $ cap and size a single contract so
+    # every setup is expressible and comparable. Research/paper only — the live
+    # ExecutionGuard is unaffected and still denies by default.
+    unconstrained = settings.short_duration_paper_unconstrained
+    # In unconstrained mode the effective cap is min(equity×pct, absolute$). Raise
+    # the equity too so neither term clamps a single expensive leg back out.
+    eq = 10_000_000.0 if unconstrained else (equity or settings.account_equity_usd)
     return RiskPolicy(
-        account_equity_usd=equity or settings.account_equity_usd,
-        max_account_risk_pct=settings.max_account_risk_pct,
-        max_trade_risk_pct=pct,
+        account_equity_usd=eq,
+        max_account_risk_pct=1.0 if unconstrained else settings.max_account_risk_pct,
+        max_trade_risk_pct=1.0 if unconstrained else pct,
         max_concurrent_positions=settings.short_duration_max_concurrent,
-        max_defined_risk_per_trade_usd=settings.max_defined_risk_per_trade_usd,
-        max_contracts_per_trade=settings.max_contracts_per_trade,
+        max_defined_risk_per_trade_usd=(
+            1_000_000.0 if unconstrained else settings.max_defined_risk_per_trade_usd
+        ),
+        max_contracts_per_trade=1 if unconstrained else settings.max_contracts_per_trade,
         default_profit_target_pct=0.5,
         default_stop_loss_pct=0.5,
         default_time_stop_dte=0 if dte == DTECategory.ZERO_DTE else 1,

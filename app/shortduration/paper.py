@@ -23,7 +23,7 @@ from app.domain.shortduration import ShortDurationCandidate, ShortDurationTrade
 from app.logging_config import get_logger
 from app.providers import registry
 from app.services.paper_engine import check_exit, close_paper_trade, open_paper_trade, update_mark
-from app.shortduration.state import transition
+from app.shortduration.state import advance, transition
 from app.tiers.tier4_positions import mark_net_per_share
 
 log = get_logger(__name__)
@@ -43,26 +43,11 @@ def time_of_day_bucket(now: datetime) -> str:
     return "other"
 
 
-_ADVANCE_ORDER = [
-    CandidateState.DETECTED, CandidateState.EVALUATING, CandidateState.WATCHLIST,
-    CandidateState.ARMED, CandidateState.TRIGGERED, CandidateState.OPEN,
-]
-
-
 def _advance_to_open(cand: ShortDurationCandidate, now: datetime) -> list:
-    """Walk the legal state path from the candidate's current state to OPEN
-    (the paper/research path: ARMED -> TRIGGERED -> OPEN). Records each step."""
-    trail = []
-    for target in (CandidateState.ARMED, CandidateState.TRIGGERED, CandidateState.OPEN):
-        if cand.state == target:
-            continue
-        if cand.state in _ADVANCE_ORDER and _ADVANCE_ORDER.index(cand.state) >= _ADVANCE_ORDER.index(target):
-            continue  # already at/past this step
-        trail.append(
-            transition(cand, target, trigger="paper_open", actor="dashboard",
-                       reason="Opened paper trade.", at=now)
-        )
-    return trail
+    """Advance the candidate to OPEN via the paper/research path (ARMED ->
+    TRIGGERED -> OPEN, skipping PROPOSED/APPROVED which are the live path)."""
+    return advance(cand, CandidateState.OPEN, trigger="paper_open", actor="dashboard",
+                   reason="Opened paper trade.", at=now)
 
 
 async def open_short_duration_paper(

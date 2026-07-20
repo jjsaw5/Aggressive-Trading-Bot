@@ -29,6 +29,7 @@ from app.domain.shortduration import (
     ShortDurationRegimeState,
     ShortDurationTrade,
 )
+from app.domain.trades import OrderProposal
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.providers import registry
 from app.shortduration import service
@@ -177,13 +178,18 @@ async def transition_candidate(candidate_id: str, action: str) -> CandidateDetai
     if cand is None:
         raise HTTPException(404, "Candidate not found.")
 
-    if action == "paper":
-        from app.shortduration.paper import open_short_duration_paper
-
+    if action in ("paper", "propose"):
         try:
-            await open_short_duration_paper(cand)
+            if action == "paper":
+                from app.shortduration.paper import open_short_duration_paper
+
+                await open_short_duration_paper(cand)
+            else:  # propose: create a human-approval ticket (live path, gated)
+                from app.shortduration.proposals import propose
+
+                await propose(cand)
         except Exception as exc:  # noqa: BLE001 - surface the reason to the UI
-            raise HTTPException(400, f"Cannot open paper trade: {exc}") from exc
+            raise HTTPException(400, f"Cannot {action}: {exc}") from exc
         cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
         transitions = await run_in_threadpool(repository.list_candidate_transitions, candidate_id)
         return CandidateDetail(candidate=cand, transitions=transitions)
@@ -232,6 +238,55 @@ async def performance() -> dict:
     from app.shortduration.paper import short_duration_performance
 
     return await run_in_threadpool(short_duration_performance)
+
+
+# --- Human-approved live proposals (GATED — execution denied by default) ----
+class ApproveRequest(BaseModel):
+    approver: str = "dashboard"
+
+
+class RejectRequest(BaseModel):
+    note: str | None = None
+
+
+@router.get("/proposals", response_model=list[OrderProposal])
+async def list_proposals(limit: int = 100) -> list[OrderProposal]:
+    from app.shortduration.proposals import list_sd_proposals
+
+    return await run_in_threadpool(list_sd_proposals, limit)
+
+
+@router.post("/proposals/{proposal_id}/approve", response_model=OrderProposal)
+async def approve_proposal(proposal_id: str, req: ApproveRequest) -> OrderProposal:
+    from app.shortduration.proposals import approve
+
+    try:
+        return await approve(proposal_id, req.approver)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/proposals/{proposal_id}/reject", response_model=OrderProposal)
+async def reject_proposal(proposal_id: str, req: RejectRequest) -> OrderProposal:
+    from app.shortduration.proposals import reject
+
+    try:
+        return await reject(proposal_id, req.note)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/proposals/{proposal_id}/execute")
+async def execute_proposal(proposal_id: str) -> dict:
+    """Route an APPROVED proposal through the ExecutionGuard. Denied by default
+    (research mode + automation off); never places an order here."""
+    from app.shortduration.proposals import execute
+
+    try:
+        decision = await execute(proposal_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+    return {"authorized": decision.authorized, "reason": decision.reason}
 
 
 @router.get("/backtest/classification")

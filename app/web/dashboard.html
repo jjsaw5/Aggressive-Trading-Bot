@@ -518,8 +518,22 @@
       const d = await api("GET", `/short-duration/candidates/${cid}`);
       const c = d.candidate, sc = c.scorecard;
       const canPaper = c.trade_plan != null && !["open","closed","rejected","expired"].includes(c.state);
+      let prop = null;
+      try { prop = (await api("GET","/short-duration/proposals")).find(p => p.scan_id === "sd:"+c.id) || null; } catch(e){}
+      const propBtns = (() => {
+        if (prop && prop.status === "pending_approval")
+          return `<button data-act="sd-approve" data-pid="${prop.id}">Approve</button>
+                  <button class="ghost" data-act="sd-prop-reject" data-pid="${prop.id}">Reject</button>`;
+        if (prop && prop.status === "approved")
+          return `<button data-act="sd-execute" data-pid="${prop.id}">Execute (guarded)</button>`;
+        if (!prop && canPaper && c.trade_plan != null)
+          return `<button class="ghost" data-act="sd-propose" data-id="${c.id}">Propose (live · gated)</button>`;
+        return "";
+      })();
       const back = `<button class="ghost" data-act="sd-back">← Back</button>
-        ${canPaper ? `<button data-act="sd-paper" data-id="${c.id}">Open paper trade</button>` : ""}`;
+        ${canPaper ? `<button data-act="sd-paper" data-id="${c.id}">Open paper trade</button>` : ""}
+        ${propBtns}
+        ${prop ? `<span class="badge">proposal ${prop.status}</span>` : ""}`;
       const gateCls = c.entry_allowed === false ? "regime-stop" : "regime-ok";
       const gate = c.entry_allowed == null ? "" :
         `<div class="banner ${gateCls}" style="margin-top:8px"><b>Entry gates:</b>
@@ -841,6 +855,15 @@
             actBtn.disabled = true; actBtn.textContent = "Monitoring…";
             try { const r = await api("POST", "/short-duration/positions/monitor");
               alert(`Marked ${r.length} position(s).`); } finally { render(); }
+          } else if (act === "sd-propose") {
+            await api("POST", `/short-duration/candidates/${actBtn.dataset.id}/propose`); render();
+          } else if (act === "sd-approve") {
+            await api("POST", `/short-duration/proposals/${actBtn.dataset.pid}/approve`, { approver: "dashboard" }); render();
+          } else if (act === "sd-prop-reject") {
+            await api("POST", `/short-duration/proposals/${actBtn.dataset.pid}/reject`, { note: "via dashboard" }); render();
+          } else if (act === "sd-execute") {
+            const dsn = await api("POST", `/short-duration/proposals/${actBtn.dataset.pid}/execute`);
+            alert(`Execution guard: authorized=${dsn.authorized} — ${dsn.reason}`); render();
           }
         } catch (err) { showErr(err); }
         return;

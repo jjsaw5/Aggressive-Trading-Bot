@@ -374,8 +374,28 @@ of existing components, tests, docs, no regressions, **live trading off**.
   scenario gates (macro-event blackout, power-hour reduce-size, cautious-regime
   market-alignment penalty), and a bounded larger-universe load test. Dashboard
   Performance page shows the backtest-fidelity honesty note.
-- **Phase 7 — Human-approved live proposals:** NOT enabled without explicit
-  authorization through existing execution controls.
+- **Phase 7 — Human-approved live proposals. ✅ DELIVERED (live trading OFF).**
+  `app/shortduration/proposals.py` builds on the existing OrderProposal +
+  ExecutionGuard: a candidate's sized `trade_plan` becomes a PENDING_APPROVAL
+  ticket, advancing it along the LIVE path ARMED → TRIGGERED → PROPOSED →
+  APPROVED → OPEN (a generic `state.advance()` walks the legal path, preferring
+  the direct paper hop TRIGGERED→OPEN over the approval states). Approve/reject
+  are explicit, attributed actions. `execute` routes the approved proposal
+  through the ExecutionGuard, which **denies by default** (`reason=
+  mode_research_no_live_execution`) — a live order is only reachable when the
+  double gate (`TRADING_MODE=automation` AND `AUTOMATION_ENABLED`) is explicitly
+  armed, which this module never does; and no broker order-placement path is
+  wired regardless. API: propose / proposals / approve / reject / execute.
+  Dashboard: Propose (live · gated) / Approve / Reject / Execute (guarded)
+  buttons on the candidate detail, with the guard decision surfaced. 8 new tests.
+
+> **Status: the module is feature-complete through Phase 7.** Live trading is
+> OFF by default and stays off until you explicitly arm the platform's existing
+> execution controls. To even reach the guard's authorize path you must set BOTH
+> `TRADING_MODE=automation` and `AUTOMATION_ENABLED=true` — do not do this
+> without a validated paper record (§ Paper-trading requirements) and a broker
+> order path you trust. As shipped, `execute` is observational: it proves the
+> safety gate holds.
 
 After every phase: run tests, show results, summarize files changed, note
 decisions & unresolved risks, update this backlog, recommend the next phase.

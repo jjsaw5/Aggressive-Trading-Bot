@@ -73,3 +73,47 @@ def classify_initial_state(score: float, *, watchlist_at: float, arm_at: float) 
     if score >= watchlist_at:
         return S.WATCHLIST
     return S.EVALUATING
+
+
+# Linear progression used to auto-advance a candidate to a target state.
+_LINEAR = [
+    S.DETECTED, S.EVALUATING, S.WATCHLIST, S.ARMED, S.TRIGGERED,
+    S.PROPOSED, S.APPROVED, S.OPEN, S.MANAGING, S.CLOSED,
+]
+
+
+def advance(
+    candidate: ShortDurationCandidate,
+    target: S,
+    *,
+    trigger: str,
+    actor: str = "system",
+    reason: str = "",
+    at: datetime | None = None,
+) -> list[CandidateTransition]:
+    """Walk the legal forward path from the candidate's current state to
+    `target`, recording each step. Raises ValueError if `target` is behind the
+    current state or unreachable by legal forward transitions."""
+    at = at or datetime.now(UTC)
+    if candidate.state == target:
+        return []
+    if candidate.state not in _LINEAR or _LINEAR.index(candidate.state) > _LINEAR.index(target):
+        raise ValueError(f"Cannot advance {candidate.state.value} -> {target.value}")
+    trail: list[CandidateTransition] = []
+    # At each hop, jump straight to the target if that's legal (so the paper path
+    # TRIGGERED -> OPEN is taken directly, not via PROPOSED/APPROVED); otherwise
+    # take the first legal forward step that doesn't overshoot the target.
+    while candidate.state != target:
+        if can_transition(candidate.state, target):
+            nxt = target
+        else:
+            idx = _LINEAR.index(candidate.state)
+            nxt = next(
+                (s for s in _LINEAR[idx + 1:]
+                 if can_transition(candidate.state, s) and _LINEAR.index(s) < _LINEAR.index(target)),
+                None,
+            )
+        if nxt is None:
+            raise ValueError(f"No legal path {candidate.state.value} -> {target.value}")
+        trail.append(transition(candidate, nxt, trigger=trigger, actor=actor, reason=reason, at=at))
+    return trail

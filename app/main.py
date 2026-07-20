@@ -21,6 +21,7 @@ from app.api.routes import (
     paper,
     positions,
     proposals,
+    research,
     scans,
     short_duration,
     tiers,
@@ -76,4 +77,5 @@ app.include_router(tiers.router)
 app.include_router(metrics.router)
 app.include_router(positions.router)
 app.include_router(short_duration.router)
+app.include_router(research.router)
 app.include_router(dashboard.router)

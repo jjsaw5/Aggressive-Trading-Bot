@@ -60,6 +60,55 @@ def test_selects_defined_risk_spread_within_cap() -> None:
     assert res.recommendation.breakevens
 
 
+def _swing_chain(otype=OptionType.CALL) -> OptionChain:
+    """A ladder present at BOTH a near-term (3 DTE) and a swing (30 DTE) expiry —
+    the shape detection sees when it fetches the union of both windows."""
+    now = datetime(2026, 7, 17, 15, 0, tzinfo=UTC)
+    strikes = [95, 98, 100, 102, 105, 108]
+    deltas = {95: 0.8, 98: 0.65, 100: 0.5, 102: 0.35, 105: 0.2, 108: 0.1}
+    contracts = []
+    for dte in (3, 30):
+        for k in strikes:
+            bid = max(0.2, (100 - k) * 0.1 + 1) if otype == OptionType.CALL else max(0.2, (k - 100) * 0.1 + 1)
+            contracts.append(_contract(k, otype, dte, bid=bid, ask=bid + 0.1, delta=deltas[k]))
+    return OptionChain(symbol="SPY", underlying_price=100.0, contracts=contracts, as_of=now, source="test")
+
+
+def test_swing_selects_weeks_out_expiry() -> None:
+    """A swing (daily-trend) thesis picks a 20-45 DTE contract even when near-term
+    ones are present — the fix for a daily-trend signal landing in a ~4-DTE spread."""
+    from app.shortduration.contracts import select_short_duration_contracts
+
+    policy = short_duration_policy(DTECategory.SHORT_DTE)
+    res = select_short_duration_contracts(
+        _swing_chain(OptionType.CALL), Direction.BULLISH, DTECategory.SHORT_DTE,
+        policy=policy, as_of=date(2026, 7, 17), swing=True,
+    )
+    tradeable = [r for r in res if r.is_tradeable]
+    assert tradeable, "swing selection should yield a defined-risk expression"
+    for r in tradeable:
+        for leg in r.recommendation.legs:
+            dte = (date.fromisoformat(leg["expiration"]) - date(2026, 7, 17)).days
+            assert 20 <= dte <= 45, f"swing leg at {dte} DTE is outside the weeks-out window"
+
+
+def test_non_swing_stays_near_term_on_same_chain() -> None:
+    """The same chain, selected WITHOUT the swing flag, stays in the 1-5 DTE window —
+    proving the flag (not the chain) drives the horizon."""
+    from app.shortduration.contracts import select_short_duration_contracts
+
+    res = select_short_duration_contracts(
+        _swing_chain(OptionType.CALL), Direction.BULLISH, DTECategory.SHORT_DTE,
+        policy=short_duration_policy(DTECategory.SHORT_DTE), as_of=date(2026, 7, 17),
+    )
+    for r in res:
+        if not r.is_tradeable:
+            continue
+        for leg in r.recommendation.legs:
+            dte = (date.fromisoformat(leg["expiration"]) - date(2026, 7, 17)).days
+            assert 1 <= dte <= 5, f"non-swing leg at {dte} DTE escaped the near-term window"
+
+
 def test_rejects_when_no_liquid_contract() -> None:
     now = datetime(2026, 7, 17, 15, 0, tzinfo=UTC)
     illiquid = OptionChain(

@@ -401,14 +401,22 @@ The thesis also carries **structural (wrong-instrument) guardrails** — a diffe
 risk: not "the thesis might be wrong," but "the *instrument* is wrong for the thesis." Learned from a
 daily-trend TSLA signal expressed in a ~4-DTE spread straddling earnings:
 
-- **Horizon mismatch** — a daily-trend (swing) thesis needs weeks to work; routing it into a 0–5DTE
-  expiry can't express it (`thesis_swing_min_dte`). The flag points to a 20–45 DTE structure in the core
-  scanner instead.
+- **Horizon mismatch** — a daily-trend (swing) thesis needs weeks to work; a 0–5DTE expiry can't
+  express it (`thesis_swing_min_dte`).
 - **Earnings before expiry** — a scheduled report inside the expiry window turns a continuation trade
   into an *event binary* (IV-crush + gap): the thesis can be right and still lose on the print. (The
   earnings date is fetched into the scan context; the Positions view warns on it for open trades too.)
 
 Both are informational, surfaced as a "⚠ Wrong-instrument warning" on the thesis card and a board ⚠.
+
+**Horizon-aware expiry selection.** The guardrail only *flags* the mismatch; the scanner also *fixes*
+it at the source. A daily-trend strategy (currently `TrendContinuation`) is marked **swing**, and its
+contract is selected from a weeks-out window (`swing_min_dte`–`swing_max_dte`, default 21–45) rather
+than the 1–5DTE ladder — the detection fetches that expiry window alongside the near-term one, and
+selection widens its delta band and relaxes the liquidity gate to suit longer-dated contracts. So a
+daily-trend TSLA signal now lands in a ~30-DTE defined-risk structure that matches its horizon, instead
+of a ~4-DTE spread that can't. Catalyst/intraday strategies are unaffected — they stay near-term. Same
+detection, same score; only the instrument's horizon changes to fit the thesis (`is_swing`).
 
 **Observability (v2).** Every candidate carries `signal_metadata` — the detection's structured
 diagnostics (ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores) — surfaced on

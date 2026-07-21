@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from app.domain.enums import Direction, DTECategory, RejectReason
+from app.config import settings
+from app.domain.enums import Direction, DTECategory, RejectReason, ShortDurationStrategy
 from app.domain.options import OptionChain
 from app.domain.shortduration import ContractRecommendation
 from app.domain.trades import TradePlan
@@ -49,6 +50,31 @@ _LIQ = {
         min_open_interest=250, min_volume=50, max_spread_pct=0.12, min_mid_price=0.10, max_mid_price=25.0
     ),
 }
+# A swing (daily-trend) thesis is expressed at a WEEKS-out expiry so the instrument
+# matches the horizon — the fix for a daily-trend signal landing in a ~4-DTE spread.
+# Longer-dated contracts carry wider spreads and higher premiums, so the liquidity
+# window is relaxed accordingly. Strikes are picked a touch further OTM (lower delta).
+_SWING_STRATEGIES = {ShortDurationStrategy.TREND_CONTINUATION}
+_SWING_LIQ = OptionLiquidityConfig(
+    min_open_interest=250, min_volume=20, max_spread_pct=0.15, min_mid_price=0.15, max_mid_price=40.0
+)
+
+
+def is_swing(strategy) -> bool:
+    """Does this strategy's thesis need a swing (weeks) horizon rather than 0-5DTE?"""
+    return strategy in _SWING_STRATEGIES
+
+
+def _configs(dte: DTECategory, swing: bool) -> tuple[SelectionConfig, OptionLiquidityConfig]:
+    if swing:
+        return (
+            SelectionConfig(
+                min_dte=settings.swing_min_dte, max_dte=settings.swing_max_dte,
+                target_delta=0.45, min_delta=0.30, max_delta=0.60, moneyness_fallback_pct=0.06,
+            ),
+            _SWING_LIQ,
+        )
+    return _SEL[dte], _LIQ[dte]
 
 
 @dataclass
@@ -82,11 +108,11 @@ def _recommendation(plan: TradePlan, note: str) -> ContractRecommendation:
     )
 
 
-def _any_liquid(chain: OptionChain, direction: Direction, dte: DTECategory, as_of: date) -> bool:
+def _any_liquid(chain: OptionChain, direction: Direction, dte: DTECategory, as_of: date, swing: bool) -> bool:
     from app.domain.enums import OptionType
 
     want = OptionType.CALL if direction == Direction.BULLISH else OptionType.PUT
-    sel, liq = _SEL[dte], _LIQ[dte]
+    sel, liq = _configs(dte, swing)
     return any(
         c.option_type == want and sel.min_dte <= c.dte(as_of) <= sel.max_dte and not gate_option(c, liq)
         for c in chain.contracts
@@ -95,10 +121,10 @@ def _any_liquid(chain: OptionChain, direction: Direction, dte: DTECategory, as_o
 
 def _long_expression(
     chain: OptionChain, direction: Direction, dte: DTECategory,
-    policy: RiskPolicy, as_of: date, open_risk_usd: float,
+    policy: RiskPolicy, as_of: date, open_risk_usd: float, swing: bool,
 ) -> ContractResult | None:
     """Near-the-money single leg (defined risk = debit), or None if none fits."""
-    sel, liq = _SEL[dte], _LIQ[dte]
+    sel, liq = _configs(dte, swing)
     choice = select_long_contract(chain, direction, as_of, sel, liq)
     plan = (
         build_long_option_plan(choice.contract, direction, policy, as_of, open_risk_usd=open_risk_usd)
@@ -112,10 +138,10 @@ def _long_expression(
 
 def _spread_expression(
     chain: OptionChain, direction: Direction, dte: DTECategory,
-    policy: RiskPolicy, as_of: date, open_risk_usd: float,
+    policy: RiskPolicy, as_of: date, open_risk_usd: float, swing: bool,
 ) -> ContractResult | None:
     """Defined-risk debit vertical sized to the cap, or None if none fits."""
-    sel, liq = _SEL[dte], _LIQ[dte]
+    sel, liq = _configs(dte, swing)
     spread = select_vertical_spread(
         chain, direction, as_of, max_debit_usd=policy.max_trade_risk_usd, sel=sel, liq=liq
     )
@@ -137,11 +163,13 @@ def select_short_duration_contracts(
     policy: RiskPolicy,
     as_of: date,
     open_risk_usd: float = 0.0,
+    swing: bool = False,
 ) -> list[ContractResult]:
     """EVERY viable defined-risk expression for the setup — the near-ATM single leg
     AND the defined-risk debit vertical, whichever are available — so the board
     offers a mix (long + spread) to pick from, each ranked on its own merits. Falls
-    back to a single REJECTED result with a reason when nothing fits."""
+    back to a single REJECTED result with a reason when nothing fits. `swing` selects
+    a weeks-out expiry so a daily-trend thesis isn't forced into a 0-5DTE contract."""
     if direction not in (Direction.BULLISH, Direction.BEARISH):
         return [ContractResult(
             None,
@@ -149,8 +177,8 @@ def select_short_duration_contracts(
             [RejectReason.NO_VALID_CONTRACT],
         )]
     out: list[ContractResult] = []
-    long_res = _long_expression(chain, direction, dte, policy, as_of, open_risk_usd)
-    spread_res = _spread_expression(chain, direction, dte, policy, as_of, open_risk_usd)
+    long_res = _long_expression(chain, direction, dte, policy, as_of, open_risk_usd, swing)
+    spread_res = _spread_expression(chain, direction, dte, policy, as_of, open_risk_usd, swing)
     if long_res is not None:
         out.append(long_res)
     if spread_res is not None:
@@ -159,7 +187,7 @@ def select_short_duration_contracts(
         return out
 
     # Nothing fits — say why (traceable, never silently dropped).
-    if not _any_liquid(chain, direction, dte, as_of):
+    if not _any_liquid(chain, direction, dte, as_of, swing):
         reasons = [RejectReason.ILLIQUID_OPTION]
         why = "No liquid contract in the DTE/delta window (spread/OI/volume gates)."
     else:
@@ -176,9 +204,10 @@ def select_short_duration_contract(
     policy: RiskPolicy,
     as_of: date,
     open_risk_usd: float = 0.0,
+    swing: bool = False,
 ) -> ContractResult:
     """Single best expression (single leg preferred, then spread, then reject).
     Kept for callers wanting one structure; the board uses the plural variant."""
     return select_short_duration_contracts(
-        chain, direction, dte, policy=policy, as_of=as_of, open_risk_usd=open_risk_usd
+        chain, direction, dte, policy=policy, as_of=as_of, open_risk_usd=open_risk_usd, swing=swing
     )[0]

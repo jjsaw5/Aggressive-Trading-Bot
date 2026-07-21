@@ -16,6 +16,8 @@ import abc
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from app.domain.account import AccountState
+from app.domain.internals import MarketInternals
 from app.domain.market import (
     CatalystEvent,
     EarningsEvent,
@@ -30,7 +32,6 @@ from app.domain.options import (
     OptionChain,
     OptionMarkPoint,
 )
-from app.domain.internals import MarketInternals
 from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 
 
@@ -211,3 +212,13 @@ class MarketInternalsProvider(Provider):
 
     @abc.abstractmethod
     async def get_market_internals(self, *, now: datetime | None = None) -> MarketInternals: ...
+
+
+class AccountStateProvider(Provider):
+    """The capital picture sizing reads: equity, buying power, and committed
+    (open + pending) defined risk. A provider marks `verified=True` ONLY for a
+    real, authenticated broker feed; paper and configured-fallback implementations
+    are always unverified so nothing becomes live-executable from a constant."""
+
+    @abc.abstractmethod
+    async def get_account_state(self, *, now: datetime | None = None) -> AccountState: ...

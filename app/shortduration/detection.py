@@ -53,6 +53,16 @@ from app.tiers.concurrency import bounded_gather
 log = get_logger(__name__)
 
 
+async def _account_state(now: datetime):
+    """Best-effort capital snapshot for sizing. On any provider error, returns None
+    so sizing falls back to the configured equity (never blocks a scan)."""
+    try:
+        return await registry.account_state_provider().get_account_state(now=now)
+    except Exception as exc:  # noqa: BLE001 - sizing degrades to the constant, never fails the scan
+        log.warning("sd_account_state_failed", error=str(exc))
+        return None
+
+
 def _target_expirations(dte: DTECategory, today: date) -> list[date]:
     """The expiration dates a DTE category trades. Providers return contracts for
     whichever of these they actually list (liquid names have daily/weekly ones)."""
@@ -190,7 +200,7 @@ async def _detect_symbol(
 
 
 async def _score_symbol(
-    symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime
+    symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime, account=None
 ) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None, ContractResult, EntryGate]]:
     """For a symbol that produced setups: fetch the chain + IV once, select a
     sized defined-risk contract per detection, score with the real structure, and
@@ -225,7 +235,10 @@ async def _score_symbol(
         dte=dte, provider=ctx.quote.source if ctx.quote else None,
     )
     stale = not fresh.ok
-    equity = settings.account_equity_usd
+    # Sizing reads the real capital picture (equity minus committed risk), not a
+    # bare constant. Falls back to configured equity if no account state was passed.
+    equity = account.equity_usd if account is not None else settings.account_equity_usd
+    open_risk = account.committed_risk_usd if account is not None else 0.0
     # Real daily posture from today's closed paper trades feeds the loss/halt gates.
     from app.shortduration.paper import daily_risk_state
     daily = await asyncio.to_thread(daily_risk_state, now)
@@ -242,7 +255,8 @@ async def _score_symbol(
         if chain is not None:
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
-                policy=short_duration_policy(det.dte_category), as_of=now.date(),
+                policy=short_duration_policy(det.dte_category, equity=equity),
+                as_of=now.date(), open_risk_usd=open_risk,
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
@@ -268,6 +282,10 @@ async def run_detection(
     now = now or datetime.now(UTC)
     syms = universe or short_duration_universe(dte == DTECategory.ZERO_DTE)
     regime, _levels, _part, _internals = await build_market_regime(now=now, universe=syms)
+    # One capital snapshot for the whole scan: sizing draws on real equity minus
+    # committed (open + pending) risk, subject to buying power. Best-effort — a
+    # provider miss falls back to the configured constant inside _score_symbol.
+    account = await _account_state(now)
 
     with use_priority(Priority.CANDIDATES):
         detected = await bounded_gather(
@@ -276,7 +294,7 @@ async def run_detection(
         )
         with_dets = [(s, ctx, dets) for r in detected if r for (s, ctx, dets) in [r] if dets]
         scored_rows = await bounded_gather(
-            [_score_symbol(s, ctx, dets, now) for (s, ctx, dets) in with_dets],
+            [_score_symbol(s, ctx, dets, now, account) for (s, ctx, dets) in with_dets],
             limit=settings.tier_concurrency,
         )
 

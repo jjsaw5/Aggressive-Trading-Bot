@@ -173,3 +173,27 @@ def market_internals_provider():
     if str(settings.provider_market_internals).lower() == "mock":
         return _mock()
     return _composite_internals()
+
+
+@lru_cache(maxsize=1)
+def _paper_account():
+    from app.providers.account import PaperAccountState
+
+    return PaperAccountState()
+
+
+@lru_cache(maxsize=1)
+def _fallback_account():
+    from app.providers.account import ConfiguredFallbackAccountState
+
+    return ConfiguredFallbackAccountState()
+
+
+def account_state_provider():
+    """The capital picture sizing reads. `paper` (default) tracks the simulated
+    book; `fallback` is the configured constant. Both are UNVERIFIED — a live
+    broker feed lands later and is the only `verified=True` source."""
+    choice = str(settings.provider_account_state).lower()
+    if choice == "fallback":
+        return _fallback_account()
+    return _paper_account()

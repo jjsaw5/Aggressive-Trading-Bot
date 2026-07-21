@@ -227,4 +227,17 @@ endpoint `/short-duration/configuration/scoring`. Tests: 333 pass, lint clean. D
    is sized. Config `short_duration_0dte_flatten_et` / `_momentum_stop_bars` / `_pt1_scale_pct` /
    `_1_5dte_time_stop_dte`. New endpoint `GET /short-duration/candidates/{id}/exit-plan`. No migration
    (rides in the candidate JSON payload). (7 exit-plan unit tests + API coverage; 340 total.)
-2. **AccountStateProvider + risk-aware sizing** — pending.
+2. **AccountStateProvider + risk-aware sizing** — DELIVERED. New `AccountState` domain model +
+   `AccountStateProvider` capability, with two UNVERIFIED implementations (`app/providers/account.py`):
+   `paper` (default — configured base + realized paper P&L, minus open defined-risk) and `fallback`
+   (configured equity as a constant). Selected via `provider_account_state`; registered in the provider
+   registry. Short-duration sizing now reads the snapshot: `_score_symbol` sizes against real equity and
+   passes committed (open + pending) risk into `select_short_duration_contracts`, so a new trade draws
+   on `available = min(equity − committed, buying power)` and can't breach the account cap on top of
+   open risk. A live broker feed (the only `verified=True` source) lands later. New endpoint
+   `GET /account/state`. No migration (reads existing paper-trade rows). (7 account-state tests; 347 total.)
+
+**Phase 3 delivered:** both risk & trade-management items — structure-aware exit plans and
+account-state-aware sizing. New endpoints `/short-duration/candidates/{id}/exit-plan`, `/account/state`.
+Tests: 347 pass, lint clean. Docs: `METHODOLOGY.md` §10 + V2 plan. On branch
+`claude/options-trading-platform-cl6v83`.

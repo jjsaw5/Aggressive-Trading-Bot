@@ -241,6 +241,11 @@ class Settings(BaseSettings):
     # Real market internals: "mock", or anything else -> the FMP+UW composite feed
     # (sector breadth + options-flow tide). Set PROVIDER_MARKET_INTERNALS=composite.
     provider_market_internals: str = "mock"
+    # Account-state source that sizing reads: "paper" (default; the simulated book:
+    # configured base + realized paper P&L, minus open defined-risk) or "fallback"
+    # (the configured equity as a bare constant). Both are UNVERIFIED — a live broker
+    # feed lands later and is the only verified source. Live execution stays gated.
+    provider_account_state: str = "paper"
 
     # --- Provider credentials ---
     fmp_api_key: str | None = None

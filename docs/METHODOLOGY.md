@@ -328,6 +328,15 @@ Entry is gated on time-of-day and account state; exits are pre-planned at contra
 Sizing is anchored to a `$2,000` account, max 15% total account risk. On a book that small, the $60
 0DTE cap is deliberately protective — one bad 0DTE is 3% of capital.
 
+**Account-state-aware sizing (v2).** Sizing no longer reads a bare equity constant. An
+`AccountStateProvider` supplies the real capital picture — equity, buying power, and committed
+(open + pending) defined risk — so a new trade is sized against `available = min(equity − open risk −
+pending risk, buying power)` and cannot breach the account cap on top of what is already at risk. Two
+sources ship, both **unverified** (`verified=False`): `paper` (default — configured base + realized
+paper P&L, minus open defined-risk) and `fallback` (the configured equity as a constant). A live
+broker feed lands later and is the only source that may set `verified=True`; nothing becomes
+live-executable from a constant. `GET /account/state`, config `provider_account_state`.
+
 **Structure-aware exit plan (v2).** Beyond the premium-percentage defaults, every short-duration
 candidate now carries a `ShortDurationExitPlan` that manages the trade off *price structure* and *the
 clock*, not just the option's premium (`GET /short-duration/candidates/{id}/exit-plan`):

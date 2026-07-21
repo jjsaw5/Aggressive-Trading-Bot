@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     orb_confirmation_mode: str = "close"       # "close" | "immediate" | "retest"
     orb_retest_band_pct_of_range: float = 0.25  # retest = pulled back within 25% of OR width of level
     orb_require_vwap_alignment: bool = True
+    # VWAP-trend continuation (0DTE) — quality-graded. Instead of a hard "never
+    # closed on the wrong side of VWAP" gate, the continuation is graded on six
+    # sub-scores (continuation/structure/vwap-hold/pullback/volume/controlled-reclaim)
+    # and must clear a minimum composite. A brief, cleanly reclaimed VWAP loss is
+    # allowed via the controlled-reclaim sub-score; a whipsaw still fails.
+    vwap_min_abs_slope_pct: float = 0.0002     # per-bar close slope (fraction of price)
+    vwap_lookback_bars: int = 20
+    vwap_min_quality: float = 0.45             # minimum composite quality to fire
     # Intraday volume profile (time-of-day relative volume). When enabled, relvol
     # uses a historical per-minute median cumulative-volume baseline instead of the
     # flat proration. A thin/absent profile degrades to a LABELLED estimate (or

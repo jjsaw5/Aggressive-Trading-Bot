@@ -155,6 +155,60 @@ def test_vwap_continuation_no_fire_when_flat() -> None:
     assert VWAPTrendContinuation().detect(ctx) is None
 
 
+def test_vwap_continuation_surfaces_quality_metadata() -> None:
+    prices = [100.5 + i * 0.05 for i in range(20)]
+    lv = IntradayLevels(symbol="QQQ", session_date=date(2026, 7, 17), last=prices[-1], vwap=100.0, computed_at=_NOW)
+    ctx = SetupContext(symbol="QQQ", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars(prices))
+    det = VWAPTrendContinuation().detect(ctx)
+    assert det is not None
+    for k in ("vwap_quality", "vwap_continuation", "vwap_hold", "vwap_controlled_reclaim"):
+        assert k in det.metadata
+    assert det.metadata["vwap_quality"] >= 0.45
+
+
+def test_vwap_continuation_min_quality_gate_can_reject() -> None:
+    # A demanding quality floor rejects an otherwise-valid, moderate continuation.
+    from app.shortduration.strategies.vwap_continuation import VWAPContinuationConfig
+
+    prices = [100.5 + i * 0.05 for i in range(20)]
+    lv = IntradayLevels(symbol="QQQ", session_date=date(2026, 7, 17), last=prices[-1], vwap=100.0, computed_at=_NOW)
+    ctx = SetupContext(symbol="QQQ", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars(prices))
+    strict = VWAPContinuationConfig(min_quality=0.99)
+    assert VWAPTrendContinuation(strict).detect(ctx) is None
+
+
+def test_vwap_continuation_allows_controlled_reclaim() -> None:
+    # Mostly above VWAP with one shallow dip that is immediately reclaimed -> the
+    # graded model lets it through on controlled-reclaim merit (the old hard gate
+    # would have killed it on the single sub-VWAP close).
+    prices = [100.3, 100.5, 100.7, 99.9, 100.8, 101.0, 101.2, 101.4, 101.6, 101.8]
+    lv = IntradayLevels(symbol="QQQ", session_date=date(2026, 7, 17), last=101.8, vwap=100.0, computed_at=_NOW)
+    ctx = SetupContext(symbol="QQQ", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars(prices))
+    det = VWAPTrendContinuation().detect(ctx)
+    assert det is not None
+    assert 0.0 < det.metadata["vwap_controlled_reclaim"] < 1.0  # a reclaim happened, not pristine
+
+
+def test_vwap_quality_grades_clean_vs_whipsaw() -> None:
+    import numpy as np
+
+    from app.domain.enums import Direction
+    from app.shortduration.strategies.vwap_quality import compute_vwap_quality
+
+    def q(closes):
+        c = np.asarray(closes, dtype=float)
+        vols = np.linspace(1.0, 2.0, c.size)
+        slope = float(np.polyfit(np.arange(c.size), c, 1)[0]) / c[-1]
+        return compute_vwap_quality(c, c + 0.1, c - 0.1, vols, vwap=100.0,
+                                    last=float(c[-1]), direction=Direction.BULLISH, slope_pct=slope)
+
+    clean = q([100.3 + i * 0.1 for i in range(20)])          # rides above VWAP
+    whipsaw = q([100.1, 98.6, 100.2, 98.7, 100.3, 98.8, 100.4, 98.9, 100.5, 98.9])
+    assert clean.vwap_hold == 1.0 and clean.controlled_reclaim == 1.0
+    assert whipsaw.vwap_hold < 0.7 and whipsaw.controlled_reclaim < clean.controlled_reclaim
+    assert clean.overall > whipsaw.overall
+
+
 # --- Trend continuation (1-5DTE) --------------------------------------------
 def _daily(closes: list[float]) -> PriceHistory:
     base = datetime(2026, 1, 1, tzinfo=UTC)

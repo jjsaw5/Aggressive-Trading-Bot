@@ -201,4 +201,14 @@ lands with Phase 2/3/4 (scoring version, exit plans, paper-book columns).
    configurable **confirmation mode** (`close` / `immediate` / `retest`). Buffer, extension ratio, and
    mode are recorded on the detection (`StrategyDetection.metadata`) for observability. All thresholds
    in config (`orb_*`). (6 ORB tests; 329 total.)
-3. **VWAP continuation-quality model** — pending.
+3. **VWAP continuation-quality model** — DELIVERED. New `app/shortduration/strategies/vwap_quality.py`
+   grades a VWAP-trend continuation on six named sub-scores (continuation, structure, vwap-hold,
+   pullback, volume, controlled-reclaim) into a weighted composite, and `vwap_continuation.py` gates on
+   a minimum composite (`vwap_min_quality`) instead of the old all-or-nothing "never lost VWAP" rule.
+   The **controlled-reclaim** sub-score is what lets a brief, cleanly-reclaimed VWAP loss through while
+   a genuine whipsaw still fails. All sub-scores + composite recorded on the detection. Config
+   `vwap_*`. (6 VWAP-quality tests; 333 total.)
+
+**Phase 2 delivered:** all three strategy-logic items. Migration `0004` (scoring versions). New
+endpoint `/short-duration/configuration/scoring`. Tests: 333 pass, lint clean. Docs: `METHODOLOGY.md`
+§5–6 + V2 plan. On branch `claude/options-trading-platform-cl6v83`; not yet merged.

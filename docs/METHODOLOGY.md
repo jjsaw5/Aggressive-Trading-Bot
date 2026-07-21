@@ -159,12 +159,23 @@ the research. No detector computes price targets.
 - The buffer, extension ratio, and confirmation mode are recorded on the detection for observability.
   All thresholds live in config (`orb_*`).
 
-### 0DTE · VWAP-Trend Continuation
+### 0DTE · VWAP-Trend Continuation (quality-graded)
 
 - Needs ≥10 of the last 20 one-minute bars; fits a linear slope of closes.
 - Direction: bullish if price > VWAP *and* per-bar slope ≥ `+0.02%`; bearish if the mirror.
-- Pullbacks-held-VWAP (**gate**): no bar in the window closed on the wrong side of VWAP.
-- Volume expansion (last third > first third) is a score bonus, not a gate.
+- **Continuation-quality model** replaces the old all-or-nothing "never lost VWAP" gate. Six named,
+  inspectable sub-scores in [0,1] combine into a composite the setup must clear (`vwap_min_quality`,
+  default 0.45):
+  - *continuation* — slope strength × linear-fit R² (a clean, persistent trend).
+  - *structure* — higher-highs/higher-lows (bull) consistency across the window.
+  - *vwap-hold* — fraction of closes on the correct side of VWAP, discounted by the worst violation.
+  - *pullback* — a healthy tag of VWAP (not absent/extended, not a deep breakdown) scores best.
+  - *volume* — expansion on the push vs the early/pullback bars.
+  - *controlled-reclaim* — if VWAP was lost, a shallow, brief, reclaimed dip is rewarded; a violent
+    whipsaw or a still-underwater tape is not. **This is what lets a briefly-lost-then-reclaimed VWAP
+    through** instead of hard-rejecting it, while a real whipsaw still fails on weak hold + reclaim.
+- All six sub-scores + the composite are recorded on the detection for observability. Thresholds in
+  config (`vwap_*`).
 
 ### 1–5DTE · Trend Continuation
 

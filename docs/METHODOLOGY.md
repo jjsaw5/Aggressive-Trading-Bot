@@ -397,6 +397,19 @@ the invalidation** level, and a **material news catalyst**. Two or more → `hig
 changes the score or blocks entry** — it exists so a human can sanity-check before acting. Shown at the
 top of the candidate detail and as a ⚠ badge on the board. Thresholds in config (`thesis_reversal_*`).
 
+The thesis also carries **structural (wrong-instrument) guardrails** — a different beast from reversal
+risk: not "the thesis might be wrong," but "the *instrument* is wrong for the thesis." Learned from a
+daily-trend TSLA signal expressed in a ~4-DTE spread straddling earnings:
+
+- **Horizon mismatch** — a daily-trend (swing) thesis needs weeks to work; routing it into a 0–5DTE
+  expiry can't express it (`thesis_swing_min_dte`). The flag points to a 20–45 DTE structure in the core
+  scanner instead.
+- **Earnings before expiry** — a scheduled report inside the expiry window turns a continuation trade
+  into an *event binary* (IV-crush + gap): the thesis can be right and still lose on the print. (The
+  earnings date is fetched into the scan context; the Positions view warns on it for open trades too.)
+
+Both are informational, surfaced as a "⚠ Wrong-instrument warning" on the thesis card and a board ⚠.
+
 **Observability (v2).** Every candidate carries `signal_metadata` — the detection's structured
 diagnostics (ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores) — surfaced on
 the board's detail view alongside the scoring-model version, the structure-aware exit plan, and the

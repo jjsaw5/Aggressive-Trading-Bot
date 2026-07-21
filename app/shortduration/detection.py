@@ -43,12 +43,12 @@ from app.shortduration.scoring.flow_decay import analyze_flow
 from app.shortduration.scoring.news import best_news_score
 from app.shortduration.service import build_market_regime
 from app.shortduration.state import classify_initial_state, transition
-from app.shortduration.thesis import build_directional_thesis
 from app.shortduration.strategies.base import SetupContext, StrategyDetection
 from app.shortduration.strategies.catalyst_continuation import CatalystContinuation
 from app.shortduration.strategies.orb import OpeningRangeBreakout
 from app.shortduration.strategies.trend_continuation import TrendContinuation
 from app.shortduration.strategies.vwap_continuation import VWAPTrendContinuation
+from app.shortduration.thesis import build_directional_thesis
 from app.tiers.concurrency import bounded_gather
 
 log = get_logger(__name__)
@@ -120,6 +120,9 @@ async def build_context(
         ctx.news = await _safe(
             registry.news_provider().get_news([symbol], limit=10), "news"
         ) or []
+    # Next earnings date drives the earnings-before-expiry guardrail (both tracks).
+    _earn = await _safe(registry.calendar_provider().get_earnings(symbol), "earnings")
+    ctx.next_earnings = _earn.report_date if _earn else None
 
     avg_vol = None
     if ctx.daily and ctx.daily.candles:

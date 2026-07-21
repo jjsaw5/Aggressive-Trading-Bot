@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     thesis_reversal_counter_move_pct: float = 2.0   # counter-trend day of this % (or more)
     thesis_reversal_near_invalidation_pct: float = 3.0  # price within this % of invalidation
     thesis_reversal_news_min_score: float = 0.55    # a news catalyst this material counts
+    # Structural guardrails (informational): a daily-trend/swing thesis wants at least
+    # this many DTE to work; expressing it in a shorter expiry is a horizon mismatch.
+    # And an earnings report before the expiry turns a continuation trade into an
+    # event binary (IV-crush + gap). Both are surfaced, never auto-gated.
+    thesis_swing_min_dte: int = 10
     # Intraday volume profile (time-of-day relative volume). When enabled, relvol
     # uses a historical per-minute median cumulative-volume baseline instead of the
     # flat proration. A thin/absent profile degrades to a LABELLED estimate (or

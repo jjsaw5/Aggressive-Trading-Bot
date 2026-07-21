@@ -44,9 +44,9 @@ def _det(direction=Direction.BEARISH, dte=DTECategory.SHORT_DTE):
     )
 
 
-def _ctx(change_pct=None, daily=None, levels=None):
+def _ctx(change_pct=None, daily=None, levels=None, next_earnings=None):
     return SetupContext(symbol="TSLA", now=_NOW, regime=_regime(), daily=daily,
-                        levels=levels, change_pct=change_pct)
+                        levels=levels, change_pct=change_pct, next_earnings=next_earnings)
 
 
 def test_bearish_thesis_reads_daily_downtrend() -> None:
@@ -85,6 +85,48 @@ def test_counter_trend_plus_news_stacks_to_high() -> None:
     )
     assert th.reversal_risk == "high"
     assert any("news catalyst" in r for r in th.reversal_risk_reasons)
+
+
+def test_horizon_mismatch_flags_swing_thesis_in_short_expiry() -> None:
+    # A daily-trend (swing) thesis in the 1-5DTE track can't express its horizon.
+    th = build_directional_thesis(_ctx(change_pct=-1.0, daily=_daily(_downtrend_closes())), _det())
+    assert any("Horizon mismatch" in w for w in th.structural_warnings)
+    assert any("20–45 DTE" in w for w in th.structural_warnings)
+
+
+def test_earnings_before_expiry_flagged() -> None:
+    # Earnings 3 days out, inside the 1-5DTE expiry window -> event-binary warning.
+    from datetime import timedelta
+
+    th = build_directional_thesis(
+        _ctx(change_pct=-1.0, daily=_daily(_downtrend_closes()),
+             next_earnings=(_NOW.date() + timedelta(days=3))),
+        _det(),
+    )
+    assert any("Earnings" in w and "event binary" in w for w in th.structural_warnings)
+
+
+def test_the_tsla_case_flags_both() -> None:
+    # The exact lesson: a daily-trend bearish call, expressed short, straddling earnings.
+    from datetime import timedelta
+
+    th = build_directional_thesis(
+        _ctx(change_pct=3.6, daily=_daily(_downtrend_closes()),
+             next_earnings=(_NOW.date() + timedelta(days=1))),
+        _det(),
+    )
+    assert len(th.structural_warnings) == 2  # horizon + earnings
+    assert th.reversal_risk in ("elevated", "high")  # the bounce is still flagged too
+
+
+def test_no_structural_warning_for_intraday_setup() -> None:
+    # A 0DTE VWAP setup with no near earnings is the right instrument for its thesis.
+    det = StrategyDetection(
+        strategy=ShortDurationStrategy.VWAP_TREND_CONTINUATION, dte_category=DTECategory.ZERO_DTE,
+        direction=Direction.BULLISH, setup_score=0.6, entry_trigger="e", invalidation="lose VWAP",
+    )
+    th = build_directional_thesis(_ctx(change_pct=0.5), det)
+    assert th.structural_warnings == []
 
 
 async def test_thesis_attached_to_candidates() -> None:

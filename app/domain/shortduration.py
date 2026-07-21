@@ -340,6 +340,9 @@ class ShortDurationCandidate(BaseModel):
     # candidate was scored under. Promoted for filtering/A-B comparison across books.
     scoring_model_version: str = ""
     risk_policy_version: str = ""
+    # Strategy diagnostics (Phase 6 observability): the detection's structured
+    # metadata (e.g. ORB breakout buffer/extension, VWAP-quality sub-scores).
+    signal_metadata: dict = Field(default_factory=dict)
     # Risk / entry gates (Phase 4).
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)

@@ -272,4 +272,24 @@ Phases 1–2.
    keyword `NewsScore`, never approves a trade or bypasses a deterministic gate. API
    `GET /short-duration/news/events/{symbol}`. No migration. (7 tests; 361 total.)
 
-Remaining: UI/observability — Phase 6; validation — Phase 7.
+**Phase 5 delivered:** structured news layer. **Merged to `main` (PR #9).**
+
+---
+
+## Phase 6 — IN PROGRESS (UI & observability)
+
+1. **Surface the v2 signals + observability** — DELIVERED.
+   - **Backend:** candidates now persist `signal_metadata` (the detection's structured diagnostics —
+     ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores). New endpoint
+     `GET /short-duration/configuration/exit-policy` (the exit-plan thresholds). Per-scan observability
+     counters (`sd.scan.candidates|stale_blocked|tradeable.{dte}` + a last-scan gauge) via the metrics
+     registry, best-effort so metrics never affect a scan.
+   - **Dashboard:** the candidate detail now shows the scoring-model version, the structure-aware exit
+     plan (invalidations, premium backstop, PT1/PT2, time/momentum stops, EOD/expiration), and the
+     signal diagnostics; the Performance tab shows the **Book A vs Book B** split with opportunity-loss
+     and biggest-missed-signals; the News tab shows **structured catalysts** (type/direction/mixed/
+     confidence/source-group); the Configuration tab shows the versioned scoring weights + exit policy.
+     The regime panel already labels internals-vs-participation (proxy) from Phase 1.
+   (3 observability tests + inline-JS syntax check; 364 total.)
+
+Remaining: validation — Phase 7.

@@ -604,13 +604,36 @@
         </div>
         ${legRows?`<table style="margin-top:8px"><thead><tr><th>Leg</th><th>Contract</th><th>Expiry</th><th class="num">Qty</th></tr></thead><tbody>${legRows}</tbody></table>`:`<div class="muted" style="margin-top:6px">${rec.liquidity_note||"No tradeable contract."}</div>`}
         <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. No order is placed.</div></div>`;
+      // Structure-aware exit plan (Phase 3) surfaced for the human managing the trade.
+      const ep = c.exit_plan;
+      const pxOf = v => v == null ? "" : ` <span class="muted">@ ${v}</span>`;
+      const pts = ep && ep.profit_targets && ep.profit_targets.length
+        ? ep.profit_targets.map(t => `<div><strong>${t.label}</strong> ${t.premium_net==null?"":"net "+t.premium_net} <span class="muted">${t.note||t.trigger||""}</span></div>`).join("")
+        : '<div class="muted">—</div>';
+      const exitPlan = !ep ? "" : `<div class="card" style="margin-top:10px"><h3>Exit plan <span class="muted" style="font-size:12px">structure + clock</span></h3>
+        <div class="kv">
+          <div>Primary invalidation</div><div>${ep.primary_invalidation}${pxOf(ep.primary_invalidation_price)}</div>
+          <div>Secondary</div><div>${ep.secondary_invalidation||"—"}${pxOf(ep.secondary_invalidation_price)}</div>
+          <div>Premium backstop</div><div>${ep.premium_stop_net==null?"—":"net "+ep.premium_stop_net} <span class="muted">${ep.premium_stop_note||""}</span></div>
+          <div>Profit targets</div><div>${pts}</div>
+          <div>Time stop</div><div>${ep.time_stop||"—"}</div>
+          <div>Momentum stop</div><div>${ep.momentum_stop||"—"}</div>
+          <div>EOD / expiration</div><div>${ep.eod_action||"—"}<br><span class="muted">${ep.expiration_action||""}</span></div>
+        </div>
+        <div class="proxy-note" style="margin-top:6px">${ep.rationale||""}</div></div>`;
+      // Strategy signal diagnostics (Phase 6): ORB buffer/extension, VWAP-quality, etc.
+      const sm = c.signal_metadata || {};
+      const smKeys = Object.keys(sm);
+      const signalMeta = !smKeys.length ? "" : `<div class="card" style="margin-top:10px"><h3>Signal diagnostics</h3>
+        <div class="kv">${smKeys.map(k => `<div>${k.replace(/_/g," ")}</div><div>${typeof sm[k]==="number"?(+sm[k]).toFixed(4).replace(/\.?0+$/,""):sm[k]}</div>`).join("")}</div></div>`;
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
         <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
           · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
-          ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}</div>
+          ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}
+          ${c.scoring_model_version ? '· model <code>'+c.scoring_model_version+'</code>' : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
-        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + gate + contract;
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + gate + contract + exitPlan + signalMeta;
       let factors = `<div class="muted">No scorecard.</div>`;
       if (sc) {
         const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>
@@ -730,7 +753,27 @@
         <td>${n.source}</td>
         <td>${n.source_ts ? new Date(n.source_ts).toLocaleTimeString() : "—"}</td>
         <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
-      return `<div class="proxy-note" style="margin-bottom:8px">Latency = source publication → our receipt. Classification/confirmation land in Phase 3.</div>
+      // Structured catalysts (Phase 5): classify the symbols present in the feed.
+      let catCard = "";
+      const syms = [...new Set(news.map(n => n.symbol).filter(Boolean))].slice(0, 6);
+      try {
+        const groups = await Promise.all(syms.map(s => api("GET", `/short-duration/news/events/${s}`).catch(() => [])));
+        const cats = groups.flat().sort((a, b) => (b.confidence || 0) - (a.confidence || 0)).slice(0, 12);
+        if (cats.length) {
+          const dirBadge = c => c.mixed ? '<span class="warn">mixed</span>'
+            : c.direction === "bullish" ? '<span class="pos">bull</span>'
+            : c.direction === "bearish" ? '<span class="neg">bear</span>' : '<span class="muted">neutral</span>';
+          const crows = cats.map(c => `<tr><td><strong>${c.symbol || "—"}</strong></td>
+            <td><span class="pill">${c.event_type.replace(/_/g," ")}</span></td>
+            <td>${dirBadge(c)}</td><td class="num">${((c.confidence||0)*100).toFixed(0)}%</td>
+            <td>${c.member_count>1?`<span class="badge">${c.member_count}× ${(c.sources||[]).join(", ")}</span>`:c.source}</td>
+            <td class="muted">${c.headline}</td></tr>`).join("");
+          catCard = `<div class="card" style="margin-bottom:10px"><h3>Structured catalysts <span class="muted" style="font-size:12px">classified · informational only</span></h3>
+            <table><thead><tr><th>Sym</th><th>Type</th><th>Dir</th><th class="num">Conf</th><th>Source(s)</th><th>Headline</th></tr></thead><tbody>${crows}</tbody></table>
+            <div class="proxy-note" style="margin-top:6px">Classification never approves a trade or bypasses a gate — news enters the score only through the confirmation-gated catalyst factor.</div></div>`;
+        }
+      } catch (e) { /* non-fatal */ }
+      return catCard + `<div class="proxy-note" style="margin-bottom:8px">Latency = source publication → our receipt.</div>
         <table><thead><tr><th>Sym</th><th>Headline</th><th>Source</th><th>Published</th><th class="num">Latency</th></tr></thead>
         <tbody>${rows}</tbody></table>`;
     }
@@ -795,6 +838,16 @@
           profit factor ${o.profit_factor==null?"—":o.profit_factor} ·
           expectancy ${o.expectancy==null?"—":"$"+fmt(o.expectancy,2)} ·
           total ${o.total_pnl==null?"—":(o.total_pnl>=0?"+":"")+"$"+fmt(o.total_pnl,0)}</div></div>`;
+      // Book A (signal-validation) vs Book B (account-executable) + opportunity loss.
+      const ol = p.opportunity_loss, bb = (p.book_b && p.book_b.overall) || {};
+      const books = !ol ? "" : `<div class="card" style="margin-top:14px"><h3>Two books — signal vs account</h3>
+        <div class="kv">
+          <div>Book A — signals</div><div>${ol.signals_decided} closed · total ${ol.book_a_total_pnl>=0?"+":""}$${fmt(ol.book_a_total_pnl,0)}</div>
+          <div>Book B — account-executable</div><div>${ol.executable_decided} closed · win ${bb.win_rate==null?"—":(bb.win_rate*100).toFixed(0)+"%"} · total ${ol.book_b_total_pnl>=0?"+":""}$${fmt(ol.book_b_total_pnl,0)}</div>
+          <div>Left on the table</div><div class="${ol.left_on_table_pnl>0?"pos":ol.left_on_table_pnl<0?"neg":""}">${ol.left_on_table_pnl>=0?"+":""}$${fmt(ol.left_on_table_pnl,0)} <span class="muted">(${ol.not_executable_decided} signals the account couldn't take)</span></div>
+        </div>
+        ${(ol.top_missed||[]).length?`<h3 style="margin-top:10px">Biggest missed signals</h3><table><thead><tr><th>Sym</th><th>Strategy</th><th class="num">P&amp;L</th><th>Why not executable</th></tr></thead><tbody>${ol.top_missed.map(t=>`<tr><td><strong>${t.symbol}</strong></td><td>${t.strategy}</td><td class="num ${cls(t.pnl_usd)}">${fmt(t.pnl_usd,0)}</td><td class="muted">${t.reason||"—"}</td></tr>`).join("")}</tbody></table>`:""}
+        <div class="proxy-note" style="margin-top:6px">Book A measures raw signal edge; Book B is what a $2,000 account could actually take. The gap is the account's opportunity cost, not a signal failure.</div></div>`;
       let bt = "";
       try {
         const bc = await api("GET", "/short-duration/backtest/classification");
@@ -810,20 +863,39 @@
           + perfGroup("By regime", p.by_regime) + perfGroup("By time of day", p.by_time_of_day)
           + perfGroup("By score band", p.by_score_band) + perfGroup("News-confirmed", p.by_news_confirmed)
           + perfGroup("Flow-confirmed", p.by_flow_confirmed) + perfGroup("By symbol", p.by_symbol);
-      return head + body + bt;
+      return head + books + body + bt;
     }
 
     async function renderSdConfig() {
       const c = await api("GET", "/short-duration/configuration");
       const provs = Object.entries(c.providers).map(([k, v]) =>
         `<div>${k}</div><div>${v}</div>`).join("");
+      let scoreCard = "", exitCard = "";
+      try {
+        const sc = await api("GET", "/short-duration/configuration/scoring");
+        const wRows = m => Object.entries(m.weights).map(([k, v]) => `<div>${k.replace(/_/g," ")}</div><div class="num">${v}</div>`).join("");
+        scoreCard = `<div class="card" style="margin-top:10px"><h3>Scoring model <code>${sc.scoring_model_version}</code></h3>
+          <div class="kv"><div><strong>0DTE</strong> (Σ ${sc.models["0dte"].total})</div><div></div>${wRows(sc.models["0dte"])}
+          <div><strong>1–5DTE</strong> (Σ ${sc.models["1-5dte"].total})</div><div></div>${wRows(sc.models["1-5dte"])}</div></div>`;
+      } catch (e) {}
+      try {
+        const ex = await api("GET", "/short-duration/configuration/exit-policy");
+        exitCard = `<div class="card" style="margin-top:10px"><h3>Exit policy <code>${c.risk_policy_version||""}</code></h3><div class="kv">
+          <div>0DTE entry cutoff</div><div>${ex["0dte"].entry_cutoff_et} ET</div>
+          <div>0DTE flatten</div><div>${ex["0dte"].flatten_et} ET</div>
+          <div>Momentum stop</div><div>${ex.momentum_stop_bars} consecutive 1-min closes</div>
+          <div>PT1 scale</div><div>${(ex.pt1_scale_pct*100).toFixed(0)}%</div>
+          <div>1–5DTE time stop</div><div>${ex["1_5dte_time_stop_dte"]} DTE</div>
+          <div>Profit target / stop</div><div>${(ex.profit_target_pct*100).toFixed(0)}% / ${(ex.stop_loss_pct*100).toFixed(0)}%</div>
+        </div></div>`;
+      } catch (e) {}
       return `<div class="card"><h3>Configuration</h3><div class="kv">
         <div>Module enabled</div><div>${c.enabled}</div>
         <div>Trading mode</div><div>${c.trading_mode}</div>
         <div>Live trading</div><div>${c.live_trading_enabled ? "ENABLED" : "disabled"}</div>
         <div>Universe</div><div>${c.universe.join(", ")}</div>
         ${provs}
-      </div><p class="proxy-note" style="margin-top:10px">${c.note} Editable thresholds arrive in Phase 4.</p></div>`;
+      </div><p class="proxy-note" style="margin-top:10px">${c.note}</p></div>${scoreCard}${exitCard}`;
     }
 
     async function renderSd() {

@@ -385,6 +385,14 @@ The default report also carries **opportunity-loss analytics**: `left_on_table_p
 total P&L — the edge the small account leaves on the table — plus the biggest non-executable winners
 and why they didn't fit. This separates *"is the signal good?"* from *"can this account act on it?"*.
 
+**Observability (v2).** Every candidate carries `signal_metadata` — the detection's structured
+diagnostics (ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores) — surfaced on
+the board's detail view alongside the scoring-model version, the structure-aware exit plan, and the
+freshness read. The dashboard also shows the Book A/B split with opportunity-loss, the structured
+catalysts, and the versioned scoring weights + exit policy; per-scan counters (candidates / stale-
+blocked / tradeable) feed the metrics registry. Config endpoints: `GET /configuration/scoring`,
+`/configuration/exit-policy`, `/configuration/freshness`.
+
 ---
 
 ## 11. Candidate lifecycle — a transparent state machine

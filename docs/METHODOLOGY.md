@@ -446,8 +446,11 @@ professional options trader's read on.
    sensible for 0DTE vs 1–5DTE? What would you move?
 4. **Contract selection band.** Delta 0.35–0.68 target 0.50, and the moneyness fallback. Right band
    for 0DTE? Should we prefer spreads over naked longs by default to cap theta/vega?
-5. **Exit defaults.** 50% profit / 50% stop, 0DTE force-close 15:45, no computed price targets. Are
-   fixed-percentage exits appropriate for 0DTE gamma, or should exits be structure/greek-aware?
+5. **Exit management.** Exits are now **structure-aware** (§10): price-structure invalidations (VWAP,
+   opening range), a premium backstop, staged PT1/PT2, an intraday clock + momentum stop, and explicit
+   EOD/expiration actions — the premium-percentage defaults are only the backstop. Open question: are
+   the *specific* levels (10% momentum tolerance, 15:45 flatten, 1.0× extension anti-chase) right for
+   0DTE gamma, and should they adapt to realized intraday volatility?
 6. **Risk caps for a $2k account.** 3% ($60) 0DTE, 5% ($100) 1–5DTE, 2 concurrent, −5% daily halt.
    Too tight, too loose, or about right for an aggressive small account?
 7. **News weighting.** News caps at 5 (0DTE) / 15 (1–5DTE) of 100 points, confirmation-gated. Is that

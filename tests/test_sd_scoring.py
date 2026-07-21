@@ -156,6 +156,63 @@ def test_score_candidate_missing_input_is_low_not_neutral() -> None:
     assert liq.raw < 0.5 and "no data" in liq.explanation.lower()
 
 
+def test_0dte_v2_weights_are_configured_and_versioned() -> None:
+    # v2 rebalance: more on structure + liquidity, less on raw flow.
+    from app.config import get_settings
+
+    s = get_settings()
+    w = s.scoring_0dte_weights
+    assert sum(w.values()) == 100
+    assert w["price_structure"] == 22 and w["contract_liquidity"] == 18
+    assert w["flow_quality"] == 10  # trimmed from the v1 15
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=_levels(),
+                       change_pct=0.8, quote=None)
+    card = score_candidate(ctx, _detection(), chain=_chain(), iv=_iv())
+    # Scorecard records exactly what it was scored under.
+    assert card.model_version == s.scoring_model_version
+    assert card.risk_policy_version == s.risk_policy_version
+    assert card.weights == {f.key: f.weight for f in card.factors}
+    price = next(f for f in card.factors if f.key == "price_structure")
+    liq = next(f for f in card.factors if f.key == "contract_liquidity")
+    assert price.weight == 22 and liq.weight == 18
+
+
+def test_1_5dte_weights_unchanged_and_sum_100() -> None:
+    from app.config import get_settings
+
+    w = get_settings().scoring_1_5dte_weights
+    assert sum(w.values()) == 100 and w["daily_trend"] == 20 and w["catalyst_news"] == 15
+
+
+def test_score_keeps_risk_execution_liquidity_freshness_separate() -> None:
+    # A composite total must not paper over a bad spread: liquidity / execution /
+    # risk / data-quality stay individually inspectable on the scorecard.
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=_levels(),
+                       change_pct=0.8)
+    card = score_candidate(ctx, _detection(), chain=_chain(), iv=_iv())
+    for key in ("risk_quality", "execution_quality", "liquidity", "data_quality"):
+        assert key in card.components
+
+
+def test_candidate_records_scoring_versions() -> None:
+    from types import SimpleNamespace
+
+    from app.config import get_settings
+    from app.domain.shortduration import ContractRecommendation
+    from app.shortduration.detection import _candidate_from
+
+    s = get_settings()
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=_levels(), change_pct=0.8)
+    card = score_candidate(ctx, _detection(), chain=_chain(), iv=_iv())
+    contract = SimpleNamespace(
+        recommendation=ContractRecommendation(description=""), plan=None, reject_reasons=[]
+    )
+    gate = SimpleNamespace(allowed=True, reasons=[], reject_reasons=[])
+    cand = _candidate_from(_detection(), "SPY", _NOW, card, None, _regime(), contract, gate)
+    assert cand.scoring_model_version == s.scoring_model_version
+    assert cand.risk_policy_version == s.risk_policy_version
+
+
 def test_score_candidate_1_5dte_model() -> None:
     closes = [100 + i * 0.6 for i in range(60)]
     daily = PriceHistory(

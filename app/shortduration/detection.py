@@ -160,6 +160,8 @@ def _candidate_from(
         reasons=reasons,
         scorecard=card,
         news_score=news,
+        scoring_model_version=card.model_version,
+        risk_policy_version=card.risk_policy_version,
         entry_allowed=gate.allowed,
         entry_notes=gate.reasons,
         freshness=fresh.model_dump() if fresh is not None else None,

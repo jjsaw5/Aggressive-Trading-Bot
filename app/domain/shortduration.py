@@ -258,6 +258,10 @@ class ShortDurationCandidate(BaseModel):
     # Scoring (Phase 3). scorecard carries the full explainable breakdown.
     scorecard: ScoreCard | None = None
     news_score: NewsScore | None = None
+    # Reproducibility (Phase 2): the scoring-model + risk-policy version this
+    # candidate was scored under. Promoted for filtering/A-B comparison across books.
+    scoring_model_version: str = ""
+    risk_policy_version: str = ""
     # Risk / entry gates (Phase 4).
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)
@@ -369,6 +373,10 @@ class ScoreCard(BaseModel):
     components: dict[str, ScoreComponent] = Field(default_factory=dict)
     data_quality: float = 0.0  # [0,1]
     summary: str = ""
+    # Reproducibility (Phase 2): the exact weighting + policy this score was made under.
+    model_version: str = ""
+    risk_policy_version: str = ""
+    weights: dict[str, float] = Field(default_factory=dict)
 
     @property
     def normalized(self) -> float:

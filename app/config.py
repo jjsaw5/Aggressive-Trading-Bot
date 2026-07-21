@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
-from pydantic import computed_field, field_validator, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -96,6 +96,26 @@ class Settings(BaseSettings):
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7
+    # Scoring model — weights are configurable + versioned. Every candidate records
+    # the model + risk-policy version it was scored under (Phase 2). Weights per
+    # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and
+    # contract liquidity, less on raw flow. 1-5DTE is unchanged.
+    scoring_model_version: str = "sd-scoring-2026.07-v2"
+    risk_policy_version: str = "sd-risk-2026.07-v1"
+    scoring_0dte_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "price_structure": 22, "market_alignment": 15, "relvol_momentum": 15,
+            "flow_quality": 10, "contract_liquidity": 18, "volatility": 10,
+            "catalyst_news": 5, "risk_reward": 5,
+        }
+    )
+    scoring_1_5dte_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "daily_trend": 20, "catalyst_news": 15, "multi_session_flow": 15,
+            "market_alignment": 10, "volatility": 10, "contract_liquidity": 10,
+            "technical_entry": 10, "risk_reward": 10,
+        }
+    )
     # Risk controls (Phase 4). Per-DTE per-trade risk %, tighter than the core
     # scanner; the absolute $ cap (max_defined_risk_per_trade_usd) still applies.
     short_duration_0dte_risk_pct: float = 0.03  # 2-3% baseline

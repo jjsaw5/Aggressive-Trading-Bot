@@ -179,3 +179,20 @@ lands with Phase 2/3/4 (scoring version, exit plans, paper-book columns).
 
 **APIs added:** `/market/internals`, `/market/participation`, `/short-duration/candidates/{id}/freshness`,
 `/configuration/freshness`. **Tests:** 320 pass, lint clean. **Docs:** `METHODOLOGY.md` §3/§4/§10 updated.
+
+---
+
+## Phase 2 — IN PROGRESS (strategy logic)
+
+1. **Rebalance + version the 0DTE scoring model** — DELIVERED. Weights moved into configuration
+   (`scoring_0dte_weights` / `scoring_1_5dte_weights`) and versioned (`scoring_model_version`,
+   `risk_policy_version`). v2 0DTE rebalance: price structure 20→**22**, contract liquidity 15→**18**,
+   options-flow 15→**10** (a flow print is a hint, not the trade); 1–5DTE unchanged. The engine reads
+   weights from config with a fixed ordered key list per model (a weight config can't silently drop or
+   reorder a factor). Every candidate now records the model + risk-policy version it was scored under —
+   promoted DB columns (**migration `0004`**) plus in the scorecard/payload. Composite total does not
+   hide a bad component: risk / execution / liquidity / freshness stay separately inspectable and hard
+   gates still apply. New endpoint `GET /short-duration/configuration/scoring`. (18 scoring tests pass;
+   324 total.)
+2. **Adaptive opening-range breakout** — pending.
+3. **VWAP continuation-quality model** — pending.

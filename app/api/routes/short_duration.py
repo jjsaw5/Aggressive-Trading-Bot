@@ -135,6 +135,28 @@ async def configuration_freshness() -> dict:
     }
 
 
+@router.get("/configuration/scoring")
+async def configuration_scoring() -> dict:
+    """The active, versioned scoring weights per DTE model. Weights sum to 100.
+    Every candidate records the model + risk-policy version it was scored under."""
+    return {
+        "scoring_model_version": settings.scoring_model_version,
+        "risk_policy_version": settings.risk_policy_version,
+        "watchlist_score": settings.short_duration_watchlist_score,
+        "arm_score": settings.short_duration_arm_score,
+        "models": {
+            "0dte": {
+                "weights": dict(settings.scoring_0dte_weights),
+                "total": round(sum(settings.scoring_0dte_weights.values()), 2),
+            },
+            "1-5dte": {
+                "weights": dict(settings.scoring_1_5dte_weights),
+                "total": round(sum(settings.scoring_1_5dte_weights.values()), 2),
+            },
+        },
+    }
+
+
 @router.get("/levels/{symbol}", response_model=IntradayLevels)
 async def symbol_levels(symbol: str) -> IntradayLevels:
     lv = await service.get_symbol_levels(symbol)

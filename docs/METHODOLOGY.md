@@ -181,20 +181,29 @@ times its weight; weights sum to **100**. The score ranks the board and sets the
 - Missing factor raw value: `0.25` — flagged, *never* neutral 0.5.
 - Data-quality tempering: `confidence = score × (0.6 + 0.4 × data_quality)` — can only lower.
 - Score to **Arm**: `0.70` · Score to **Watchlist**: `0.50`.
+- **Weights are configuration, not code** — `scoring_0dte_weights` / `scoring_1_5dte_weights`, exposed
+  read-only at `GET /short-duration/configuration/scoring`. Every candidate records the
+  `scoring_model_version` and `risk_policy_version` it was scored under (promoted DB columns) so a
+  book can be filtered and A/B-compared across weightings. Current: `sd-scoring-2026.07-v2`.
 
-**0DTE model** — weighted toward live intraday structure and flow:
+**0DTE model** (v2) — weighted toward live intraday structure and executable liquidity; raw flow
+trimmed (a flow print is a hint, not the trade):
 
 | Factor | Wt | Driven by |
 |---|---:|---|
-| Intraday price structure | 20 | VWAP side + opening-range break (fraction of checks passed) |
+| Intraday price structure | 22 | VWAP side + opening-range break (fraction of checks passed) |
 | Market & sector alignment | 15 | Regime + breadth; contra-trend hard-capped at 0.10 |
 | Relative volume & momentum | 15 | relvol (1×→0, 3×→1) averaged with day-change momentum |
-| Options-flow quality | 15 | Decayed flow sentiment & confidence (§8) |
-| Contract liquidity | 15 | Near-ATM spread (50%) + OI (30%) + volume (20%) |
+| Options-flow quality | 10 | Decayed flow sentiment & confidence (§8) |
+| Contract liquidity | 18 | Near-ATM spread (50%) + OI (30%) + volume (20%) |
 | Volatility suitability | 10 | IV rank curve — best at 0.2–0.5, penalized when rich |
 | Catalyst & news | 5 | News score (floored 0.3) + scheduled catalyst |
 | Risk / reward | 5 | Reward-to-risk of the sized structure (2:1 → 1.0) |
 | **Total** | **100** | |
+
+The composite total never hides a bad component: risk quality, execution quality, contract liquidity,
+and data freshness stay individually inspectable on the scorecard, and a candidate still fails its
+**hard gates** (freshness, liquidity floor, defined-risk cap) regardless of how high the total is.
 
 **1–5DTE model** — weighted toward daily trend and multi-session flow:
 

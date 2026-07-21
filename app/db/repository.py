@@ -335,6 +335,8 @@ def save_short_duration_candidate(candidate: ShortDurationCandidate) -> None:
                 score=candidate.score,
                 detected_at=candidate.detected_at,
                 expires_at=candidate.expires_at,
+                scoring_model_version=candidate.scoring_model_version,
+                risk_policy_version=candidate.risk_policy_version,
                 payload=candidate.model_dump(mode="json"),
             )
         )

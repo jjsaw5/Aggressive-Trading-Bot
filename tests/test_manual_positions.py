@@ -29,6 +29,38 @@ def test_import_creates_a_tracked_position() -> None:
     assert body["max_loss_usd"] == 820.0  # 4.10 * 100 * 2
 
 
+def test_import_spread_by_net_debit() -> None:
+    # The real TSLA put debit spread: long 370P / short 365P, 7/24, net cost 2.45.
+    # No per-leg entry prices needed — just the broker's average cost.
+    c = _client()
+    r = c.post("/positions/import", json={
+        "symbol": "TSLA",
+        "net_debit_per_share": 2.45,
+        "legs": [
+            {"strike": 370, "option_type": "put", "is_long": True, "quantity": 1, "expiration": "2026-07-24"},
+            {"strike": 365, "option_type": "put", "is_long": False, "quantity": 1, "expiration": "2026-07-24"},
+        ],
+    })
+    assert r.status_code == 200
+    b = r.json()
+    assert b["strategy"] == "Put Debit Spread"
+    assert b["entry_net"] == 2.45
+    assert b["max_loss_usd"] == 245.0  # the debit paid — matches Robinhood
+
+    # Close for a loss (spread now worth 1.75): (1.75 - 2.45) * 100 = -$70 — matches.
+    r2 = c.post(f"/positions/{b['id']}/close", json={"exit_price_per_share": 1.75, "reason": "bounce"})
+    assert r2.json()["realized_pnl_usd"] == -70.0
+
+
+def test_import_requires_net_or_leg_prices() -> None:
+    c = _client()
+    r = c.post("/positions/import", json={
+        "symbol": "TSLA",
+        "legs": [{"strike": 370, "option_type": "put", "is_long": True, "quantity": 1, "expiration": "2026-07-24"}],
+    })
+    assert r.status_code == 400  # no net and no per-leg price
+
+
 def test_import_rejects_bad_option_type() -> None:
     c = _client()
     r = c.post("/positions/import", json={

@@ -98,7 +98,9 @@ class ImportLegRequest(BaseModel):
     option_type: str  # "call" | "put"
     is_long: bool  # bought (long) vs sold (short)
     quantity: int = Field(default=1, ge=1)
-    entry_price_per_share: float = Field(gt=0)  # premium you paid/received, per share
+    # Per-share premium. Optional when the whole-structure `net_debit_per_share` is
+    # given (the easy path for a spread — you just enter your average cost).
+    entry_price_per_share: float | None = None
     expiration: date
 
 
@@ -106,6 +108,10 @@ class ImportPositionRequest(BaseModel):
     symbol: str
     legs: list[ImportLegRequest] = Field(min_length=1)
     opened_at: datetime | None = None
+    # The structure's net cost per share the way a broker quotes it: a debit is
+    # positive (you paid), a credit is negative (you received). When set, per-leg
+    # prices are ignored — no reverse-engineering leg fills from a net.
+    net_debit_per_share: float | None = None
 
 
 class ClosePositionRequest(BaseModel):
@@ -296,16 +302,21 @@ async def import_position(req: ImportPositionRequest) -> dict:
     position marked live from the FMP chain, exactly like a synced one."""
     from app.services.position_import import ImportedLeg, build_tracked_trade
 
+    net = req.net_debit_per_share
     try:
-        legs = [
-            ImportedLeg(
+        legs = []
+        for lg in req.legs:
+            px = lg.entry_price_per_share
+            if net is None and (px is None or px <= 0):
+                raise ValueError("each leg needs an entry price, or give a net cost for the spread")
+            legs.append(ImportedLeg(
                 strike=lg.strike, option_type=OptionType(lg.option_type.lower()),
                 is_long=lg.is_long, quantity=lg.quantity,
-                entry_price_per_share=lg.entry_price_per_share, expiration=lg.expiration,
-            )
-            for lg in req.legs
-        ]
-        trade = build_tracked_trade(req.symbol, legs, opened_at=req.opened_at, source="manual")
+                entry_price_per_share=px or 0.0, expiration=lg.expiration,
+            ))
+        trade = build_tracked_trade(
+            req.symbol, legs, opened_at=req.opened_at, source="manual", net_per_share=net
+        )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, f"Invalid position: {exc}") from exc
     await run_in_threadpool(repository.save_paper_trade, trade)

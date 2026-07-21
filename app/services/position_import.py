@@ -32,7 +32,7 @@ class ImportedLeg:
     option_type: OptionType
     is_long: bool
     quantity: int
-    entry_price_per_share: float  # positive premium per share
+    entry_price_per_share: float  # positive premium per share (0 ok when a net override is given)
     expiration: date
 
 
@@ -63,7 +63,13 @@ def build_tracked_trade(
     *,
     opened_at: datetime | None = None,
     source: str = "broker_import",
+    net_per_share: float | None = None,
 ) -> PaperTrade:
+    """Build a tracked position from its legs. `net_per_share` overrides the
+    per-leg sum with the structure's net cost (debit > 0, credit < 0) — the way a
+    broker quotes a spread — so callers can pass the average cost directly instead
+    of reverse-engineering per-leg fills. Only the net drives P&L, max loss/profit,
+    and breakevens, so the per-leg entry prices are then purely cosmetic."""
     if not legs:
         raise ValueError("a position needs at least one leg")
     strategy, direction = _infer(legs)
@@ -71,7 +77,10 @@ def build_tracked_trade(
 
     # Signed net per share (debit > 0, credit < 0) and dollar economics.
     net_per_share = round(
-        sum((1 if leg.is_long else -1) * leg.entry_price_per_share for leg in legs), 4
+        net_per_share
+        if net_per_share is not None
+        else sum((1 if leg.is_long else -1) * leg.entry_price_per_share for leg in legs),
+        4,
     )
     is_vertical = len(legs) == 2
     width = (

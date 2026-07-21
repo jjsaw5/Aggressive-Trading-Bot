@@ -192,7 +192,7 @@ def build_scorecard(
         brier_score=brier,
         pop_buckets=[b for b in pop_buckets if b.n > 0],
         score_buckets=[b for b in score_buckets if b.n > 0],
-        by_strategy=_grouped(pairs, lambda s: s.strategy.value),
+        by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),
         note=(
             "Win rate is over decisive outcomes (wins+losses); scratches/unknowns "

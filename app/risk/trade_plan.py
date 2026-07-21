@@ -178,7 +178,7 @@ def build_vertical_spread_plan(
         contracts=sizing.contracts,
         risk=risk,
         rationale=(
-            f"{strategy.value.replace('_', ' ')}: long {otype} {long_leg.strike} / "
+            f"{strategy.display_name}: long {otype} {long_leg.strike} / "
             f"short {otype} {short_leg.strike} exp {long_leg.expiration}, "
             f"{sizing.contracts} lot(s), defined risk ${sizing.max_loss_usd:.0f} "
             f"({sizing.account_risk_pct:.1%}), R:R {spread.reward_to_risk}."
@@ -261,7 +261,7 @@ def build_structure_plan(
         contracts=sizing.contracts,
         risk=risk,
         rationale=(
-            f"{choice.strategy.value.replace('_', ' ')} ({kind}), "
+            f"{choice.strategy.display_name} ({kind}), "
             f"{sizing.contracts} lot(s), defined risk ${sizing.max_loss_usd:.0f} "
             f"({sizing.account_risk_pct:.1%}), R:R {reward_to_risk}."
         ),

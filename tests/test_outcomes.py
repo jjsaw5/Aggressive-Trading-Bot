@@ -205,8 +205,8 @@ def test_scorecard_win_rate_and_calibration() -> None:
     bucket = next(b for b in card.pop_buckets if b.n == 3)
     assert bucket.realized_win_rate == round(2 / 3, 4)
     assert bucket.calibration_gap is not None
-    # Strategy + direction groupings present.
-    assert card.by_strategy[0].key == "bull_call_spread"
+    # Strategy + direction groupings present (broker-aligned label).
+    assert card.by_strategy[0].key == "Call Debit Spread"
     assert card.by_direction[0].key == "bullish"
 
 

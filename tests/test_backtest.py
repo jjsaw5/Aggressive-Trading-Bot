@@ -120,7 +120,7 @@ def test_performance_aggregation() -> None:
     assert o.trades == 2
     assert 0.0 <= o.win_rate <= 1.0
     groups = by_strategy(results)
-    assert groups and groups[0].group == "bull_call_spread"
+    assert groups and groups[0].group == "Call Debit Spread"
 
 
 # --- Runner (end to end over the mock) --------------------------------------

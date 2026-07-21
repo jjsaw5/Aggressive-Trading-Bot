@@ -65,7 +65,7 @@ def _stats_for(group: str, results: list[BacktestResult]) -> PerformanceStats:
 
 
 def by_strategy(results: list[BacktestResult]) -> list[PerformanceStats]:
-    return _grouped(results, lambda r: r.trade.trade_plan.strategy.value)
+    return _grouped(results, lambda r: r.trade.trade_plan.strategy.display_name)
 
 
 def by_direction(results: list[BacktestResult]) -> list[PerformanceStats]:

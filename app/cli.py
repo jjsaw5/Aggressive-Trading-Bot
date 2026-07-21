@@ -33,7 +33,7 @@ async def _scan(as_json: bool, actionable_only: bool) -> None:
         if c.trade_plan:
             r = c.trade_plan.risk
             print(
-                f"         {c.trade_plan.strategy.value} x{c.trade_plan.contracts} "
+                f"         {c.trade_plan.strategy.display_name} x{c.trade_plan.contracts} "
                 f"| risk ${r.max_loss_usd:.0f} ({r.account_risk_pct:.1%}) "
                 f"| TP +{r.profit_target_pct:.0%} / SL -{r.stop_loss_pct:.0%}"
             )

@@ -172,6 +172,23 @@ async def configuration_scoring() -> dict:
     }
 
 
+@router.get("/configuration/exit-policy")
+async def configuration_exit_policy() -> dict:
+    """The structure-aware exit-plan thresholds every candidate's `ShortDurationExitPlan`
+    is built from (0DTE clock, momentum stop, PT1 scale, 1–5DTE time stop)."""
+    return {
+        "0dte": {
+            "entry_cutoff_et": settings.short_duration_0dte_cutoff_et,
+            "flatten_et": settings.short_duration_0dte_flatten_et,
+        },
+        "momentum_stop_bars": settings.short_duration_momentum_stop_bars,
+        "pt1_scale_pct": settings.short_duration_pt1_scale_pct,
+        "1_5dte_time_stop_dte": settings.short_duration_1_5dte_time_stop_dte,
+        "profit_target_pct": 0.5,
+        "stop_loss_pct": 0.5,
+    }
+
+
 @router.get("/levels/{symbol}", response_model=IntradayLevels)
 async def symbol_levels(symbol: str) -> IntradayLevels:
     lv = await service.get_symbol_levels(symbol)

@@ -176,6 +176,7 @@ def _candidate_from(
         news_score=news,
         scoring_model_version=card.model_version,
         risk_policy_version=card.risk_policy_version,
+        signal_metadata=dict(det.metadata) if det.metadata else {},
         entry_allowed=gate.allowed,
         entry_notes=gate.reasons,
         freshness=fresh.model_dump() if fresh is not None else None,
@@ -314,8 +315,27 @@ async def run_detection(
             created.append(cand)
 
     created.sort(key=lambda c: c.score, reverse=True)
+    _record_scan_metrics(dte, created)
     log.info("sd_detection", dte=dte.value, detected=len(created))
     return created
+
+
+def _record_scan_metrics(dte: DTECategory, created: list[ShortDurationCandidate]) -> None:
+    """Observability counters for a completed scan (candidates, stale-blocked,
+    tradeable). Never raises — metrics must not affect a scan."""
+    try:
+        from app.observability.metrics import get_metrics
+
+        m = get_metrics()
+        tag = dte.value
+        stale = sum(1 for c in created if c.freshness and not c.freshness.get("ok", True))
+        tradeable = sum(1 for c in created if c.trade_plan is not None)
+        m.inc(f"sd.scan.candidates.{tag}", len(created))
+        m.inc(f"sd.scan.stale_blocked.{tag}", stale)
+        m.inc(f"sd.scan.tradeable.{tag}", tradeable)
+        m.set_gauge(f"sd.scan.last_candidates.{tag}", float(len(created)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sd_scan_metrics_failed", error=str(exc))
 
 
 def _classify_transitions(

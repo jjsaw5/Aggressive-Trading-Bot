@@ -59,6 +59,20 @@ def test_close_marks_realized_pnl_and_retains_history() -> None:
     assert any(h["id"] == tid and h["exit_note"] == "hit target" for h in hist)
 
 
+def test_delete_removes_position_entirely() -> None:
+    c = _client()
+    tid = _import_long_call(c, symbol="INTC", px=1.50).json()["id"]
+    # It's tracked...
+    assert any(p["id"] == tid for p in c.get("/positions").json())
+    # ...then deleted entirely (for purging bad data).
+    r = c.request("DELETE", f"/positions/{tid}")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert not any(p["id"] == tid for p in c.get("/positions").json())
+    # Deleting a missing id 404s; unlike close, nothing is retained in history.
+    assert c.request("DELETE", f"/positions/{tid}").status_code == 404
+    assert not any(h["id"] == tid for h in c.get("/positions/history").json())
+
+
 def test_multiple_positions_on_same_symbol_both_tracked() -> None:
     c = _client()
     # A long call AND a long put on the same underlying — distinct structures.

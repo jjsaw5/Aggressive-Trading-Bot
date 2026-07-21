@@ -292,4 +292,33 @@ Phases 1–2.
      The regime panel already labels internals-vs-participation (proxy) from Phase 1.
    (3 observability tests + inline-JS syntax check; 364 total.)
 
-Remaining: validation — Phase 7.
+**Phase 6 delivered:** UI & observability. **Merged to `main` (PR #10).**
+
+---
+
+## Phase 7 — DELIVERED (validation)
+
+1. **v2 validation sweep** — DELIVERED. Filled the coverage gaps rather than duplicating existing
+   scheduler / backtest / simulation suites:
+   - **Migration** (`tests/test_migrations.py`): the full chain (0001→0004) applies on a fresh SQLite,
+     0004 is reversible (`downgrade -1` drops its columns) and idempotent (re-`upgrade` is clean,
+     inspector-guarded), and the chain has exactly one head.
+   - **End-to-end invariants** (`tests/test_sd_v2_validation.py`): every candidate from both DTE scans
+     carries the full v2 payload — scorecard with factor weights summing to 100, scoring/risk-policy
+     versions, a structure-aware exit plan (primary invalidation + EOD + expiration action), a freshness
+     read, and data-quality-tempered confidence ≤ raw score. 0DTE exit plans are clock-managed
+     (`close_all` + flatten). Scans are deterministic on the mock universe (no hidden randomness).
+   - **Paper simulation**: opening + monitoring a batch of tradeable candidates never raises, and the
+     Book A/B + opportunity-loss identity holds exactly (`book_a − book_b = left_on_table`,
+     executable + non-executable = signals).
+   (6 tests; 370 total.)
+
+---
+
+## v2 — COMPLETE
+
+All seven phases delivered and merged to `main` (PRs #7–#10, phase-by-phase). **370 tests pass, lint
+clean.** Live trading remains OFF throughout; every new capability is research/decision-support only,
+config-gated with safe defaults, and independently revertable (add-only schema, additive config, new
+modules). One add-only migration (`0004`) across the whole effort — the promoted-columns + JSON payload
+pattern carried everything else.

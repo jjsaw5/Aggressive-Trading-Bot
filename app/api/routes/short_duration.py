@@ -323,10 +323,13 @@ async def monitor_positions() -> list[ShortDurationTrade]:
 
 
 @router.get("/performance")
-async def performance() -> dict:
+async def performance(book: str | None = None) -> dict:
+    """Paper performance. Book A = signal-validation (all setups); Book B =
+    account-executable (fit the real account at entry). Omit `book` for both plus
+    opportunity-loss analytics; pass `book=A` or `book=B` for one book's breakdown."""
     from app.shortduration.paper import short_duration_performance
 
-    return await run_in_threadpool(short_duration_performance)
+    return await run_in_threadpool(short_duration_performance, book)
 
 
 # --- Human-approved live proposals (GATED — execution denied by default) ----

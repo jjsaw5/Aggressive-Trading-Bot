@@ -239,5 +239,22 @@ endpoint `/short-duration/configuration/scoring`. Tests: 333 pass, lint clean. D
 
 **Phase 3 delivered:** both risk & trade-management items — structure-aware exit plans and
 account-state-aware sizing. New endpoints `/short-duration/candidates/{id}/exit-plan`, `/account/state`.
-Tests: 347 pass, lint clean. Docs: `METHODOLOGY.md` §10 + V2 plan. On branch
-`claude/options-trading-platform-cl6v83`.
+Tests: 347 pass, lint clean. Docs: `METHODOLOGY.md` §10 + V2 plan. **Merged to `main` (PR #7)** with
+Phases 1–2.
+
+---
+
+## Phase 4 — IN PROGRESS (paper analytics)
+
+1. **Book A / Book B split + opportunity-loss** — DELIVERED. Paper performance is split into **Book A**
+   (signal-validation — every opened setup) and **Book B** (account-executable — only what fit the real
+   account's risk caps at entry). Each `ShortDurationTrade` records `executable_at_entry` +
+   `not_executable_reason`, computed at open by re-sizing the plan's per-contract risk under a
+   *constrained* account policy (new `short_duration_policy(constrained=True)` — always the true caps,
+   even in paper-verification mode). `short_duration_performance(book=…)` returns the flat Book-A shape
+   (backward compatible) plus `book_b` and **opportunity-loss** analytics (`left_on_table_pnl =
+   Book A − Book B` total P&L, top non-executable winners, reason counts). API
+   `GET /short-duration/performance?book=A|B`. No migration (rides in the trade JSON payload).
+   (7 book tests; 354 total.)
+2. Structured news (`CatalystEvent`) — deferred to Phase 5; UI/observability — Phase 6; validation —
+   Phase 7.

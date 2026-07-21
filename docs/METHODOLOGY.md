@@ -439,6 +439,16 @@ Execution is behind a **two-key gate**: it authorizes only when the trading mode
 no order path is even wired. The system's job is to research, rank, and propose; a human approves and
 enters manually. Approvals are explicit and attributed.
 
+**Tracking a book you entered elsewhere.** Because the platform never places orders, you enter trades
+on your own broker — then track them here for monitoring. Positions are ingested through a
+broker-agnostic shape (symbol + legs), so **no broker connection is required**: `POST /positions/import`
+(or the "＋ Add position" form) turns a manually-entered position into a tracked one, marked live from
+the market-data feed exactly like any other — P&L, exit-plan levels, stop/expiry warnings. Mark it
+closed at your real exit (`POST /positions/{id}/close`, exit net + a free-text reason); it's **retained
+in history** (`GET /positions/history`) with realized P&L and hold time, so the closed book feeds review
+and model tuning. Multiple structures on one underlying are tracked independently (keyed by structure,
+not bare symbol).
+
 ---
 
 ## 14. Known limitations — and the questions we most want answered

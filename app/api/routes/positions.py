@@ -10,14 +10,14 @@ orders.
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.db import repository
-from app.domain.enums import OptionAction, PaperTradeStatus
+from app.domain.enums import ExitReason, OptionAction, OptionType, PaperTradeStatus
 from app.domain.trades import PaperTrade
 from app.logging_config import get_logger
 from app.providers import registry
@@ -49,6 +49,8 @@ class ExitLevelView(BaseModel):
 
 
 class PositionView(BaseModel):
+    id: str = ""
+    source: str = ""
     symbol: str
     strategy: str
     contracts: int
@@ -80,6 +82,68 @@ class PositionView(BaseModel):
 class SyncResult(BaseModel):
     synced: int
     message: str
+
+
+def _structure_sig(t: PaperTrade) -> tuple:
+    legs = tuple(sorted(
+        (lg.strike, lg.option_type.value, lg.action.value, str(lg.expiration))
+        for lg in t.trade_plan.legs
+    ))
+    return (t.symbol, legs)
+
+
+# --- Manual position entry (no broker connection) ---------------------------
+class ImportLegRequest(BaseModel):
+    strike: float = Field(gt=0)
+    option_type: str  # "call" | "put"
+    is_long: bool  # bought (long) vs sold (short)
+    quantity: int = Field(default=1, ge=1)
+    entry_price_per_share: float = Field(gt=0)  # premium you paid/received, per share
+    expiration: date
+
+
+class ImportPositionRequest(BaseModel):
+    symbol: str
+    legs: list[ImportLegRequest] = Field(min_length=1)
+    opened_at: datetime | None = None
+
+
+class ClosePositionRequest(BaseModel):
+    # The net per-share value you closed the structure at (same sign as entry: a
+    # debit structure is positive). Realized P&L = (exit − entry) × 100 × contracts.
+    exit_price_per_share: float
+    reason: str | None = None
+    closed_at: datetime | None = None
+
+
+class ClosedPositionView(BaseModel):
+    id: str
+    symbol: str
+    strategy: str
+    direction: str
+    contracts: int
+    entry_net: float
+    exit_net: float | None = None
+    realized_pnl_usd: float | None = None
+    exit_reason: str | None = None
+    exit_note: str = ""
+    opened_at: datetime
+    closed_at: datetime | None = None
+    hold_days: float | None = None
+    source: str = ""
+
+
+def _closed_view(t: PaperTrade) -> ClosedPositionView:
+    hold = None
+    if t.closed_at is not None:
+        hold = round((t.closed_at - t.opened_at).total_seconds() / 86400.0, 2)
+    return ClosedPositionView(
+        id=t.id, symbol=t.symbol, strategy=t.trade_plan.strategy.value,
+        direction=t.trade_plan.direction.value, contracts=t.trade_plan.contracts,
+        entry_net=t.entry_fill, exit_net=t.exit_fill, realized_pnl_usd=t.realized_pnl_usd,
+        exit_reason=t.exit_reason.value if t.exit_reason else None, exit_note=t.exit_note,
+        opened_at=t.opened_at, closed_at=t.closed_at, hold_days=hold, source=t.scan_id,
+    )
 
 
 def _build_view(
@@ -139,6 +203,8 @@ def _build_view(
         breakevens = structure_breakevens(plan)
 
     return PositionView(
+        id=t.id,
+        source=t.scan_id,
         symbol=t.symbol,
         strategy=plan.strategy.value,
         contracts=plan.contracts,
@@ -190,10 +256,12 @@ async def _earnings_by_symbol(symbols: list[str]) -> dict[str, date]:
 async def list_positions() -> list[PositionView]:
     trades = await run_in_threadpool(repository.list_paper_trades, 200)
     open_trades = [t for t in trades if t.status == PaperTradeStatus.OPEN]
-    # De-dupe to one row per symbol (latest opened), so re-imports don't double up.
-    latest: dict[str, PaperTrade] = {}
+    # De-dupe by STRUCTURE (symbol + legs), not bare symbol, so distinct positions on
+    # the same underlying both show — a re-import of the *same* structure still
+    # collapses to the latest.
+    latest: dict[tuple, PaperTrade] = {}
     for t in sorted(open_trades, key=lambda x: x.opened_at):
-        latest[t.symbol] = t
+        latest[_structure_sig(t)] = t
     open_trades = list(latest.values())
 
     monitor = Tier4PositionMonitor(chain=registry.options_chain_provider())
@@ -220,3 +288,67 @@ async def sync_positions() -> SyncResult:
     except Exception as exc:  # noqa: BLE001 - surface the reason to the UI
         raise HTTPException(400, f"Broker sync unavailable: {exc}") from exc
     return SyncResult(synced=n, message=msg)
+
+
+@router.post("/import")
+async def import_position(req: ImportPositionRequest) -> dict:
+    """Manually add an open position (no broker connection). It becomes a tracked
+    position marked live from the FMP chain, exactly like a synced one."""
+    from app.services.position_import import ImportedLeg, build_tracked_trade
+
+    try:
+        legs = [
+            ImportedLeg(
+                strike=lg.strike, option_type=OptionType(lg.option_type.lower()),
+                is_long=lg.is_long, quantity=lg.quantity,
+                entry_price_per_share=lg.entry_price_per_share, expiration=lg.expiration,
+            )
+            for lg in req.legs
+        ]
+        trade = build_tracked_trade(req.symbol, legs, opened_at=req.opened_at, source="manual")
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, f"Invalid position: {exc}") from exc
+    await run_in_threadpool(repository.save_paper_trade, trade)
+    return {
+        "id": trade.id, "symbol": trade.symbol,
+        "strategy": trade.trade_plan.strategy.display_name,
+        "contracts": trade.trade_plan.contracts, "entry_net": trade.entry_fill,
+        "max_loss_usd": trade.trade_plan.risk.max_loss_usd,
+        "message": f"Added {trade.trade_plan.strategy.display_name} on {trade.symbol}. Now monitored.",
+    }
+
+
+@router.post("/{trade_id}/close")
+async def close_position(trade_id: str, req: ClosePositionRequest) -> ClosedPositionView:
+    """Mark a tracked position closed at the net you exited at. Retained (status
+    CLOSED) for the history/review board and the performance analytics."""
+    t = await run_in_threadpool(repository.get_paper_trade, trade_id)
+    if t is None:
+        raise HTTPException(404, "Position not found.")
+    if t.status == PaperTradeStatus.CLOSED:
+        raise HTTPException(409, "Position is already closed.")
+    now = req.closed_at or datetime.now(UTC)
+    # Manual close = the REAL fill you got, so no simulated slippage.
+    t.status = PaperTradeStatus.CLOSED
+    t.closed_at = now
+    t.exit_fill = req.exit_price_per_share
+    t.exit_slippage = 0.0
+    t.exit_reason = ExitReason.MANUAL
+    t.exit_note = req.reason or ""
+    t.realized_pnl_usd = round(
+        (req.exit_price_per_share - t.entry_fill) * t.trade_plan.contracts * 100, 2
+    )
+    await run_in_threadpool(repository.save_paper_trade, t)
+    return _closed_view(t)
+
+
+@router.get("/history", response_model=list[ClosedPositionView])
+async def positions_history(limit: int = 200, source: str | None = None) -> list[ClosedPositionView]:
+    """Closed positions, newest first — retained for review and model tuning.
+    Optionally filter by `source` (e.g. `manual`)."""
+    trades = await run_in_threadpool(repository.list_paper_trades, limit)
+    closed = [t for t in trades if t.status == PaperTradeStatus.CLOSED]
+    if source:
+        closed = [t for t in closed if t.scan_id == source]
+    closed.sort(key=lambda t: t.closed_at or t.opened_at, reverse=True)
+    return [_closed_view(t) for t in closed]

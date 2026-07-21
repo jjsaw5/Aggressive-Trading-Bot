@@ -139,6 +139,7 @@ class PaperTrade(BaseModel):
     exit_fill: float | None = None
     exit_slippage: float = 0.0
     exit_reason: ExitReason | None = None
+    exit_note: str = ""  # free-text close note (manual review / model tweaking)
 
     # Excursion tracking (in dollars, position-level)
     mfe_usd: float = 0.0  # max favorable excursion

@@ -25,6 +25,7 @@ from app.domain.shortduration import (
     CandidateTransition,
     EconomicEvent,
     IntradayLevels,
+    NewsCatalyst,
     NewsItem,
     ShortDurationCandidate,
     ShortDurationExitPlan,
@@ -203,6 +204,19 @@ async def flow(symbol: str, limit: int = 50) -> list[FlowAlert]:
 @router.get("/news", response_model=list[NewsItem])
 async def news_all(limit: int = 50) -> list[NewsItem]:
     return await service.get_news(limit=limit)
+
+
+@router.get("/news/events/{symbol}", response_model=list[NewsCatalyst])
+async def news_events(symbol: str, limit: int = 50) -> list[NewsCatalyst]:
+    """Structured, classified news catalysts for a symbol: typed events (earnings,
+    guidance, rating-change, …) with direction, mixed-outcome flag, parsed
+    actual-vs-estimate values, source hierarchy, and dedup grouping. Informational
+    only — never approves a trade or bypasses a gate."""
+    from app.shortduration.scoring.news_events import build_news_catalysts
+
+    sym = symbol.upper()
+    items = await service.get_news([sym], limit=limit)
+    return build_news_catalysts(items, for_symbol=sym)
 
 
 @router.get("/news/{symbol}", response_model=list[NewsItem])

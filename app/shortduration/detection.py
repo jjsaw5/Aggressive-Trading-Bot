@@ -43,6 +43,7 @@ from app.shortduration.scoring.flow_decay import analyze_flow
 from app.shortduration.scoring.news import best_news_score
 from app.shortduration.service import build_market_regime
 from app.shortduration.state import classify_initial_state, transition
+from app.shortduration.thesis import build_directional_thesis
 from app.shortduration.strategies.base import SetupContext, StrategyDetection
 from app.shortduration.strategies.catalyst_continuation import CatalystContinuation
 from app.shortduration.strategies.orb import OpeningRangeBreakout
@@ -140,7 +141,7 @@ async def build_context(
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
-    contract: ContractResult, gate: EntryGate, fresh=None, levels=None,
+    contract: ContractResult, gate: EntryGate, fresh=None, levels=None, thesis=None,
 ) -> ShortDurationCandidate:
     from app.shortduration.exit_plan import build_short_duration_exit_plan
 
@@ -167,6 +168,7 @@ def _candidate_from(
         contract=contract.recommendation,
         trade_plan=plan,
         exit_plan=exit_plan,
+        thesis=thesis,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -263,11 +265,12 @@ async def _score_symbol(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
             quote_stale=stale, daily=daily, equity=equity,
         )
+        thesis = build_directional_thesis(ctx, det, news_score=news)
         for contract in contracts:
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
-            scored.append((det, card, news, contract, gate, fresh))
+            scored.append((det, card, news, contract, gate, fresh, thesis))
     return scored
 
 
@@ -303,10 +306,10 @@ async def run_detection(
     for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
         if not scored:
             continue
-        for det, card, news, contract, gate, fresh in scored:
+        for det, card, news, contract, gate, fresh, thesis in scored:
             cand = _candidate_from(
                 det, symbol, now, card, news, regime, contract, gate, fresh,
-                levels=_ctx.levels,
+                levels=_ctx.levels, thesis=thesis,
             )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)

@@ -577,11 +577,14 @@
       const acts = sdBucket(c) === 5 ? "" :
         `<button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
          <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button>`;
+      const rrisk = c.thesis && c.thesis.reversal_risk;
+      const rrBadge = rrisk === "high" ? ' <span class="neg" title="High reversal risk — see thesis">⚠</span>'
+        : rrisk === "elevated" ? ' <span class="warn" title="Elevated reversal risk — see thesis">⚠</span>' : "";
       return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
         <td><strong>${c.symbol}</strong></td>
         <td><span class="pill">${c.dte_category}</span></td>
-        <td>${c.direction}</td>
+        <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
         <td><span class="pill">${c.state}</span></td>
         <td class="num"><strong>${(c.score * 100).toFixed(0)}</strong></td>
@@ -654,6 +657,21 @@
       const smKeys = Object.keys(sm);
       const signalMeta = !smKeys.length ? "" : `<div class="card" style="margin-top:10px"><h3>Signal diagnostics</h3>
         <div class="kv">${smKeys.map(k => `<div>${k.replace(/_/g," ")}</div><div>${typeof sm[k]==="number"?(+sm[k]).toFixed(4).replace(/\.?0+$/,""):sm[k]}</div>`).join("")}</div></div>`;
+      // Directional thesis — the "read before you act" box (informational). Placed
+      // right under the banner so a counter-trend day (e.g. a bearish call on a green
+      // day) is reconciled before you look at the contract.
+      const th = c.thesis;
+      const riskCls = th && th.reversal_risk === "high" ? "regime-stop"
+        : th && th.reversal_risk === "elevated" ? "regime-warn" : "regime-ok";
+      const thesisCard = !th ? "" : `<div class="card" style="margin-top:10px"><h3>Directional thesis
+        <span class="muted" style="font-size:12px">read before you act</span></h3>
+        <div style="font-size:15px"><b>${th.headline}</b></div>
+        ${th.todays_context ? `<div style="margin-top:6px">${th.todays_context}</div>` : ""}
+        ${(th.drivers||[]).length ? `<ul style="margin:8px 0 0 18px">${th.drivers.map(x=>`<li>${x}</li>`).join("")}</ul>` : ""}
+        ${th.invalidation ? `<div class="muted" style="margin-top:6px"><b>Invalidation:</b> ${th.invalidation}${th.distance_to_invalidation_pct!=null?` — <b>${th.distance_to_invalidation_pct}%</b> away`:""}</div>` : ""}
+        <div class="banner ${riskCls}" style="margin-top:8px"><b>Reversal risk: ${th.reversal_risk.toUpperCase()}</b>
+          ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
+        <div class="proxy-note" style="margin-top:6px">Informational only — this never changes the score or blocks entry.</div></div>`;
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
         <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
@@ -661,7 +679,7 @@
           ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}
           ${c.scoring_model_version ? '· model <code>'+c.scoring_model_version+'</code>' : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
-        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + gate + contract + exitPlan + signalMeta;
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + thesisCard + gate + contract + exitPlan + signalMeta;
       let factors = `<div class="muted">No scorecard.</div>`;
       if (sc) {
         const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>

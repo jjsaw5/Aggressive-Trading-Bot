@@ -305,6 +305,25 @@ class ShortDurationExitPlan(BaseModel):
     rationale: str = ""
 
 
+class DirectionalThesis(BaseModel):
+    """A plain-English, deterministic explanation of *why this direction* — assembled
+    from the same signals the scanner scores (daily trend structure, today's move,
+    the invalidation level), plus an INFORMATIONAL reversal-risk flag. It never gates
+    or scores a trade; it exists so a human can sanity-check a setup (e.g. a fresh
+    bearish call on a big green day) before acting."""
+
+    direction: Direction
+    headline: str = ""  # one-liner: the thesis in a sentence
+    drivers: list[str] = Field(default_factory=list)  # the signals behind the direction
+    todays_context: str = ""  # reconciles today's move with the thesis
+    invalidation: str = ""  # the level/rule that flips the thesis
+    invalidation_price: float | None = None
+    distance_to_invalidation_pct: float | None = None  # how far price is from that level (%)
+    reversal_risk: str = "low"  # low | elevated | high
+    reversal_risk_reasons: list[str] = Field(default_factory=list)
+    summary: str = ""  # the full rendered "read before you act" paragraph
+
+
 class ShortDurationCandidate(BaseModel):
     """A short-duration trade candidate with full explanation and lifecycle.
 
@@ -353,6 +372,8 @@ class ShortDurationCandidate(BaseModel):
     trade_plan: TradePlan | None = None
     # Structure-aware exit plan (Phase 3): how to manage/close the trade intraday.
     exit_plan: ShortDurationExitPlan | None = None
+    # Plain-English directional thesis + reversal-risk flag (informational).
+    thesis: DirectionalThesis | None = None
 
 
 class ShortDurationTrade(BaseModel):

@@ -288,20 +288,48 @@
         <th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     }
 
+    const PROP_STATUS = {
+      draft: "muted", pending_approval: "warn", approved: "pos",
+      rejected: "neg", expired: "muted", filled: "pos", cancelled: "muted",
+    };
     async function renderProposals() {
       const ps = await api("GET", "/proposals");
-      if (!ps.length) return `<div class="empty">No proposals yet.</div>`;
-      const rows = ps.map(p => `<tr>
-        <td><strong>${p.symbol}</strong></td><td>${stratLabel(p.trade_plan.strategy)}</td>
-        <td class="num">$${fmt(p.trade_plan.risk.max_loss_usd, 0)}</td>
-        <td>${p.status}</td>
-        <td class="row-actions">
-          <button class="ghost" data-p="${p.id}" data-act="approve">Approve</button>
-          <button class="ghost" data-p="${p.id}" data-act="reject">Reject</button>
-          <button class="ghost" data-p="${p.id}" data-act="execute">Execute</button>
-        </td></tr>`).join("");
-      return `<table><thead><tr><th>Sym</th><th>Structure</th><th class="num">Risk</th>
-        <th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      const intro = `<div class="banner"><h2>Proposals — the human-approval gate</h2>
+        <div class="sub">A proposal is a fully-specified order ticket the scanner built from a candidate,
+        held here for <b>your</b> review. Nothing is sent to a broker automatically. The flow is:
+        <b>Candidate → Propose → Approve → Execute</b>. <b>Execute is double-gated</b> — it stays denied by
+        default (research mode) and only ever routes an order when live trading is explicitly armed, which it is not.</div></div>`;
+      if (!ps.length)
+        return intro + `<div class="empty" style="margin-top:10px">No proposals yet. Open a candidate and press <b>Propose</b> to draft one.</div>`;
+      const cards = ps.map(p => {
+        const pl = p.trade_plan || {};
+        const cls = PROP_STATUS[p.status] || "muted";
+        const risk = pl.risk ? `$${fmt(pl.risk.max_loss_usd, 0)}` : "—";
+        const rr = pl.risk && pl.risk.reward_to_risk != null ? ` · R:R ${pl.risk.reward_to_risk} : 1` : "";
+        const expires = p.expires_at ? new Date(p.expires_at).toLocaleString() : "—";
+        // Actions reflect the lifecycle: approve/reject while pending, execute once approved.
+        const pending = p.status === "pending_approval" || p.status === "draft";
+        const acts = p.status === "approved"
+          ? `<button data-p="${p.id}" data-act="execute">Execute (guarded)</button>
+             <button class="ghost" data-p="${p.id}" data-act="reject">Reject</button>`
+          : pending
+          ? `<button data-p="${p.id}" data-act="approve">Approve</button>
+             <button class="ghost" data-p="${p.id}" data-act="reject">Reject</button>`
+          : `<span class="muted">no actions (${p.status})</span>`;
+        return `<div class="card" style="margin-top:10px">
+          <div class="banner" style="margin:0"><h3 style="margin:0">${p.symbol}
+            <span class="muted" style="font-size:13px">${stratLabel(pl.strategy)} · ${pl.direction || ""} · ${pl.contracts || 1} lot</span>
+            <span class="badge ${cls}" style="margin-left:6px">${p.status.replace(/_/g, " ")}</span></h3>
+            <div class="sub">max risk <b>${risk}</b>${rr} · expires ${expires}
+              ${p.reject_note ? `· <span class="neg">rejected: ${p.reject_note}</span>` : ""}</div></div>
+          ${p.thesis_summary ? `<div style="margin-top:8px"><b>Thesis:</b> ${p.thesis_summary}</div>` : ""}
+          ${pl.rationale ? `<div class="muted" style="margin-top:4px">${pl.rationale}</div>` : ""}
+          ${orderTicketHtml(p)}
+          ${exitPlanHtml(p)}
+          <div class="row-actions" style="margin-top:10px">${acts}</div>
+        </div>`;
+      }).join("");
+      return intro + cards;
     }
 
     async function renderPaper() {

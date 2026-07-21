@@ -142,13 +142,22 @@ A detector emits a candidate only when its setup conditions hold. Some checks ar
 regime and vice-versa; but `allow_new_trades = false` only annotates a candidate, it doesn't suppress
 the research. No detector computes price targets.
 
-### 0DTE · Opening-Range Breakout
+### 0DTE · Opening-Range Breakout (adaptive)
 
-- Direction: **bullish** if last ≥ OR-high × 1.0005, **bearish** if last ≤ OR-low × 0.9995 (must
-  clear the range by ≥0.05%).
-- Close-not-wick: the last completed 1-min bar must close beyond the level.
+- **Adaptive buffer.** The break must clear the level by a buffer that scales with the session's own
+  volatility — `max(0.05% of price, 10% of the opening-range width)`. A wide, choppy open demands more
+  room before a poke counts; a tight open needs less. (Replaces the old flat 0.05%.)
+- **Anti-chase.** If price has already run more than `1.0×` the OR width past the level, the entry is a
+  chase (poor reward-to-risk, paying up into the move) and is rejected; the score is penalized as
+  extension grows toward that cap.
+- **Confirmation mode** (configurable): `close` — the last completed 1-min bar must close beyond the
+  level (default); `immediate` — price beyond the adaptive buffer is enough; `retest` — broke earlier,
+  pulled back to the level, and resumed (a stricter, higher-quality entry). Missing bar history is
+  never a silent pass.
 - VWAP alignment (**gate**): price must be on the trade's side of VWAP.
 - Relative volume: if known and `< 1.3×`, rejected (a missing relvol does not block).
+- The buffer, extension ratio, and confirmation mode are recorded on the detection for observability.
+  All thresholds live in config (`orb_*`).
 
 ### 0DTE · VWAP-Trend Continuation
 

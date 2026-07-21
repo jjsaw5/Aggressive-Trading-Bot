@@ -194,5 +194,11 @@ lands with Phase 2/3/4 (scoring version, exit plans, paper-book columns).
    hide a bad component: risk / execution / liquidity / freshness stay separately inspectable and hard
    gates still apply. New endpoint `GET /short-duration/configuration/scoring`. (18 scoring tests pass;
    324 total.)
-2. **Adaptive opening-range breakout** — pending.
+2. **Adaptive opening-range breakout** — DELIVERED. `app/shortduration/strategies/orb.py`. The flat
+   0.05% breakout threshold is now an adaptive buffer that scales with the opening-range width
+   (`max(0.05% of price, 10% of OR width)`), an **anti-chase** guard that rejects entries already
+   extended past `1.0×` the OR width beyond the level (and penalizes the score approaching it), and a
+   configurable **confirmation mode** (`close` / `immediate` / `retest`). Buffer, extension ratio, and
+   mode are recorded on the detection (`StrategyDetection.metadata`) for observability. All thresholds
+   in config (`orb_*`). (6 ORB tests; 329 total.)
 3. **VWAP continuation-quality model** — pending.

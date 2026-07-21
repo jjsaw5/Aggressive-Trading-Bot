@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     short_duration_enabled: bool = False
     short_duration_opening_range_minutes: int = 15
     short_duration_max_dte: int = 5
+    # Opening-range breakout (0DTE) — adaptive to the session's own volatility.
+    # The breakout buffer scales with the opening-range width (a wider, more volatile
+    # open needs more room before a break counts) but never falls below a floor.
+    # Anti-chase rejects entries already extended too far past the level (poor R:R,
+    # you're paying up into the move). Confirmation mode controls how a break is proven.
+    orb_min_rel_volume: float = 1.3
+    orb_min_break_pct: float = 0.0005          # floor buffer as a fraction of price (0.05%)
+    orb_buffer_pct_of_range: float = 0.10      # adaptive buffer = 10% of the OR width
+    orb_max_extension_pct_of_range: float = 1.0  # reject if extended > 1.0x OR width past the level
+    orb_confirmation_mode: str = "close"       # "close" | "immediate" | "retest"
+    orb_retest_band_pct_of_range: float = 0.25  # retest = pulled back within 25% of OR width of level
+    orb_require_vwap_alignment: bool = True
     # Intraday volume profile (time-of-day relative volume). When enabled, relvol
     # uses a historical per-minute median cumulative-volume baseline instead of the
     # flat proration. A thin/absent profile degrades to a LABELLED estimate (or

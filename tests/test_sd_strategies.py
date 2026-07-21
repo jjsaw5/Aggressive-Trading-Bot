@@ -15,7 +15,7 @@ from app.domain.shortduration import (
 )
 from app.shortduration.strategies.base import SetupContext, flow_confirms, regime_supports
 from app.shortduration.strategies.catalyst_continuation import CatalystContinuation
-from app.shortduration.strategies.orb import OpeningRangeBreakout
+from app.shortduration.strategies.orb import OpeningRangeBreakout, ORBConfig
 from app.shortduration.strategies.trend_continuation import TrendContinuation
 from app.shortduration.strategies.vwap_continuation import VWAPTrendContinuation
 
@@ -70,6 +70,67 @@ def test_orb_no_fire_when_below_vwap() -> None:
     )
     ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars([101.5]))
     assert OpeningRangeBreakout().detect(ctx) is None
+
+
+def _orb_levels(last, orh=101.0, orl=99.0, vwap=100.0, relvol=2.0):
+    return IntradayLevels(
+        symbol="SPY", session_date=date(2026, 7, 17), last=last, vwap=vwap,
+        opening_range_high=orh, opening_range_low=orl, relative_volume=relvol, computed_at=_NOW,
+    )
+
+
+def test_orb_adaptive_buffer_rejects_marginal_poke_on_wide_range() -> None:
+    # OR width 2.0 -> adaptive buffer 0.2. A 0.1 poke past the high is NOT a break...
+    lv = _orb_levels(last=101.1)
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars([101.1]))
+    assert OpeningRangeBreakout(ORBConfig()).detect(ctx) is None
+    # ...but the same 0.1 poke clears a much tighter range (width 0.2 -> buffer floor).
+    lv2 = _orb_levels(last=101.1, orh=101.0, orl=100.8)
+    ctx2 = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv2, bars_1m=_bars([101.1]))
+    assert OpeningRangeBreakout(ORBConfig()).detect(ctx2) is not None
+
+
+def test_orb_anti_chase_rejects_extended_entry() -> None:
+    # last is 2.5 OR-widths past the high -> a chase, rejected.
+    lv = _orb_levels(last=106.0)  # width 2.0, extension 5.0 = 2.5x
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv, bars_1m=_bars([106.0]))
+    assert OpeningRangeBreakout(ORBConfig()).detect(ctx) is None
+    # A clean break just past the buffer is fine and records its diagnostics.
+    lv2 = _orb_levels(last=101.5)
+    ctx2 = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv2, bars_1m=_bars([101.5]))
+    det = OpeningRangeBreakout(ORBConfig()).detect(ctx2)
+    assert det is not None
+    assert det.metadata["confirmation_mode"] == "close"
+    assert det.metadata["extension_ratio"] == 0.25 and det.metadata["breakout_buffer"] == 0.2
+
+
+def test_orb_immediate_mode_needs_no_bars() -> None:
+    cfg = ORBConfig(confirmation_mode="immediate")
+    lv = _orb_levels(last=101.5)
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv)  # no bars_1m
+    assert OpeningRangeBreakout(cfg).detect(ctx) is not None
+
+
+def test_orb_close_mode_blocks_when_bars_missing() -> None:
+    # "close" needs a completed bar to confirm; missing history is not a pass.
+    lv = _orb_levels(last=101.5)
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv)  # no bars_1m
+    assert OpeningRangeBreakout(ORBConfig(confirmation_mode="close")).detect(ctx) is None
+
+
+def test_orb_retest_mode_requires_break_pullback_resume() -> None:
+    cfg = ORBConfig(confirmation_mode="retest")
+    lv = _orb_levels(last=101.5)
+    # broke (101.6) -> pulled back to near the level (101.05) -> resumed (101.5).
+    retest_bars = _bars([101.6, 101.05, 101.5])
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv, bars_1m=retest_bars)
+    det = OpeningRangeBreakout(cfg).detect(ctx)
+    assert det is not None and det.metadata["confirmation_mode"] == "retest"
+    # A straight run that never returned to the level is not a retest.
+    lv2 = _orb_levels(last=102.3)
+    run_bars = _bars([101.5, 101.9, 102.3])
+    ctx2 = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=lv2, bars_1m=run_bars)
+    assert OpeningRangeBreakout(cfg).detect(ctx2) is None
 
 
 # --- VWAP continuation -------------------------------------------------------

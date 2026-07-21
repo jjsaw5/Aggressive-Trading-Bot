@@ -321,6 +321,9 @@ class DirectionalThesis(BaseModel):
     distance_to_invalidation_pct: float | None = None  # how far price is from that level (%)
     reversal_risk: str = "low"  # low | elevated | high
     reversal_risk_reasons: list[str] = Field(default_factory=list)
+    # Structural guardrails (informational): earnings-before-expiry, horizon mismatch
+    # (a swing thesis in a too-short expiry). Not a reversal signal — a wrong-instrument one.
+    structural_warnings: list[str] = Field(default_factory=list)
     summary: str = ""  # the full rendered "read before you act" paragraph
 
 

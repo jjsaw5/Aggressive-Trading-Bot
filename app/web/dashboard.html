@@ -639,7 +639,9 @@
         `<button class="ghost" data-act="sd-arm" data-id="${c.id}">Arm</button>
          <button class="ghost" data-act="sd-reject" data-id="${c.id}">Reject</button>`;
       const rrisk = c.thesis && c.thesis.reversal_risk;
-      const rrBadge = rrisk === "high" ? ' <span class="neg" title="High reversal risk — see thesis">⚠</span>'
+      const hasStruct = c.thesis && (c.thesis.structural_warnings || []).length;
+      const rrBadge = hasStruct ? ' <span class="neg" title="Wrong-instrument warning — see thesis">⚠</span>'
+        : rrisk === "high" ? ' <span class="neg" title="High reversal risk — see thesis">⚠</span>'
         : rrisk === "elevated" ? ' <span class="warn" title="Elevated reversal risk — see thesis">⚠</span>' : "";
       return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
@@ -730,6 +732,7 @@
         ${th.todays_context ? `<div style="margin-top:6px">${th.todays_context}</div>` : ""}
         ${(th.drivers||[]).length ? `<ul style="margin:8px 0 0 18px">${th.drivers.map(x=>`<li>${x}</li>`).join("")}</ul>` : ""}
         ${th.invalidation ? `<div class="muted" style="margin-top:6px"><b>Invalidation:</b> ${th.invalidation}${th.distance_to_invalidation_pct!=null?` — <b>${th.distance_to_invalidation_pct}%</b> away`:""}</div>` : ""}
+        ${(th.structural_warnings||[]).length ? `<div class="banner regime-stop" style="margin-top:8px"><b>⚠ Wrong-instrument warning</b>${th.structural_warnings.map(w=>`<div class="muted" style="margin-top:4px">${w}</div>`).join("")}</div>` : ""}
         <div class="banner ${riskCls}" style="margin-top:8px"><b>Reversal risk: ${th.reversal_risk.toUpperCase()}</b>
           ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
         <div class="proxy-note" style="margin-top:6px">Informational only — this never changes the score or blocks entry.</div></div>`;

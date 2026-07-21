@@ -17,7 +17,7 @@ inputs it needs are absent, rather than assuming a neutral pass.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 from app.domain.enums import Direction, DTECategory, ShortDurationStrategy
 from app.domain.market import CatalystEvent, PriceHistory, Quote
@@ -46,6 +46,7 @@ class SetupContext:
     quote: Quote | None = None
     flow: list[FlowAlert] = field(default_factory=list)
     catalysts: list[CatalystEvent] = field(default_factory=list)
+    next_earnings: date | None = None  # next scheduled earnings report date, if known
     news: list[NewsItem] = field(default_factory=list)
 
 

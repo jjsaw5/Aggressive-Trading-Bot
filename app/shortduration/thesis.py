@@ -9,11 +9,43 @@ before acting. No LLM: every sentence maps to a signal you can verify.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from app.config import get_settings
-from app.domain.enums import Direction, DTECategory
+from app.domain.enums import Direction, DTECategory, ShortDurationStrategy
 from app.domain.shortduration import DirectionalThesis
 from app.engine.price_action import analyze_price_action
 from app.shortduration.strategies.base import SetupContext, StrategyDetection
+
+# Strategies whose thesis is a multi-week/daily-trend swing — they need room to work.
+_SWING_STRATEGIES = {ShortDurationStrategy.TREND_CONTINUATION}
+
+
+def _structural_warnings(ctx: SetupContext, detection: StrategyDetection, s) -> list[str]:
+    """Wrong-instrument guardrails (informational): is the thesis horizon compatible
+    with the expiry, and does an earnings report fall before it? Learned from a
+    daily-trend TSLA signal expressed in a ~4-DTE spread straddling earnings."""
+    warnings: list[str] = []
+    dte = detection.dte_category
+    max_dte = 1 if dte == DTECategory.ZERO_DTE else s.short_duration_max_dte
+
+    # Horizon mismatch: a swing thesis can't be expressed in a 0-5DTE expiry.
+    if detection.strategy in _SWING_STRATEGIES and max_dte < s.thesis_swing_min_dte:
+        warnings.append(
+            f"Horizon mismatch: a daily-trend thesis needs ~{s.thesis_swing_min_dte}+ DTE to work, "
+            f"but this {dte.value} expiry is ≤{max_dte} DTE — express it as a 20–45 DTE structure "
+            f"in the core scanner, not a sub-week expiry."
+        )
+    # Earnings before expiry: turns a continuation trade into an event binary.
+    if ctx.next_earnings is not None:
+        horizon_end = ctx.now.date() + timedelta(days=max_dte)
+        if ctx.now.date() <= ctx.next_earnings <= horizon_end:
+            warnings.append(
+                f"Earnings {ctx.next_earnings} land before expiry — this is an event binary "
+                f"(IV-crush + gap risk), not a continuation trade. The thesis can be right and "
+                f"still lose on the print."
+            )
+    return warnings
 
 
 def _current_price(ctx: SetupContext, pa_price: float | None) -> float | None:
@@ -123,6 +155,8 @@ def build_directional_thesis(
     risk, risk_reasons = _reversal_risk(s, d, ctx.change_pct, dist_inval, news_score)
 
     # Full "read before you act" paragraph.
+    structural = _structural_warnings(ctx, detection, s)
+
     bits = [headline]
     if todays_context:
         bits.append(todays_context)
@@ -131,11 +165,13 @@ def build_directional_thesis(
         bits.append(f"Invalidation: {invalidation}{near}")
     if risk != "low":
         bits.append(f"Reversal risk {risk.upper()} — " + " ".join(risk_reasons))
+    for w in structural:
+        bits.append(f"⚠ {w}")
     summary = " ".join(bits)
 
     return DirectionalThesis(
         direction=d, headline=headline, drivers=drivers, todays_context=todays_context,
         invalidation=invalidation, invalidation_price=invalidation_price,
         distance_to_invalidation_pct=dist_inval, reversal_risk=risk,
-        reversal_risk_reasons=risk_reasons, summary=summary,
+        reversal_risk_reasons=risk_reasons, structural_warnings=structural, summary=summary,
     )

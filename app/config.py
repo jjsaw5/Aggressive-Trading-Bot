@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     vwap_min_abs_slope_pct: float = 0.0002     # per-bar close slope (fraction of price)
     vwap_lookback_bars: int = 20
     vwap_min_quality: float = 0.45             # minimum composite quality to fire
+    # Directional-thesis reversal-risk flag (informational — never gates or scores).
+    # A day that moves hard AGAINST the trade, price sitting close to the invalidation
+    # level, or a fresh news catalyst are each a reversal-risk factor; two or more
+    # rate it "high". Purely to prompt a human sanity-check, e.g. a bearish call on a
+    # big green day.
+    thesis_reversal_counter_move_pct: float = 2.0   # counter-trend day of this % (or more)
+    thesis_reversal_near_invalidation_pct: float = 3.0  # price within this % of invalidation
+    thesis_reversal_news_min_score: float = 0.55    # a news catalyst this material counts
     # Intraday volume profile (time-of-day relative volume). When enabled, relvol
     # uses a historical per-minute median cumulative-volume baseline instead of the
     # flat proration. A thin/absent profile degrades to a LABELLED estimate (or

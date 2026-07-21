@@ -385,6 +385,18 @@ The default report also carries **opportunity-loss analytics**: `left_on_table_p
 total P&L — the edge the small account leaves on the table — plus the biggest non-executable winners
 and why they didn't fit. This separates *"is the signal good?"* from *"can this account act on it?"*.
 
+**Directional thesis + reversal-risk flag (v2).** Every candidate carries a `DirectionalThesis` — a
+plain-English, **deterministic** explanation of *why this direction*, assembled from the same signals
+the scanner scores (daily SMA-20/50 trend, price-vs-mean, RSI, today's move, the invalidation level).
+It reconciles what you're staring at with the thesis — e.g. a fresh **bearish** call on a **big green
+day** reads *"+3.6% today: a bounce toward a falling 20-day average, but price is still 5% below it —
+the bearish thesis is intact; this is the risk to watch"* — and names the invalidation level and how
+far price is from it. It also computes an **informational reversal-risk flag** (`low / elevated /
+high`) from three deterministic factors: a day that moves hard **against** the trade, price **close to
+the invalidation** level, and a **material news catalyst**. Two or more → `high`. The flag **never
+changes the score or blocks entry** — it exists so a human can sanity-check before acting. Shown at the
+top of the candidate detail and as a ⚠ badge on the board. Thresholds in config (`thesis_reversal_*`).
+
 **Observability (v2).** Every candidate carries `signal_metadata` — the detection's structured
 diagnostics (ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores) — surfaced on
 the board's detail view alongside the scoring-model version, the structure-aware exit plan, and the

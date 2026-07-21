@@ -31,7 +31,7 @@ from app.engine.universe import short_duration_universe
 from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
-from app.shortduration.contracts import ContractResult, select_short_duration_contracts
+from app.shortduration.contracts import ContractResult, is_swing, select_short_duration_contracts
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.risk import (
     EntryGate,
@@ -74,6 +74,14 @@ def _target_expirations(dte: DTECategory, today: date) -> list[date]:
     else:
         offsets = range(1, settings.short_duration_max_dte + 1)
     return [today + timedelta(days=i) for i in offsets]
+
+
+def _swing_expirations(today: date) -> list[date]:
+    """The weeks-out window a swing (daily-trend) thesis is expressed in, so a
+    TrendContinuation setup lands in a 20-45 DTE contract that matches its horizon."""
+    from datetime import timedelta
+
+    return [today + timedelta(days=i) for i in range(settings.swing_min_dte, settings.swing_max_dte + 1)]
 
 
 def default_strategies(dte: DTECategory) -> list:
@@ -214,11 +222,16 @@ async def _score_symbol(
     detections — a handful, not the whole universe."""
     chain = iv = None
     dte = dets[0].dte_category  # all detections in a scan share the DTE category
+    # A swing (daily-trend) detection is expressed weeks out, so also fetch that
+    # expiry window when one is present — the near-term set alone can't hold it.
+    expirations = _target_expirations(dte, now.date())
+    if any(is_swing(d.strategy) for d in dets):
+        expirations = expirations + _swing_expirations(now.date())
     try:
         # Fetch the NEAR-TERM expirations this category trades, not the default
         # ~30-DTE window get_option_chain returns.
         chain = await registry.options_chain_provider().get_option_chain_for_expirations(
-            symbol, _target_expirations(dte, now.date())
+            symbol, expirations
         )
     except Exception as exc:  # noqa: BLE001 - liquidity scored as unknown on miss
         log.warning("sd_score_chain_failed", symbol=symbol, error=str(exc))
@@ -262,7 +275,7 @@ async def _score_symbol(
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
                 policy=short_duration_policy(det.dte_category, equity=equity),
-                as_of=now.date(), open_risk_usd=open_risk,
+                as_of=now.date(), open_risk_usd=open_risk, swing=is_swing(det.strategy),
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,

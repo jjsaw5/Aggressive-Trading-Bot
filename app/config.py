@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     # And an earnings report before the expiry turns a continuation trade into an
     # event binary (IV-crush + gap). Both are surfaced, never auto-gated.
     thesis_swing_min_dte: int = 10
+    # When a daily-trend (swing) thesis fires in the short-duration scanner, express
+    # it at a SWING expiry (weeks, not days) so the instrument matches the thesis —
+    # the fix for a daily-trend signal landing in a ~4-DTE spread. 21-45 DTE targets
+    # monthly expirations that give the trend room to work and dilute single-day
+    # event risk. Momentum (0DTE / VWAP / ORB) keeps its short window.
+    swing_min_dte: int = 21
+    swing_max_dte: int = 45
     # Intraday volume profile (time-of-day relative volume). When enabled, relvol
     # uses a historical per-minute median cumulative-volume baseline instead of the
     # flat proration. A thin/absent profile degrades to a LABELLED estimate (or

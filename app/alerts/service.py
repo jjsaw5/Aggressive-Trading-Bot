@@ -35,7 +35,7 @@ def candidate_to_alert(candidate: TradeCandidate) -> Alert:
     if plan is not None:
         r = plan.risk
         parts.append(
-            f"{plan.strategy.value} x{plan.contracts} | risk ${r.max_loss_usd:.0f} "
+            f"{plan.strategy.display_name} x{plan.contracts} | risk ${r.max_loss_usd:.0f} "
             f"({r.account_risk_pct:.1%})"
         )
         # Entry economics as a mini-ticket so the alert is actionable on its own.

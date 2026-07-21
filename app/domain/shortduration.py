@@ -193,7 +193,11 @@ class ShortDurationRegimeState(BaseModel):
     spy_trend_pct: float | None = None
     qqq_trend_pct: float | None = None
     iwm_trend_pct: float | None = None
-    breadth_above_vwap_pct: float | None = None
+    breadth_above_vwap_pct: float | None = None  # the breadth signal actually used
+    breadth_is_proxy: bool = True                 # True when only watchlist participation was available
+    watchlist_participation_pct: float | None = None  # our-universe proxy (always a proxy)
+    internals_breadth_score: float | None = None  # real market-internals composite [0,1], or None
+    internals_source: str | None = None
     vol_reading: float | None = None
     as_of: datetime
     notes: str = ""

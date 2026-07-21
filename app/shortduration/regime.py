@@ -23,7 +23,8 @@ from app.domain.shortduration import (
     RegimeFactor,
     ShortDurationRegimeState,
 )
-from app.shortduration.breadth import BreadthProxy
+from app.domain.internals import MarketInternals
+from app.shortduration.breadth import WatchlistParticipation
 
 _MAJORS = ("SPY", "QQQ", "IWM")
 
@@ -55,15 +56,28 @@ def compute_regime(
     *,
     index_change_pct: dict[str, float | None],
     index_levels: dict[str, IntradayLevels],
-    breadth: BreadthProxy | None,
+    participation: WatchlistParticipation | None = None,
+    internals: MarketInternals | None = None,
     vol_reading: float | None,
     next_event: EconomicEvent | None,
     now: datetime,
     restriction_active: bool = False,
     config: RegimeConfig | None = None,
+    breadth: WatchlistParticipation | None = None,  # deprecated alias for participation
 ) -> ShortDurationRegimeState:
     cfg = config or RegimeConfig()
+    participation = participation or breadth
     factors: list[RegimeFactor] = []
+
+    # Breadth signal: prefer REAL market internals; fall back to the watchlist
+    # participation PROXY. When only the proxy is available, it must not act as a
+    # hard gate and regime confidence is capped.
+    internals_score = internals.breadth_score if internals else None
+    participation_pct = participation.above_vwap_pct if participation else None
+    if internals_score is not None:
+        breadth_pct, breadth_is_proxy = internals_score, False
+    else:
+        breadth_pct, breadth_is_proxy = participation_pct, True
 
     votes = {
         s: _index_vote(index_change_pct.get(s), index_levels.get(s), cfg) for s in _MAJORS
@@ -83,13 +97,20 @@ def compute_regime(
                 )
             )
 
-    breadth_pct = breadth.above_vwap_pct if breadth else None
-    if breadth_pct is not None:
+    if internals_score is not None:
         factors.append(
             RegimeFactor(
-                name="Breadth (proxy)",
-                value=f"{breadth_pct * 100:.0f}% above VWAP",
-                supports=breadth_pct >= cfg.strong_breadth or breadth_pct <= cfg.weak_breadth,
+                name="Market internals",
+                value=f"breadth {internals_score * 100:.0f}% ({internals.source if internals else 'real'})",
+                supports=internals_score >= cfg.strong_breadth or internals_score <= cfg.weak_breadth,
+            )
+        )
+    if participation_pct is not None:
+        factors.append(
+            RegimeFactor(
+                name="Watchlist participation (proxy)",
+                value=f"{participation_pct * 100:.0f}% above VWAP",
+                supports=False,  # a proxy never counts as a supporting/confirming factor
             )
         )
 
@@ -126,8 +147,13 @@ def compute_regime(
 
     # --- Classify ---
     net = bulls - bears
-    bull_breadth = breadth_pct is None or breadth_pct >= cfg.strong_breadth
-    bear_breadth = breadth_pct is None or breadth_pct <= cfg.weak_breadth
+    # A proxy participation reading must NOT gate the trend classification; only a
+    # real internals reading may tighten the breadth gate.
+    if breadth_is_proxy:
+        bull_breadth = bear_breadth = True
+    else:
+        bull_breadth = breadth_pct is None or breadth_pct >= cfg.strong_breadth
+        bear_breadth = breadth_pct is None or breadth_pct <= cfg.weak_breadth
 
     if in_blackout:
         regime = ShortDurationRegime.MACRO_EVENT_DRIVEN
@@ -146,9 +172,17 @@ def compute_regime(
     else:
         regime = ShortDurationRegime.RANGE_BOUND
 
-    # Confidence: index agreement strength, tempered by breadth alignment.
+    # Confidence: index agreement strength, tempered by breadth alignment. Real
+    # internals earn the full breadth bonus; a proxy earns a token bonus AND caps
+    # overall confidence — proxy-only regimes are never high-confidence.
     agreement = (abs(net) / len(_MAJORS)) if decisive else 0.0
-    confidence = round(min(1.0, 0.35 + 0.5 * agreement + (0.15 if breadth_pct is not None else 0.0)), 3)
+    if breadth_pct is None:
+        breadth_bonus = 0.0
+    else:
+        breadth_bonus = 0.15 if not breadth_is_proxy else 0.05
+    confidence = round(min(1.0, 0.35 + 0.5 * agreement + breadth_bonus), 3)
+    if breadth_is_proxy:
+        confidence = round(min(confidence, 0.6), 3)  # cap: proxy-only internals
     if regime in (ShortDurationRegime.RANGE_BOUND, ShortDurationRegime.HIGH_VOL_CHOP):
         confidence = round(min(confidence, 0.5), 3)
 
@@ -171,7 +205,14 @@ def compute_regime(
         qqq_trend_pct=index_change_pct.get("QQQ"),
         iwm_trend_pct=index_change_pct.get("IWM"),
         breadth_above_vwap_pct=breadth_pct,
+        breadth_is_proxy=breadth_is_proxy,
+        watchlist_participation_pct=participation_pct,
+        internals_breadth_score=internals_score,
+        internals_source=internals.source if internals else None,
         vol_reading=vol_reading,
         as_of=now,
-        notes="Breadth is a universe proxy, not exchange internals." if breadth else "",
+        notes=(
+            "Real market internals available." if not breadth_is_proxy
+            else "No real internals — watchlist participation is a proxy; confidence capped."
+        ),
     )

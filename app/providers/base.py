@@ -30,6 +30,7 @@ from app.domain.options import (
     OptionChain,
     OptionMarkPoint,
 )
+from app.domain.internals import MarketInternals
 from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 
 
@@ -200,3 +201,13 @@ class BrokerageProvider(Provider):
         ``list[(symbol, list[ImportedLeg])]`` for the position importer. Default
         is empty; override in a broker that can read positions with cost basis."""
         return []
+
+
+class MarketInternalsProvider(Provider):
+    """Real market-wide internals (breadth of price + flow). Distinct from
+    watchlist participation, which is a proxy over our own universe. A provider
+    returns whatever it can source and marks the rest unavailable — it must never
+    fabricate a neutral/bullish value for a field it cannot read."""
+
+    @abc.abstractmethod
+    async def get_market_internals(self, *, now: datetime | None = None) -> MarketInternals: ...

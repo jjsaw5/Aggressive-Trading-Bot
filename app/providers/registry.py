@@ -158,3 +158,18 @@ def econ_calendar_provider() -> EconomicCalendarProvider:
     return _resolve(
         settings.provider_econ_calendar, "econ_calendar", EconomicCalendarProvider
     )
+
+
+@lru_cache(maxsize=1)
+def _composite_internals():
+    from app.providers.internals import CompositeMarketInternals
+
+    return CompositeMarketInternals()
+
+
+def market_internals_provider():
+    """Real market internals via the FMP+UW composite, or the mock. Distinct from
+    watchlist participation (a proxy over our own universe)."""
+    if str(settings.provider_market_internals).lower() == "mock":
+        return _mock()
+    return _composite_internals()

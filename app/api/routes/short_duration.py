@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import repository
 from app.domain.enums import CandidateState, DTECategory
+from app.domain.internals import MarketInternals
 from app.domain.options import FlowAlert, OptionChain
 from app.domain.shortduration import (
     CandidateTransition,
@@ -33,7 +34,7 @@ from app.domain.trades import OrderProposal
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.providers import registry
 from app.shortduration import service
-from app.shortduration.breadth import BreadthProxy
+from app.shortduration.breadth import WatchlistParticipation
 from app.shortduration.detection import run_detection
 
 router = APIRouter(prefix="/short-duration", tags=["short-duration"])
@@ -49,7 +50,9 @@ _MANUAL_TRANSITIONS = {
 
 class RegimeResponse(BaseModel):
     regime: ShortDurationRegimeState
-    breadth: BreadthProxy
+    participation: WatchlistParticipation      # our-universe proxy
+    internals: MarketInternals | None = None   # real market internals, when available
+    breadth: WatchlistParticipation            # deprecated alias of `participation`
     levels: list[IntradayLevels]
 
 
@@ -76,10 +79,25 @@ class ConfigResponse(BaseModel):
 # --- Market context ---------------------------------------------------------
 @router.get("/market-regime", response_model=RegimeResponse)
 async def market_regime() -> RegimeResponse:
-    regime, levels, breadth = await service.build_market_regime()
+    regime, levels, participation, internals = await service.build_market_regime()
     return RegimeResponse(
-        regime=regime, breadth=breadth, levels=sorted(levels.values(), key=lambda x: x.symbol)
+        regime=regime, participation=participation, internals=internals, breadth=participation,
+        levels=sorted(levels.values(), key=lambda x: x.symbol),
     )
+
+
+@router.get("/market/internals")
+async def market_internals() -> MarketInternals | None:
+    """Real market-wide internals (sector breadth + options-flow tide). Fields not
+    available on the current provider keys are returned null + listed."""
+    return await service._market_internals(datetime.now(UTC))
+
+
+@router.get("/market/participation", response_model=WatchlistParticipation)
+async def market_participation() -> WatchlistParticipation:
+    """Watchlist participation — a PROXY over our tracked universe, not exchange breadth."""
+    _regime, _levels, participation, _internals = await service.build_market_regime()
+    return participation
 
 
 @router.get("/levels/{symbol}", response_model=IntradayLevels)

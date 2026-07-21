@@ -330,3 +330,23 @@ class FMPProvider(
             )
         out.sort(key=lambda e: e.scheduled_at)
         return out
+
+    # --- Sector breadth (grounded on /stable/sector-performance-snapshot) ---
+    async def get_sector_breadth(self, *, as_of: date | None = None) -> dict[str, float | int]:
+        """Real sector breadth: how many of the 11 sectors are advancing today, and
+        the average sector move. Used by the market-internals composite."""
+        params: dict[str, Any] = {}
+        if as_of is not None:
+            params["date"] = as_of.isoformat()
+        data = await self._http.get_json("/stable/sector-performance-snapshot", params)
+        rows = data if isinstance(data, list) else []
+        changes = [_to_float(r.get("averageChange")) for r in rows]
+        changes = [c for c in changes if c is not None]
+        if not changes:
+            return {}
+        advancing = sum(1 for c in changes if c > 0)
+        return {
+            "sectors_total": len(changes),
+            "sectors_advancing": advancing,
+            "avg_sector_change_pct": round(sum(changes) / len(changes), 4),
+        }

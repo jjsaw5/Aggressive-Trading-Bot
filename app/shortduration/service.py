@@ -24,7 +24,8 @@ from app.domain.shortduration import (
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.logging_config import get_logger
 from app.providers import registry
-from app.shortduration.breadth import BreadthProxy, compute_breadth
+from app.domain.internals import MarketInternals
+from app.shortduration.breadth import WatchlistParticipation, compute_participation
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.regime import compute_regime
 from app.tiers.concurrency import bounded_gather
@@ -89,9 +90,19 @@ async def _next_event(now: datetime) -> EconomicEvent | None:
     return min(upcoming, key=lambda e: e.scheduled_at) if upcoming else None
 
 
+async def _market_internals(now: datetime):
+    """Real market internals (best-effort). None if unavailable — the regime then
+    falls back to the watchlist-participation proxy with capped confidence."""
+    try:
+        return await registry.market_internals_provider().get_market_internals(now=now)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sd_internals_failed", error=str(exc))
+        return None
+
+
 async def build_market_regime(
     *, now: datetime | None = None, universe: list[str] | None = None
-) -> tuple[ShortDurationRegimeState, dict[str, IntradayLevels], BreadthProxy]:
+) -> tuple[ShortDurationRegimeState, dict[str, IntradayLevels], WatchlistParticipation, "MarketInternals | None"]:
     now = now or datetime.now(UTC)
     syms = list(dict.fromkeys(_MAJORS + (universe or DEFAULT_UNIVERSE)))
     results = await bounded_gather([_symbol_levels(s, now) for s in syms], limit=8)
@@ -104,17 +115,20 @@ async def build_market_regime(
         if lv is not None:
             levels[sym] = lv
         change[sym] = chg
-    breadth = compute_breadth(list(levels.values()))
-    vol_reading, next_event = await asyncio.gather(_vol_reading(), _next_event(now))
+    participation = compute_participation(list(levels.values()))
+    vol_reading, next_event, internals = await asyncio.gather(
+        _vol_reading(), _next_event(now), _market_internals(now)
+    )
     regime = compute_regime(
         index_change_pct=change,
         index_levels=levels,
-        breadth=breadth,
+        participation=participation,
+        internals=internals,
         vol_reading=vol_reading,
         next_event=next_event,
         now=now,
     )
-    return regime, levels, breadth
+    return regime, levels, participation, internals
 
 
 async def get_symbol_levels(symbol: str, *, now: datetime | None = None) -> IntradayLevels | None:

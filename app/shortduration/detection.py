@@ -249,7 +249,7 @@ async def run_detection(
 
     now = now or datetime.now(UTC)
     syms = universe or short_duration_universe(dte == DTECategory.ZERO_DTE)
-    regime, _levels, _breadth = await build_market_regime(now=now, universe=syms)
+    regime, _levels, _part, _internals = await build_market_regime(now=now, universe=syms)
 
     with use_priority(Priority.CANDIDATES):
         detected = await bounded_gather(

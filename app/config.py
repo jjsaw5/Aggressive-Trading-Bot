@@ -179,6 +179,9 @@ class Settings(BaseSettings):
     provider_intraday: ProviderName = ProviderName.MOCK
     provider_news: ProviderName = ProviderName.MOCK
     provider_econ_calendar: ProviderName = ProviderName.MOCK
+    # Real market internals: "mock", or anything else -> the FMP+UW composite feed
+    # (sector breadth + options-flow tide). Set PROVIDER_MARKET_INTERNALS=composite.
+    provider_market_internals: str = "mock"
 
     # --- Provider credentials ---
     fmp_api_key: str | None = None

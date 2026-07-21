@@ -517,7 +517,9 @@
       return `<div class="banner ${cls}">
         <h2>${REGIME_LABEL[r.regime] || r.regime} ${gate}</h2>
         <div class="sub">Confidence ${(r.confidence * 100).toFixed(0)}% · ${idx}
-          · breadth ${r.breadth_above_vwap_pct == null ? "—" : (r.breadth_above_vwap_pct * 100).toFixed(0) + "% > VWAP"}
+          · ${r.internals_breadth_score != null
+              ? "internals " + (r.internals_breadth_score * 100).toFixed(0) + "% <span class=\"pos\">real</span>"
+              : "participation " + (r.watchlist_participation_pct == null ? "—" : (r.watchlist_participation_pct * 100).toFixed(0) + "%") + " <span class=\"proxy-note\">proxy</span>"}
           · vol ${r.vol_reading == null ? "—" : (r.vol_reading * 100).toFixed(0) + "%"}</div>
         <div style="margin-top:6px">${nxt}</div>
         <div class="factors">${facts}</div>

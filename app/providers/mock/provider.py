@@ -42,6 +42,7 @@ from app.providers.base import (
     IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
+    MarketInternalsProvider,
     NewsProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
@@ -103,6 +104,7 @@ class MockProvider(
     NewsProvider,
     EconomicCalendarProvider,
     BrokerageProvider,
+    MarketInternalsProvider,
 ):
     meta = _META
 
@@ -459,3 +461,16 @@ class MockProvider(
         if to_date is not None:
             events = [e for e in events if e.scheduled_at.date() <= to_date]
         return events
+
+    async def get_market_internals(self, *, now: datetime | None = None):
+        """Deterministic mildly-bullish internals so the regime path is exercised."""
+        from app.domain.internals import MarketInternals
+        return MarketInternals(
+            as_of=now or self._now, source="mock", is_authoritative=True,
+            sectors_total=11, sectors_advancing=7, sector_breadth_pct=0.636,
+            avg_sector_change_pct=0.21, net_call_premium=2.5e7, net_put_premium=-8.0e6,
+            net_volume=90000.0, tide_direction=0.35, sectors_call_heavy=7, sector_flow_total=11,
+            sector_flow_pct=0.636,
+            unavailable_fields=["advance_decline_issues", "tick", "up_down_volume_ratio", "new_highs_minus_lows"],
+            breadth_score=0.61,
+        )

@@ -344,6 +344,11 @@ class ShortDurationTrade(BaseModel):
     contracts: int = 1
     max_loss_usd: float | None = None
     status: str = "open"  # open | closed
+    # Book split (Phase 4). Book A = signal-validation (every setup). Book B =
+    # account-executable (fit the real account's risk caps at entry). A trade is
+    # always in Book A; it is in Book B iff executable_at_entry.
+    executable_at_entry: bool = True
+    not_executable_reason: str = ""
     current_net: float | None = None
     unrealized_pnl_usd: float | None = None
     mfe_usd: float = 0.0
@@ -357,6 +362,13 @@ class ShortDurationTrade(BaseModel):
     def score_band(self) -> str:
         s = self.entry_score
         return "0.8+" if s >= 0.8 else "0.7-0.8" if s >= 0.7 else "0.6-0.7" if s >= 0.6 else "<0.6"
+
+    @property
+    def book(self) -> str:
+        """Exclusive membership label for display: B if account-executable at entry,
+        else A-only (a signal the account could not take). Book A analytics always
+        include the full set."""
+        return "B" if self.executable_at_entry else "A-only"
 
 
 class CandidateTransition(BaseModel):

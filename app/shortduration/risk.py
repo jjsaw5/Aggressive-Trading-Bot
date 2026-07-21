@@ -22,9 +22,15 @@ from app.risk.policy import RiskPolicy
 from app.scheduling.clock import MarketClock
 
 
-def short_duration_policy(dte: DTECategory, *, equity: float | None = None) -> RiskPolicy:
+def short_duration_policy(
+    dte: DTECategory, *, equity: float | None = None, constrained: bool = False
+) -> RiskPolicy:
     """A per-DTE risk policy: tighter per-trade % than the core scanner, same
-    absolute $ cap, and a time-stop that matches the horizon (same-day for 0DTE)."""
+    absolute $ cap, and a time-stop that matches the horizon (same-day for 0DTE).
+
+    ``constrained=True`` forces the REAL account caps even when paper-verification
+    mode is on — used by the Book B (account-executable) check, which must always
+    measure against the true account, not the lifted signal-book cap."""
     pct = (
         settings.short_duration_0dte_risk_pct
         if dte == DTECategory.ZERO_DTE
@@ -33,7 +39,7 @@ def short_duration_policy(dte: DTECategory, *, equity: float | None = None) -> R
     # Paper verification: lift the per-trade $ cap and size a single contract so
     # every setup is expressible and comparable. Research/paper only — the live
     # ExecutionGuard is unaffected and still denies by default.
-    unconstrained = settings.short_duration_paper_unconstrained
+    unconstrained = settings.short_duration_paper_unconstrained and not constrained
     # In unconstrained mode the effective cap is min(equity×pct, absolute$). Raise
     # the equity too so neither term clamps a single expensive leg back out.
     eq = 10_000_000.0 if unconstrained else (equity or settings.account_equity_usd)

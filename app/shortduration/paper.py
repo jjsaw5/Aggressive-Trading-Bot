@@ -43,6 +43,45 @@ def time_of_day_bucket(now: datetime) -> str:
     return "other"
 
 
+_NOT_EXEC_REASON = {
+    "account_cap_exhausted": "Open risk already consumes the account cap — no room for this trade.",
+    "single_contract_exceeds_trade_cap": "One contract exceeds the per-trade risk cap for this account.",
+    "invalid_per_contract_risk": "Per-contract risk could not be determined.",
+}
+
+
+async def _executable_at_entry(plan, dte, now: datetime) -> tuple[bool, str]:
+    """Would this sized structure fit the REAL account at entry (Book B), or is it
+    a signal-validation-only trade (Book A)? Re-sizes the plan's per-contract risk
+    under the constrained account policy — independent of paper-unconstrained mode,
+    which lifts the cap for the signal book. Best-effort: on any error, treat as
+    executable so the account book is never silently starved by a transient failure."""
+    from app.risk.position_sizing import size_by_defined_risk
+    from app.shortduration.risk import short_duration_policy
+
+    try:
+        contracts = max(1, int(plan.contracts or 1))
+        per_contract = (plan.risk.max_loss_usd or 0.0) / contracts
+        if per_contract <= 0:
+            return True, ""
+        account = await _account_state_for_paper(now)
+        policy = short_duration_policy(dte, equity=account.equity_usd, constrained=True)
+        sizing = size_by_defined_risk(
+            per_contract, policy, open_risk_usd=account.committed_risk_usd
+        )
+        if sizing.is_tradeable:
+            return True, ""
+        reason = sizing.capped_reason or "not_sizeable"
+        return False, _NOT_EXEC_REASON.get(reason, reason)
+    except Exception as exc:  # noqa: BLE001 - never block a paper open on a sizing hiccup
+        log.warning("sd_executable_check_failed", error=str(exc))
+        return True, ""
+
+
+async def _account_state_for_paper(now: datetime):
+    return await registry.account_state_provider().get_account_state(now=now)
+
+
 def _advance_to_open(cand: ShortDurationCandidate, now: datetime) -> list:
     """Advance the candidate to OPEN via the paper/research path (ARMED ->
     TRIGGERED -> OPEN, skipping PROPOSED/APPROVED which are the live path)."""
@@ -69,6 +108,7 @@ async def open_short_duration_paper(
     flow_conf = None
     if candidate.scorecard and candidate.scorecard.components.get("flow_confidence"):
         flow_conf = candidate.scorecard.components["flow_confidence"].value
+    executable, why_not = await _executable_at_entry(plan, candidate.dte_category, now)
     sd_trade = ShortDurationTrade(
         id=uuid.uuid4().hex[:12],
         candidate_id=candidate.id,
@@ -88,6 +128,8 @@ async def open_short_duration_paper(
         contracts=plan.contracts,
         max_loss_usd=plan.risk.max_loss_usd,
         status="open",
+        executable_at_entry=executable,
+        not_executable_reason=why_not,
     )
     await asyncio.to_thread(repository.save_short_duration_trade, sd_trade)
 
@@ -227,12 +269,10 @@ def _group(trades: list[ShortDurationTrade], key) -> dict[str, dict]:
     return {k: _stats(v) for k, v in sorted(buckets.items())}
 
 
-def short_duration_performance() -> dict:
-    """Aggregate + sliced performance across closed short-duration paper trades."""
-    trades = repository.list_short_duration_trades(status="closed", limit=2000)
+def _sliced(trades: list[ShortDurationTrade]) -> dict:
+    """The standard overall + sliced breakdown for one set of trades."""
     return {
         "overall": _stats(trades),
-        "open_positions": len(repository.list_short_duration_trades(status="open")),
         "by_dte": _group(trades, lambda t: t.dte_category.value),
         "by_strategy": _group(trades, lambda t: t.strategy.value if t.strategy else "—"),
         "by_symbol": _group(trades, lambda t: t.symbol),
@@ -241,4 +281,63 @@ def short_duration_performance() -> dict:
         "by_score_band": _group(trades, lambda t: t.score_band),
         "by_news_confirmed": _group(trades, lambda t: "news" if t.news_confirmed else "no-news"),
         "by_flow_confirmed": _group(trades, lambda t: "flow" if t.flow_confirmed else "no-flow"),
+    }
+
+
+def _opportunity_loss(closed: list[ShortDurationTrade]) -> dict:
+    """What the small account leaves on the table: the P&L difference between the
+    full signal book (A) and the account-executable subset (B), plus the biggest
+    non-executable winners the account could not take."""
+    decided = [t for t in closed if t.realized_pnl_usd is not None]
+    book_a_pnl = round(sum(t.realized_pnl_usd or 0.0 for t in decided), 2)
+    exec_decided = [t for t in decided if t.executable_at_entry]
+    book_b_pnl = round(sum(t.realized_pnl_usd or 0.0 for t in exec_decided), 2)
+    missed = [t for t in decided if not t.executable_at_entry]
+    top_missed = sorted(missed, key=lambda t: t.realized_pnl_usd or 0.0, reverse=True)[:5]
+    reasons: dict[str, int] = defaultdict(int)
+    for t in missed:
+        reasons[t.not_executable_reason or "—"] += 1
+    return {
+        "signals_decided": len(decided),
+        "executable_decided": len(exec_decided),
+        "not_executable_decided": len(missed),
+        "book_a_total_pnl": book_a_pnl,       # every signal, uniformly validated
+        "book_b_total_pnl": book_b_pnl,       # only what the account could take
+        "left_on_table_pnl": round(book_a_pnl - book_b_pnl, 2),
+        "not_executable_reasons": dict(reasons),
+        "top_missed": [
+            {"symbol": t.symbol, "strategy": t.strategy.value if t.strategy else "—",
+             "pnl_usd": t.realized_pnl_usd, "reason": t.not_executable_reason}
+            for t in top_missed
+        ],
+    }
+
+
+def short_duration_performance(book: str | None = None) -> dict:
+    """Aggregate + sliced performance across closed short-duration paper trades,
+    split into two books:
+
+    - **Book A** (signal-validation): every opened setup — measures raw signal edge.
+    - **Book B** (account-executable): the subset that fit the real account at entry.
+
+    ``book`` selects one book's breakdown ("A"/"B"); omitted returns both plus the
+    opportunity-loss analytics (the edge the small account leaves on the table)."""
+    closed = repository.list_short_duration_trades(status="closed", limit=2000)
+    open_trades = repository.list_short_duration_trades(status="open")
+    book_a = closed
+    book_b = [t for t in closed if t.executable_at_entry]
+
+    sel = (book or "").upper()
+    if sel == "A":
+        return {"book": "A", "open_positions": len(open_trades), **_sliced(book_a)}
+    if sel == "B":
+        return {"book": "B", "open_positions": sum(1 for t in open_trades if t.executable_at_entry),
+                **_sliced(book_b)}
+    # Default: the flat Book-A shape (all closed setups — backward compatible) plus
+    # the account-executable Book B and the opportunity-loss analytics.
+    return {
+        "open_positions": len(open_trades),
+        **_sliced(book_a),
+        "book_b": _sliced(book_b),
+        "opportunity_loss": _opportunity_loss(closed),
     }

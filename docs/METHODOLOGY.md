@@ -355,6 +355,19 @@ The structural plan stands alone even before a contract is sized; the premium-pr
 once a `TradePlan` exists. Thresholds live in config (`short_duration_0dte_flatten_et`,
 `short_duration_momentum_stop_bars`, `short_duration_pt1_scale_pct`, `short_duration_1_5dte_time_stop_dte`).
 
+**Two paper books — signal vs account (v2).** Paper performance is split so signal quality and account
+constraints are measured separately (`GET /short-duration/performance?book=A|B`):
+
+- **Book A — signal-validation.** Every opened setup, so raw signal edge is measured independent of a
+  $2,000 account's sizing limits.
+- **Book B — account-executable.** Only the subset that fit the *real* account's risk caps at entry.
+  Each trade records `executable_at_entry` (re-sized under the constrained account policy — always the
+  true caps, even when paper-verification mode has lifted them for Book A) and, if not, a reason.
+
+The default report also carries **opportunity-loss analytics**: `left_on_table_pnl = Book A − Book B`
+total P&L — the edge the small account leaves on the table — plus the biggest non-executable winners
+and why they didn't fit. This separates *"is the signal good?"* from *"can this account act on it?"*.
+
 ---
 
 ## 11. Candidate lifecycle — a transparent state machine

@@ -342,6 +342,16 @@ async def close_position(trade_id: str, req: ClosePositionRequest) -> ClosedPosi
     return _closed_view(t)
 
 
+@router.delete("/{trade_id}")
+async def delete_position(trade_id: str) -> dict:
+    """Permanently delete a tracked position (open or closed) — for purging bad
+    manually-entered data. This removes it entirely, unlike close which retains it."""
+    ok = await run_in_threadpool(repository.delete_paper_trade, trade_id)
+    if not ok:
+        raise HTTPException(404, "Position not found.")
+    return {"deleted": True, "id": trade_id}
+
+
 @router.get("/history", response_model=list[ClosedPositionView])
 async def positions_history(limit: int = 200, source: str | None = None) -> list[ClosedPositionView]:
     """Closed positions, newest first — retained for review and model tuning.

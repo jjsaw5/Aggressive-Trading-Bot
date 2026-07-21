@@ -170,6 +170,18 @@ def list_paper_trades(limit: int = 50) -> list[PaperTrade]:
         return [PaperTrade.model_validate(r.payload) for r in res.scalars().all()]
 
 
+def delete_paper_trade(trade_id: str) -> bool:
+    """Permanently remove a tracked/paper position. Returns True if a row was
+    deleted. Used to purge bad manually-entered data."""
+    with SessionLocal() as session:
+        row = session.get(PaperTradeRow, trade_id)
+        if row is None:
+            return False
+        session.delete(row)
+        session.commit()
+        return True
+
+
 # --- Decision snapshots (the learning warehouse) -----------------------------
 def _snapshot_row(s: DecisionSnapshot) -> DecisionSnapshotRow:
     return DecisionSnapshotRow(

@@ -129,6 +129,39 @@ class NewsItem(BaseModel):
         return round((self.received_ts - self.source_ts).total_seconds(), 3)
 
 
+class CatalystValue(BaseModel):
+    """A parsed numeric outcome from a news catalyst (e.g. EPS actual vs estimate)."""
+
+    label: str  # "EPS" | "revenue" | "guidance" | ...
+    actual: float | None = None
+    estimate: float | None = None
+    unit: str = ""  # "$" | "%" | "B" | ...
+    beat: bool | None = None  # actual vs estimate, when both are known
+
+
+class NewsCatalyst(BaseModel):
+    """A structured, classified news catalyst: a group of related headlines resolved
+    to one typed event (type + direction + confidence + parsed values). This is an
+    INFORMATIONAL layer alongside the keyword `NewsScore` — it never approves a trade
+    or bypasses a deterministic gate; setups still come from the engines."""
+
+    symbol: str | None = None
+    event_type: str  # earnings | guidance | rating_change | m_and_a | legal_regulatory | fda_clinical | product | macro | other
+    direction: Direction = Direction.NEUTRAL
+    mixed: bool = False  # conflicting signals within the event (e.g. beat rev / miss EPS)
+    confidence: float = 0.0  # [0,1] — reliability of the CLASSIFICATION, not a trade signal
+    headline: str = ""  # the primary (highest-authority, freshest) headline
+    source: str = "unknown"  # primary source
+    source_authority: float = 0.0
+    member_count: int = 1  # headlines grouped into this event
+    sources: list[str] = Field(default_factory=list)
+    values: list[CatalystValue] = Field(default_factory=list)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    notes: list[str] = Field(default_factory=list)
+    explanation: str = ""
+
+
 class EconomicEvent(BaseModel):
     """A scheduled macro release (CPI, FOMC, NFP, ...)."""
 

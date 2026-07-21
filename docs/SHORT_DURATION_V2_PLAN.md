@@ -256,5 +256,20 @@ Phases 1–2.
    Book A − Book B` total P&L, top non-executable winners, reason counts). API
    `GET /short-duration/performance?book=A|B`. No migration (rides in the trade JSON payload).
    (7 book tests; 354 total.)
-2. Structured news (`CatalystEvent`) — deferred to Phase 5; UI/observability — Phase 6; validation —
-   Phase 7.
+**Phase 4 delivered:** Book A/B split + opportunity-loss. **Merged to `main` (PR #8).**
+
+---
+
+## Phase 5 — IN PROGRESS (structured news)
+
+1. **Structured `NewsCatalyst` classification layer** — DELIVERED.
+   `app/shortduration/scoring/news_events.py` + `NewsCatalyst` / `CatalystValue` domain models. Resolves
+   a headline stream into typed events (earnings / guidance / rating-change / M&A / legal-regulatory /
+   FDA-clinical / product / macro / other) with direction + **mixed-outcome** flag (conflicting cues or
+   beat-and-miss), a classification **confidence**, parsed **actual-vs-estimate** values, **source
+   hierarchy** (highest-authority primary), and **dedup grouping** (Jaccard ≥ 0.6). Reuses the keyword
+   model's source tiers + direction lexicon + tokenizer. **Informational only** — sits *alongside* the
+   keyword `NewsScore`, never approves a trade or bypasses a deterministic gate. API
+   `GET /short-duration/news/events/{symbol}`. No migration. (7 tests; 361 total.)
+
+Remaining: UI/observability — Phase 6; validation — Phase 7.

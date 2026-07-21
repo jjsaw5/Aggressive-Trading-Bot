@@ -268,6 +268,23 @@ Jaccard token overlap ≥ `0.6` against recently-seen headlines (processed newes
 story loses its novelty weight. **20 of the 100 news points are confirmation** (price/volume/flow) —
 an unconfirmed headline scores materially lower.
 
+**Structured catalyst layer (v2).** Alongside the keyword score, a classification layer resolves a
+stream of headlines into typed `NewsCatalyst` events (`GET /short-duration/news/events/{symbol}`):
+
+- **Event type** — earnings / guidance / rating-change / M&A / legal-regulatory / FDA-clinical /
+  product / macro / other, from a keyword taxonomy.
+- **Direction + mixed-outcome** — bullish / bearish / neutral, flagged `mixed` when the event cuts both
+  ways (conflicting cues, or an explicit beat-and-miss like "beats on revenue, misses on EPS").
+- **Confidence** — reliability of the *classification* (source authority + how cleanly type/direction
+  resolved + whether values parsed), not a trade signal.
+- **Before/after values** — light extraction of "actual vs estimate" numeric pairs with beat/miss.
+- **Source hierarchy + dedup grouping** — near-duplicate headlines are grouped into one event whose
+  primary is the highest-authority, freshest member.
+
+This layer is **informational only** — it never approves a trade or bypasses a deterministic gate.
+News still enters the decision solely through the confirmation-gated catalyst factor above; the
+structured events are for the human reading the board, not a back door into the score.
+
 ---
 
 ## 8. Options-flow decay — recent prints dominate

@@ -435,14 +435,32 @@
       const earn = p.earnings_date
         ? `<div>Earnings</div><div class="${p.earnings_before_expiry ? "neg" : ""}">${p.earnings_date}${p.earnings_before_expiry ? " ⚠ before expiry" : " (after expiry)"}</div>`
         : "";
+      const popCls = p.probability_of_profit == null ? "" : p.probability_of_profit < 0.4 ? "neg" : p.probability_of_profit < 0.55 ? "warn" : "pos";
+      const popRow = p.probability_of_profit == null ? "" :
+        `<div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div><span class="${popCls}">${(p.probability_of_profit*100).toFixed(0)}%</span></div>`;
       const summary = `<div class="kv">
         <div>Entry (net)</div><div>$${fmt(p.entry_net)}${p.current_net != null ? ` → now $${fmt(p.current_net)}` : ""}</div>
         <div>Max loss / profit</div><div>$${fmt(p.max_loss_usd, 0)} / ${p.max_profit_usd == null ? "uncapped" : "$" + fmt(p.max_profit_usd, 0)}</div>
         <div>Breakeven</div><div>${be}${beDist}</div>
+        ${popRow}
         <div>Net greeks</div><div>${greeks}</div>
         <div>DTE / time stop</div><div>${p.dte == null ? "—" : p.dte} / ${p.time_stop_dte == null ? "—" : p.time_stop_dte} DTE</div>
         ${earn}
       </div>`;
+      const whatBanner = p.what_has_to_happen
+        ? `<div class="banner" style="margin-top:8px"><b>What has to happen:</b> ${p.what_has_to_happen}</div>` : "";
+      // Reversal-risk read while you HOLD it (deterministic, informational).
+      const pth = p.thesis;
+      const pRiskCls = pth && pth.reversal_risk === "high" ? "regime-stop"
+        : pth && pth.reversal_risk === "elevated" ? "regime-warn" : "regime-ok";
+      const posThesis = !pth ? "" : `<div class="card" style="margin-top:8px"><h3>Thesis check
+        <span class="muted" style="font-size:12px">while you hold</span></h3>
+        <div><b>${pth.headline}</b></div>
+        ${pth.todays_context ? `<div style="margin-top:6px">${pth.todays_context}</div>` : ""}
+        ${pth.invalidation ? `<div class="muted" style="margin-top:6px"><b>Invalidation:</b> ${pth.invalidation}${pth.distance_to_invalidation_pct!=null?` — <b>${pth.distance_to_invalidation_pct}%</b> away`:""}</div>` : ""}
+        <div class="banner ${pRiskCls}" style="margin-top:8px"><b>Reversal risk: ${pth.reversal_risk.toUpperCase()}</b>
+          ${(pth.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${pth.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
+        <div class="proxy-note" style="margin-top:6px">Informational only — a deterministic read from the daily trend + today's move.</div></div>`;
       // Mark-closed control — retained in history for review.
       const closeCtl = `<div class="card" style="margin-top:8px"><b>Mark this position closed</b>
         <div style="margin-top:6px">Exit net / share
@@ -453,7 +471,7 @@
         <div class="muted" style="margin-top:4px">Realized P&amp;L = (exit − entry) × 100 × contracts. Kept in history for model review. <b>Delete</b> removes it entirely (use for bad data).</div></div>`;
       const open = state.expandedPos.has(p.id);
       return `<tr class="detail" id="pd-${p.id}"${open ? "" : " hidden"}><td colspan="8">
-        ${warn}${summary}<div style="margin-top:8px"></div>${closeTicket}${exitPlan}${closeCtl}</td></tr>`;
+        ${warn}${summary}${whatBanner}${posThesis}<div style="margin-top:8px"></div>${closeTicket}${exitPlan}${closeCtl}</td></tr>`;
     }
 
     // Manual "add a position I hold" form — no broker connection needed.
@@ -688,16 +706,21 @@
       const legRows = (rec.legs||[]).map(l =>
         `<tr><td>${l.action.replace(/_/g," ")}</td><td><strong>${l.strike}${l.option_type[0].toUpperCase()}</strong></td>
          <td>${l.expiration}</td><td class="num">${l.quantity}</td></tr>`).join("");
+      // Market-implied odds: a low, capped-payoff bet reads honestly here.
+      const popCls = c.probability_of_profit == null ? "" : c.probability_of_profit < 0.4 ? "neg" : c.probability_of_profit < 0.55 ? "warn" : "pos";
+      const popTxt = c.probability_of_profit == null ? "—" : `<span class="${popCls}">${(c.probability_of_profit*100).toFixed(0)}%</span>`;
       const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
         <div class="kv">
           <div>Structure</div><div>${rec.description||"—"}</div>
           <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
           <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
           <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>
+          <div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div>${popTxt}</div>
           <div>Est. net / share</div><div>${rec.est_fill_net==null?"—":"$"+rec.est_fill_net}</div>
         </div>
+        ${c.what_has_to_happen?`<div class="banner" style="margin-top:8px"><b>What has to happen:</b> ${c.what_has_to_happen}</div>`:""}
         ${legRows?`<table style="margin-top:8px"><thead><tr><th>Leg</th><th>Contract</th><th>Expiry</th><th class="num">Qty</th></tr></thead><tbody>${legRows}</tbody></table>`:`<div class="muted" style="margin-top:6px">${rec.liquidity_note||"No tradeable contract."}</div>`}
-        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. No order is placed.</div></div>`;
+        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. Chance of profit is the market-implied odds from IV — informational, never a gate. No order is placed.</div></div>`;
       // Structure-aware exit plan (Phase 3) surfaced for the human managing the trade.
       const ep = c.exit_plan;
       const pxOf = v => v == null ? "" : ` <span class="muted">@ ${v}</span>`;

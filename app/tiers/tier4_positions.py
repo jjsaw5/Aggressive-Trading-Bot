@@ -45,6 +45,19 @@ def mark_net_per_share(plan: TradePlan, chain: OptionChain) -> float | None:
     return round(net, 4)
 
 
+def position_iv(plan: TradePlan, chain: OptionChain) -> float | None:
+    """Representative implied vol for the structure — the mean IV across the legs
+    the chain can price. Our legs sit near the money, so this is a fair ATM proxy
+    for the probability-of-profit model. None when no leg carried a usable IV."""
+    by_key = _chain_index(chain)
+    ivs = []
+    for leg in plan.legs:
+        c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
+        if c is not None and c.implied_volatility and c.implied_volatility > 0:
+            ivs.append(c.implied_volatility)
+    return round(sum(ivs) / len(ivs), 4) if ivs else None
+
+
 def position_greeks(
     plan: TradePlan, chain: OptionChain
 ) -> tuple[float | None, float | None]:
@@ -137,6 +150,7 @@ class Tier4PositionMonitor:
             net_delta=net_delta,
             net_theta=net_theta,
             breakeven_distance_pct=be_dist,
+            atm_iv=position_iv(trade.trade_plan, chain),
         )
 
     async def run(self, trades: list[PaperTrade]) -> list[PositionRisk]:

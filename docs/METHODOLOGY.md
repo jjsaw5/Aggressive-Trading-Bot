@@ -418,6 +418,25 @@ daily-trend TSLA signal now lands in a ~30-DTE defined-risk structure that match
 of a ~4-DTE spread that can't. Catalyst/intraday strategies are unaffected — they stay near-term. Same
 detection, same score; only the instrument's horizon changes to fit the thesis (`is_swing`).
 
+**Market-implied odds + "what has to happen."** A capped-payoff directional debit can look attractive
+on reward-to-risk while being a genuine long shot. So every sized candidate (and every open position)
+carries two informational reads, computed the same way in both places:
+
+- **Chance of profit (implied)** — the risk-neutral P(finish past break-even) under a zero-drift
+  lognormal at expiry, from the structure's break-even, the marked implied volatility, and days to
+  expiry (`app/quant/probability.py`, a closed-form normal CDF — deterministic, no simulation). Our
+  debit structures are one-directional with a single break-even, so this is exact for their shape.
+  Positions read their IV from the marked legs; candidates from the IV context. A ~33% number on the
+  TSLA bet is exactly what a human should see before holding it.
+- **What has to happen** — the concrete move in plain English: *"TSLA must fall 3.0% to $367.55 by
+  expiry (3d) just to break even."* Derived from the live spot, the break-even, and the days left.
+
+Both are INFORMATIONAL — they never change the score or gate a trade. On open positions the same
+`DirectionalThesis` the scanner builds is recomputed each refresh from the symbol's daily trend + today's
+move, so a **reversal-risk** read (counter-trend day, near-invalidation) rides along while you *hold*
+the trade — surfaced as a "Thesis check" card and a row warning. (Structural / wrong-instrument warnings
+stay an entry-time concern; the position view already flags earnings-before-expiry on its own.)
+
 **Observability (v2).** Every candidate carries `signal_metadata` — the detection's structured
 diagnostics (ORB breakout buffer/extension + confirmation mode, VWAP-quality sub-scores) — surfaced on
 the board's detail view alongside the scoring-model version, the structure-aware exit plan, and the

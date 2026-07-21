@@ -262,6 +262,7 @@ class ShortDurationCandidate(BaseModel):
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)
     reject_reasons: list[str] = Field(default_factory=list)
+    freshness: dict | None = None  # data-freshness result at scoring (state/track-aware)
     reward_to_risk: float | None = None
     # The actionable sized structure (source of truth for opening a paper trade).
     trade_plan: TradePlan | None = None

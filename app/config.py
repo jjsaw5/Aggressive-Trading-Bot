@@ -111,6 +111,18 @@ class Settings(BaseSettings):
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
     short_duration_0dte_cutoff_et: str = "15:00"  # no new 0DTE entries after 3pm ET
+    # Data-freshness budgets (seconds), tighter for trade-ready 0DTE candidates.
+    # Broad screening tolerates stale data; armed/open 0DTE needs seconds-fresh quotes.
+    freshness_broad_underlying_s: int = 120
+    freshness_broad_option_s: int = 120
+    freshness_watchlist_underlying_s: int = 30
+    freshness_watchlist_option_s: int = 30
+    freshness_armed_underlying_s: int = 8    # 0DTE armed/triggered underlying (5-10)
+    freshness_armed_option_s: int = 12       # selected option quote (5-15)
+    freshness_armed_internals_s: int = 30    # market internals for a trade-ready name
+    freshness_armed_account_s: int = 60      # broker/account state
+    freshness_open_underlying_s: int = 5     # open 0DTE position
+    freshness_open_option_s: int = 10
     # Dedicated fast-loop cadences (seconds). Only runs when SHORT_DURATION_ENABLED
     # and during RTH. Position monitoring is the most frequent (capital at risk).
     short_duration_loop_tick_seconds: int = 5

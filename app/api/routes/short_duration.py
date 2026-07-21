@@ -100,6 +100,41 @@ async def market_participation() -> WatchlistParticipation:
     return participation
 
 
+@router.get("/candidates/{candidate_id}/freshness")
+async def candidate_freshness(candidate_id: str) -> dict:
+    """Re-evaluate the candidate's underlying-quote freshness against the policy for
+    its current state/track — the check a trade-ready 0DTE name must pass."""
+    from app.domain.enums import CandidateState
+    from app.shortduration.freshness import evaluate_quote_freshness
+
+    cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
+    if cand is None:
+        raise HTTPException(404, "Candidate not found.")
+    try:
+        q = await registry.market_data_provider().get_quote(cand.symbol)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Quote unavailable: {exc}") from exc
+    fr = evaluate_quote_freshness(
+        as_of=q.as_of, delayed_minutes=q.delayed_minutes, now=datetime.now(UTC),
+        capability="underlying", state=CandidateState(cand.state) if cand.state else None,
+        dte=DTECategory(cand.dte_category), provider=q.source,
+    )
+    return {"candidate_id": candidate_id, "state": cand.state.value if hasattr(cand.state, "value") else cand.state,
+            "recorded": cand.freshness, "current": fr.model_dump()}
+
+
+@router.get("/configuration/freshness")
+async def configuration_freshness() -> dict:
+    """The data-freshness budgets (seconds) by use-case and capability."""
+    return {
+        "broad": {"underlying_s": settings.freshness_broad_underlying_s, "option_s": settings.freshness_broad_option_s},
+        "watchlist": {"underlying_s": settings.freshness_watchlist_underlying_s, "option_s": settings.freshness_watchlist_option_s},
+        "armed_0dte": {"underlying_s": settings.freshness_armed_underlying_s, "option_s": settings.freshness_armed_option_s,
+                       "internals_s": settings.freshness_armed_internals_s, "account_s": settings.freshness_armed_account_s},
+        "open_0dte": {"underlying_s": settings.freshness_open_underlying_s, "option_s": settings.freshness_open_option_s},
+    }
+
+
 @router.get("/levels/{symbol}", response_model=IntradayLevels)
 async def symbol_levels(symbol: str) -> IntradayLevels:
     lv = await service.get_symbol_levels(symbol)

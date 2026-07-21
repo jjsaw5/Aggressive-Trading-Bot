@@ -38,7 +38,6 @@ from app.shortduration.risk import (
     evaluate_entry_gates,
     short_duration_policy,
 )
-from app.shortduration.scoring.data_quality import quote_is_stale
 from app.shortduration.scoring.engine import score_candidate
 from app.shortduration.scoring.flow_decay import analyze_flow
 from app.shortduration.scoring.news import best_news_score
@@ -131,7 +130,7 @@ async def build_context(
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
-    contract: ContractResult, gate: EntryGate,
+    contract: ContractResult, gate: EntryGate, fresh=None,
 ) -> ShortDurationCandidate:
     reasons = list(det.reasons)
     reasons.append(card.summary)
@@ -163,6 +162,7 @@ def _candidate_from(
         news_score=news,
         entry_allowed=gate.allowed,
         entry_notes=gate.reasons,
+        freshness=fresh.model_dump() if fresh is not None else None,
         reject_reasons=[r.value for r in contract.reject_reasons] + [r.value for r in gate.reject_reasons],
     )
 
@@ -206,7 +206,19 @@ async def _score_symbol(
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
 
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
-    stale = quote_is_stale(ctx, now)
+    # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
+    # quote, not the 120s broad-screen budget. Evaluate at the trade-ready
+    # (armed) budget for 0DTE, watchlist budget otherwise.
+    from app.domain.enums import CandidateState
+    from app.shortduration.freshness import evaluate_quote_freshness
+    fresh = evaluate_quote_freshness(
+        as_of=ctx.quote.as_of if ctx.quote else None,
+        delayed_minutes=ctx.quote.delayed_minutes if ctx.quote else None,
+        now=now, capability="underlying",
+        state=CandidateState.ARMED if dte == DTECategory.ZERO_DTE else CandidateState.WATCHLIST,
+        dte=dte, provider=ctx.quote.source if ctx.quote else None,
+    )
+    stale = not fresh.ok
     equity = settings.account_equity_usd
     # Real daily posture from today's closed paper trades feeds the loss/halt gates.
     from app.shortduration.paper import daily_risk_state
@@ -234,7 +246,7 @@ async def _score_symbol(
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
-            scored.append((det, card, news, contract, gate))
+            scored.append((det, card, news, contract, gate, fresh))
     return scored
 
 
@@ -266,8 +278,8 @@ async def run_detection(
     for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
         if not scored:
             continue
-        for det, card, news, contract, gate in scored:
-            cand = _candidate_from(det, symbol, now, card, news, regime, contract, gate)
+        for det, card, news, contract, gate, fresh in scored:
+            cand = _candidate_from(det, symbol, now, card, news, regime, contract, gate, fresh)
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
             for tr in transitions:

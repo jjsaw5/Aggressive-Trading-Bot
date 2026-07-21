@@ -227,6 +227,51 @@ class ContractRecommendation(BaseModel):
     liquidity_note: str = ""
 
 
+class ShortDurationExitTarget(BaseModel):
+    """One profit target: a structural level and/or an option-premium mark to work."""
+
+    label: str  # PT1 | PT2 | runner
+    trigger: str = ""  # structural description (e.g. "prior swing high", "1.0x OR width")
+    underlying_price: float | None = None
+    premium_net: float | None = None  # per-share option net to sell/close at
+    pnl_usd: float | None = None  # position P&L if closed here
+    note: str = ""
+
+
+class ShortDurationExitPlan(BaseModel):
+    """A structure-aware exit plan for a short-duration trade.
+
+    Intraday trades are managed off PRICE STRUCTURE (VWAP, opening range, swing
+    levels) and the CLOCK, not just premium percentages. This plan names the
+    primary/secondary invalidations, a premium backstop (the defined-risk hard
+    floor), staged profit targets, a time stop (an intraday clock for 0DTE, DTE
+    for multi-day), a momentum stop, and explicit end-of-day / expiration actions —
+    so a 0DTE is never accidentally carried into settlement. Premium-priced fields
+    are populated only once a contract is sized; the structural plan stands alone.
+    """
+
+    dte_category: DTECategory
+    direction: Direction
+    # Structural invalidations (underlying price levels + the rule).
+    primary_invalidation: str
+    primary_invalidation_price: float | None = None
+    secondary_invalidation: str = ""
+    secondary_invalidation_price: float | None = None
+    # Premium backstop — the defined-risk hard floor on the option itself.
+    premium_stop_net: float | None = None  # per-share net to exit
+    premium_stop_note: str = ""
+    # Staged profit taking.
+    profit_targets: list[ShortDurationExitTarget] = Field(default_factory=list)
+    # Time & momentum discipline.
+    time_stop: str = ""
+    momentum_stop: str = ""
+    # End-of-life handling — critical for 0DTE.
+    eod_action: str = ""
+    expiration_action: str = ""
+    max_loss_usd: float | None = None
+    rationale: str = ""
+
+
 class ShortDurationCandidate(BaseModel):
     """A short-duration trade candidate with full explanation and lifecycle.
 
@@ -270,6 +315,8 @@ class ShortDurationCandidate(BaseModel):
     reward_to_risk: float | None = None
     # The actionable sized structure (source of truth for opening a paper trade).
     trade_plan: TradePlan | None = None
+    # Structure-aware exit plan (Phase 3): how to manage/close the trade intraday.
+    exit_plan: ShortDurationExitPlan | None = None
 
 
 class ShortDurationTrade(BaseModel):

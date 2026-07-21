@@ -328,6 +328,24 @@ Entry is gated on time-of-day and account state; exits are pre-planned at contra
 Sizing is anchored to a `$2,000` account, max 15% total account risk. On a book that small, the $60
 0DTE cap is deliberately protective — one bad 0DTE is 3% of capital.
 
+**Structure-aware exit plan (v2).** Beyond the premium-percentage defaults, every short-duration
+candidate now carries a `ShortDurationExitPlan` that manages the trade off *price structure* and *the
+clock*, not just the option's premium (`GET /short-duration/candidates/{id}/exit-plan`):
+
+- **Primary / secondary invalidation** — underlying levels that kill the thesis (a decisive close back
+  through VWAP, back inside the opening range), each naming the other as the softer warning.
+- **Premium backstop** — the defined-risk hard floor, lifted from the sized contract's core exit plan,
+  so a slow bleed still has a mechanical cut.
+- **PT1 / PT2** — staged profit taking (PT1 is an explicit scale-out; the runner trails to PT2/structure).
+- **Time stop** — an intraday clock for 0DTE (flatten by 15:45 ET), a DTE stop for 1–5DTE.
+- **Momentum stop** — exit after N consecutive 1-min closes against the structural level.
+- **EOD / expiration actions** — explicit and mandatory for 0DTE (`close_all`; never held to a
+  settlement print / pin), a reassess-and-time-stop for multi-day.
+
+The structural plan stands alone even before a contract is sized; the premium-priced fields fill in
+once a `TradePlan` exists. Thresholds live in config (`short_duration_0dte_flatten_et`,
+`short_duration_momentum_stop_bars`, `short_duration_pt1_scale_pct`, `short_duration_1_5dte_time_stop_dte`).
+
 ---
 
 ## 11. Candidate lifecycle — a transparent state machine

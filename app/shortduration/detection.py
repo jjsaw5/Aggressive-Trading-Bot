@@ -130,14 +130,17 @@ async def build_context(
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
-    contract: ContractResult, gate: EntryGate, fresh=None,
+    contract: ContractResult, gate: EntryGate, fresh=None, levels=None,
 ) -> ShortDurationCandidate:
+    from app.shortduration.exit_plan import build_short_duration_exit_plan
+
     reasons = list(det.reasons)
     reasons.append(card.summary)
     if contract.recommendation.description:
         reasons.append(f"Contract: {contract.recommendation.description}.")
     plan = contract.plan
     rr = plan.risk.reward_to_risk if plan and plan.risk else None
+    exit_plan = build_short_duration_exit_plan(det, levels=levels, plan=plan)
     return ShortDurationCandidate(
         id=uuid.uuid4().hex[:12],
         symbol=symbol,
@@ -153,6 +156,7 @@ def _candidate_from(
         targets=det.targets,
         contract=contract.recommendation,
         trade_plan=plan,
+        exit_plan=exit_plan,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -281,7 +285,10 @@ async def run_detection(
         if not scored:
             continue
         for det, card, news, contract, gate, fresh in scored:
-            cand = _candidate_from(det, symbol, now, card, news, regime, contract, gate, fresh)
+            cand = _candidate_from(
+                det, symbol, now, card, news, regime, contract, gate, fresh,
+                levels=_ctx.levels,
+            )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
             for tr in transitions:

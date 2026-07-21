@@ -27,6 +27,7 @@ from app.domain.shortduration import (
     IntradayLevels,
     NewsItem,
     ShortDurationCandidate,
+    ShortDurationExitPlan,
     ShortDurationRegimeState,
     ShortDurationTrade,
 )
@@ -121,6 +122,19 @@ async def candidate_freshness(candidate_id: str) -> dict:
     )
     return {"candidate_id": candidate_id, "state": cand.state.value if hasattr(cand.state, "value") else cand.state,
             "recorded": cand.freshness, "current": fr.model_dump()}
+
+
+@router.get("/candidates/{candidate_id}/exit-plan", response_model=ShortDurationExitPlan)
+async def candidate_exit_plan(candidate_id: str) -> ShortDurationExitPlan:
+    """The structure-aware exit plan for a candidate: structural invalidations,
+    premium backstop, staged profit targets, time/momentum stops, and explicit
+    end-of-day / expiration actions."""
+    cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
+    if cand is None:
+        raise HTTPException(404, "Candidate not found.")
+    if cand.exit_plan is None:
+        raise HTTPException(404, "No exit plan on this candidate.")
+    return cand.exit_plan
 
 
 @router.get("/configuration/freshness")

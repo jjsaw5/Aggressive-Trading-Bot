@@ -212,3 +212,19 @@ lands with Phase 2/3/4 (scoring version, exit plans, paper-book columns).
 **Phase 2 delivered:** all three strategy-logic items. Migration `0004` (scoring versions). New
 endpoint `/short-duration/configuration/scoring`. Tests: 333 pass, lint clean. Docs: `METHODOLOGY.md`
 §5–6 + V2 plan. On branch `claude/options-trading-platform-cl6v83`; not yet merged.
+
+---
+
+## Phase 3 — IN PROGRESS (risk & trade management)
+
+1. **Structure-aware ExitPlan** — DELIVERED. New `ShortDurationExitPlan` domain model +
+   `app/shortduration/exit_plan.py` builder, attached to every candidate. Manages the trade off price
+   structure and the clock, not just premium %: primary/secondary invalidation (VWAP / opening-range
+   levels), a premium backstop lifted from the sized contract's core exit plan, staged PT1/PT2 (PT1 an
+   explicit scale-out), an intraday time stop for 0DTE (flatten 15:45 ET) / DTE stop for 1–5DTE, a
+   momentum stop (N consecutive 1-min closes against structure), and explicit EOD/expiration actions
+   (`close_all` for 0DTE — never held to settlement). The structural plan stands alone before a contract
+   is sized. Config `short_duration_0dte_flatten_et` / `_momentum_stop_bars` / `_pt1_scale_pct` /
+   `_1_5dte_time_stop_dte`. New endpoint `GET /short-duration/candidates/{id}/exit-plan`. No migration
+   (rides in the candidate JSON payload). (7 exit-plan unit tests + API coverage; 340 total.)
+2. **AccountStateProvider + risk-aware sizing** — pending.

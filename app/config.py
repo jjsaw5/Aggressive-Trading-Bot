@@ -151,6 +151,13 @@ class Settings(BaseSettings):
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
     short_duration_0dte_cutoff_et: str = "15:00"  # no new 0DTE entries after 3pm ET
+    # Structure-aware exit plan (Phase 3). 0DTE is managed off structure + the clock:
+    # flatten well before the close (no settlement/pin risk), and cut on a momentum
+    # stop after N consecutive 1-min closes against the structural level.
+    short_duration_0dte_flatten_et: str = "15:45"  # force flat by here (0DTE, even at a loss)
+    short_duration_momentum_stop_bars: int = 2     # consecutive 1-min closes against structure
+    short_duration_pt1_scale_pct: float = 0.5      # take partial (scale) at PT1
+    short_duration_1_5dte_time_stop_dte: int = 1   # close/roll a 1-5DTE by this DTE
     # Data-freshness budgets (seconds), tighter for trade-ready 0DTE candidates.
     # Broad screening tolerates stale data; armed/open 0DTE needs seconds-fresh quotes.
     freshness_broad_underlying_s: int = 120

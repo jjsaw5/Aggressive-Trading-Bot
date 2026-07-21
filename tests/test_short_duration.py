@@ -272,6 +272,14 @@ def test_short_duration_scan_and_state_machine() -> None:
     bad = c.post(f"/short-duration/candidates/{cid}/frobnicate")
     assert bad.status_code == 400  # unknown action rejected
 
+    # Structure-aware exit plan is attached and served.
+    ep = c.get(f"/short-duration/candidates/{cid}/exit-plan")
+    assert ep.status_code == 200
+    body = ep.json()
+    assert body["primary_invalidation"] and body["momentum_stop"]
+    assert body["eod_action"] and body["expiration_action"]
+    assert c.get("/short-duration/candidates/deadbeef00/exit-plan").status_code == 404
+
 
 def test_short_duration_options_and_flow_endpoints() -> None:
     from fastapi.testclient import TestClient

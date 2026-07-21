@@ -38,7 +38,6 @@ from app.shortduration.risk import (
     evaluate_entry_gates,
     short_duration_policy,
 )
-from app.shortduration.scoring.data_quality import quote_is_stale
 from app.shortduration.scoring.engine import score_candidate
 from app.shortduration.scoring.flow_decay import analyze_flow
 from app.shortduration.scoring.news import best_news_score
@@ -52,6 +51,16 @@ from app.shortduration.strategies.vwap_continuation import VWAPTrendContinuation
 from app.tiers.concurrency import bounded_gather
 
 log = get_logger(__name__)
+
+
+async def _account_state(now: datetime):
+    """Best-effort capital snapshot for sizing. On any provider error, returns None
+    so sizing falls back to the configured equity (never blocks a scan)."""
+    try:
+        return await registry.account_state_provider().get_account_state(now=now)
+    except Exception as exc:  # noqa: BLE001 - sizing degrades to the constant, never fails the scan
+        log.warning("sd_account_state_failed", error=str(exc))
+        return None
 
 
 def _target_expirations(dte: DTECategory, today: date) -> list[date]:
@@ -115,8 +124,13 @@ async def build_context(
     if ctx.daily and ctx.daily.candles:
         vols = [c.volume for c in ctx.daily.candles if c.volume]
         avg_vol = sum(vols) / len(vols) if vols else None
+    from app.shortduration.levels import rth_bars
+    from app.shortduration.volume_profile import relative_volume_now
+    rv_reading = await relative_volume_now(
+        symbol, rth_bars(ctx.bars_1m), now=now, avg_daily_volume=avg_vol
+    )
     ctx.levels = compute_intraday_levels(
-        symbol, ctx.bars_1m, avg_daily_volume=avg_vol, now=now,
+        symbol, ctx.bars_1m, avg_daily_volume=avg_vol, relative_volume_reading=rv_reading, now=now,
         opening_range_minutes=settings.short_duration_opening_range_minutes,
         source=registry.intraday_provider().name,
     )
@@ -126,14 +140,17 @@ async def build_context(
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
-    contract: ContractResult, gate: EntryGate,
+    contract: ContractResult, gate: EntryGate, fresh=None, levels=None,
 ) -> ShortDurationCandidate:
+    from app.shortduration.exit_plan import build_short_duration_exit_plan
+
     reasons = list(det.reasons)
     reasons.append(card.summary)
     if contract.recommendation.description:
         reasons.append(f"Contract: {contract.recommendation.description}.")
     plan = contract.plan
     rr = plan.risk.reward_to_risk if plan and plan.risk else None
+    exit_plan = build_short_duration_exit_plan(det, levels=levels, plan=plan)
     return ShortDurationCandidate(
         id=uuid.uuid4().hex[:12],
         symbol=symbol,
@@ -149,6 +166,7 @@ def _candidate_from(
         targets=det.targets,
         contract=contract.recommendation,
         trade_plan=plan,
+        exit_plan=exit_plan,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -156,8 +174,11 @@ def _candidate_from(
         reasons=reasons,
         scorecard=card,
         news_score=news,
+        scoring_model_version=card.model_version,
+        risk_policy_version=card.risk_policy_version,
         entry_allowed=gate.allowed,
         entry_notes=gate.reasons,
+        freshness=fresh.model_dump() if fresh is not None else None,
         reject_reasons=[r.value for r in contract.reject_reasons] + [r.value for r in gate.reject_reasons],
     )
 
@@ -179,7 +200,7 @@ async def _detect_symbol(
 
 
 async def _score_symbol(
-    symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime
+    symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime, account=None
 ) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None, ContractResult, EntryGate]]:
     """For a symbol that produced setups: fetch the chain + IV once, select a
     sized defined-risk contract per detection, score with the real structure, and
@@ -201,8 +222,23 @@ async def _score_symbol(
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
 
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
-    stale = quote_is_stale(ctx, now)
-    equity = settings.account_equity_usd
+    # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
+    # quote, not the 120s broad-screen budget. Evaluate at the trade-ready
+    # (armed) budget for 0DTE, watchlist budget otherwise.
+    from app.domain.enums import CandidateState
+    from app.shortduration.freshness import evaluate_quote_freshness
+    fresh = evaluate_quote_freshness(
+        as_of=ctx.quote.as_of if ctx.quote else None,
+        delayed_minutes=ctx.quote.delayed_minutes if ctx.quote else None,
+        now=now, capability="underlying",
+        state=CandidateState.ARMED if dte == DTECategory.ZERO_DTE else CandidateState.WATCHLIST,
+        dte=dte, provider=ctx.quote.source if ctx.quote else None,
+    )
+    stale = not fresh.ok
+    # Sizing reads the real capital picture (equity minus committed risk), not a
+    # bare constant. Falls back to configured equity if no account state was passed.
+    equity = account.equity_usd if account is not None else settings.account_equity_usd
+    open_risk = account.committed_risk_usd if account is not None else 0.0
     # Real daily posture from today's closed paper trades feeds the loss/halt gates.
     from app.shortduration.paper import daily_risk_state
     daily = await asyncio.to_thread(daily_risk_state, now)
@@ -219,7 +255,8 @@ async def _score_symbol(
         if chain is not None:
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
-                policy=short_duration_policy(det.dte_category), as_of=now.date(),
+                policy=short_duration_policy(det.dte_category, equity=equity),
+                as_of=now.date(), open_risk_usd=open_risk,
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
@@ -229,7 +266,7 @@ async def _score_symbol(
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
-            scored.append((det, card, news, contract, gate))
+            scored.append((det, card, news, contract, gate, fresh))
     return scored
 
 
@@ -244,7 +281,11 @@ async def run_detection(
 
     now = now or datetime.now(UTC)
     syms = universe or short_duration_universe(dte == DTECategory.ZERO_DTE)
-    regime, _levels, _breadth = await build_market_regime(now=now, universe=syms)
+    regime, _levels, _part, _internals = await build_market_regime(now=now, universe=syms)
+    # One capital snapshot for the whole scan: sizing draws on real equity minus
+    # committed (open + pending) risk, subject to buying power. Best-effort — a
+    # provider miss falls back to the configured constant inside _score_symbol.
+    account = await _account_state(now)
 
     with use_priority(Priority.CANDIDATES):
         detected = await bounded_gather(
@@ -253,7 +294,7 @@ async def run_detection(
         )
         with_dets = [(s, ctx, dets) for r in detected if r for (s, ctx, dets) in [r] if dets]
         scored_rows = await bounded_gather(
-            [_score_symbol(s, ctx, dets, now) for (s, ctx, dets) in with_dets],
+            [_score_symbol(s, ctx, dets, now, account) for (s, ctx, dets) in with_dets],
             limit=settings.tier_concurrency,
         )
 
@@ -261,8 +302,11 @@ async def run_detection(
     for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
         if not scored:
             continue
-        for det, card, news, contract, gate in scored:
-            cand = _candidate_from(det, symbol, now, card, news, regime, contract, gate)
+        for det, card, news, contract, gate, fresh in scored:
+            cand = _candidate_from(
+                det, symbol, now, card, news, regime, contract, gate, fresh,
+                levels=_ctx.levels,
+            )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
             for tr in transitions:

@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes import (
+    account,
     alerts,
     backtest,
     dashboard,
@@ -76,6 +77,7 @@ app.include_router(outcomes.router)
 app.include_router(tiers.router)
 app.include_router(metrics.router)
 app.include_router(positions.router)
+app.include_router(account.router)
 app.include_router(short_duration.router)
 app.include_router(research.router)
 app.include_router(dashboard.router)

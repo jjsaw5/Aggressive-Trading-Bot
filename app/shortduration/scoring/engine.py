@@ -9,6 +9,7 @@ candidate is conservatively scored and visibly so.
 
 from __future__ import annotations
 
+from app.config import get_settings
 from app.domain.enums import Direction, DTECategory
 from app.domain.options import IVContext, OptionChain
 from app.shortduration.scoring import components as C
@@ -19,9 +20,33 @@ from app.shortduration.strategies.base import SetupContext, StrategyDetection
 
 _MISSING_RAW = 0.25  # a missing factor is scored low + flagged, not neutral
 
-# (key, label, weight, component-getter). Weights sum to 100 per model.
 _ZERO_DTE = "0dte"
 _SHORT_DTE = "1-5dte"
+
+# Human labels for each factor key. Weights themselves are configurable + versioned
+# (settings.scoring_0dte_weights / scoring_1_5dte_weights); the ordered key list per
+# model is fixed here so a weight config can't silently drop or reorder a factor.
+_LABELS: dict[str, str] = {
+    "price_structure": "Intraday price structure",
+    "market_alignment": "Market & sector alignment",
+    "relvol_momentum": "Relative volume & momentum",
+    "flow_quality": "Options-flow quality",
+    "contract_liquidity": "Contract liquidity",
+    "volatility": "Volatility suitability",
+    "catalyst_news": "Catalyst & news",
+    "risk_reward": "Risk/reward & execution",
+    "daily_trend": "Daily & intraday trend",
+    "multi_session_flow": "Multi-session flow",
+    "technical_entry": "Technical-entry quality",
+}
+_ZERO_DTE_KEYS = (
+    "price_structure", "market_alignment", "relvol_momentum", "flow_quality",
+    "contract_liquidity", "volatility", "catalyst_news", "risk_reward",
+)
+_SHORT_DTE_KEYS = (
+    "daily_trend", "catalyst_news", "multi_session_flow", "market_alignment",
+    "volatility", "contract_liquidity", "technical_entry", "risk_reward",
+)
 
 
 def _factor(key: str, label: str, weight: float, comp: ScoreComponent) -> FactorScore:
@@ -46,45 +71,35 @@ def score_candidate(
     d: Direction = detection.direction
     flow = flow_analysis or analyze_flow(ctx.flow, ctx.now, d)
     dte = detection.dte_category
+    settings = get_settings()
 
-    # Shared components.
-    c_price = C.price_structure(ctx, d)
-    c_market = C.market_alignment(ctx, d)
-    c_relvol = C.relvol_momentum(ctx, d)
-    c_flow = C.flow_quality(flow, d)
-    c_liq = C.contract_liquidity(chain, d)
-    c_vol = C.volatility_suitability(iv)
-    c_cat = C.catalyst_news(ctx, news_score)
-    c_rr = C.risk_reward(ctx, d, trade_plan)
-    c_daily = C.daily_trend(ctx, d)
-    c_msflow = C.multi_session_flow(flow)
-    c_tech = C.technical_entry(ctx, d)
+    # Shared components, keyed for lookup against the configured weights.
+    comps: dict[str, ScoreComponent] = {
+        "price_structure": C.price_structure(ctx, d),
+        "market_alignment": C.market_alignment(ctx, d),
+        "relvol_momentum": C.relvol_momentum(ctx, d),
+        "flow_quality": C.flow_quality(flow, d),
+        "contract_liquidity": C.contract_liquidity(chain, d),
+        "volatility": C.volatility_suitability(iv),
+        "catalyst_news": C.catalyst_news(ctx, news_score),
+        "risk_reward": C.risk_reward(ctx, d, trade_plan),
+        "daily_trend": C.daily_trend(ctx, d),
+        "multi_session_flow": C.multi_session_flow(flow),
+        "technical_entry": C.technical_entry(ctx, d),
+    }
+    c_flow = comps["flow_quality"]
+    c_liq = comps["contract_liquidity"]
+    c_market = comps["market_alignment"]
+    c_rr = comps["risk_reward"]
     dq = compute_data_quality(ctx, chain=chain, iv=iv, dte=dte)
 
     if dte == DTECategory.ZERO_DTE:
-        factors = [
-            _factor("price_structure", "Intraday price structure", 20, c_price),
-            _factor("market_alignment", "Market & sector alignment", 15, c_market),
-            _factor("relvol_momentum", "Relative volume & momentum", 15, c_relvol),
-            _factor("flow_quality", "Options-flow quality", 15, c_flow),
-            _factor("contract_liquidity", "Contract liquidity", 15, c_liq),
-            _factor("volatility", "Volatility suitability", 10, c_vol),
-            _factor("catalyst_news", "Catalyst & news", 5, c_cat),
-            _factor("risk_reward", "Risk/reward & execution", 5, c_rr),
-        ]
-        cat = _ZERO_DTE
+        keys, weights, cat = _ZERO_DTE_KEYS, settings.scoring_0dte_weights, _ZERO_DTE
     else:
-        factors = [
-            _factor("daily_trend", "Daily & intraday trend", 20, c_daily),
-            _factor("catalyst_news", "Catalyst & news", 15, c_cat),
-            _factor("multi_session_flow", "Multi-session flow", 15, c_msflow),
-            _factor("market_alignment", "Market & sector alignment", 10, c_market),
-            _factor("volatility", "Volatility suitability", 10, c_vol),
-            _factor("contract_liquidity", "Contract liquidity", 10, c_liq),
-            _factor("technical_entry", "Technical-entry quality", 10, c_tech),
-            _factor("risk_reward", "Risk/reward", 10, c_rr),
-        ]
-        cat = _SHORT_DTE
+        keys, weights, cat = _SHORT_DTE_KEYS, settings.scoring_1_5dte_weights, _SHORT_DTE
+    factors = [
+        _factor(k, _LABELS[k], float(weights.get(k, 0.0)), comps[k]) for k in keys
+    ]
 
     total = round(sum(f.points for f in factors), 2)
     normalized = total / 100.0
@@ -113,4 +128,7 @@ def score_candidate(
     return ScoreCard(
         dte_category=cat, total=total, overall_confidence=overall, factors=factors,
         components=components, data_quality=round(data_quality, 3), summary=summary,
+        model_version=settings.scoring_model_version,
+        risk_policy_version=settings.risk_policy_version,
+        weights={k: float(weights.get(k, 0.0)) for k in keys},
     )

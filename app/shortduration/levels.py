@@ -94,14 +94,27 @@ def compute_intraday_levels(
     premarket_high: float | None = None,
     premarket_low: float | None = None,
     avg_daily_volume: float | None = None,
+    relative_volume_reading=None,
     now: datetime,
     source: str = "unknown",
 ) -> IntradayLevels:
-    """Assemble an `IntradayLevels` from a symbol's intraday bars + references."""
+    """Assemble an `IntradayLevels` from a symbol's intraday bars + references.
+
+    `relative_volume_reading` (a volume_profile.RelativeVolumeReading) overrides
+    the flat proration when the caller has built a time-of-day profile; its method
+    and estimated flag are carried onto the levels for transparency."""
     d = session_date or _et(now).date()
     session = rth_bars(bars)
     last = session[-1].close if session else None
     or_high, or_low = opening_range(session, opening_range_minutes, d)
+    if relative_volume_reading is not None:
+        rv, rv_method, rv_est = (
+            relative_volume_reading.value,
+            relative_volume_reading.method,
+            relative_volume_reading.is_estimated,
+        )
+    else:
+        rv, rv_method, rv_est = relative_volume(session, d, avg_daily_volume), "flat_estimate", True
     return IntradayLevels(
         symbol=symbol.upper(),
         session_date=d,
@@ -114,7 +127,9 @@ def compute_intraday_levels(
         premarket_low=premarket_low,
         prior_day_high=prior_day_high,
         prior_day_low=prior_day_low,
-        relative_volume=relative_volume(session, d, avg_daily_volume),
+        relative_volume=rv,
+        relative_volume_method=rv_method if session else None,
+        relative_volume_estimated=rv_est,
         computed_at=now,
         source=source,
     )

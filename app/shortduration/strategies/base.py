@@ -61,6 +61,9 @@ class StrategyDetection:
     invalidation: str
     reasons: list[str] = field(default_factory=list)
     targets: list[float] = field(default_factory=list)
+    # Structured, strategy-specific diagnostics for observability (e.g. the
+    # breakout buffer, extension, confirmation mode). Never used for gating.
+    metadata: dict[str, float | str] = field(default_factory=dict)
 
 
 # --- shared helpers ----------------------------------------------------------

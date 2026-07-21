@@ -146,6 +146,10 @@ class ShortDurationCandidateRow(Base, TimestampMixin):
     score: Mapped[float] = mapped_column(Float, default=0.0)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Reproducibility (Phase 2): promoted so a book can be filtered/compared by the
+    # scoring-model + risk-policy version each candidate was scored under.
+    scoring_model_version: Mapped[str] = mapped_column(String(48), nullable=False, default="")
+    risk_policy_version: Mapped[str] = mapped_column(String(48), nullable=False, default="")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 

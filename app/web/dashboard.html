@@ -517,7 +517,9 @@
       return `<div class="banner ${cls}">
         <h2>${REGIME_LABEL[r.regime] || r.regime} ${gate}</h2>
         <div class="sub">Confidence ${(r.confidence * 100).toFixed(0)}% · ${idx}
-          · breadth ${r.breadth_above_vwap_pct == null ? "—" : (r.breadth_above_vwap_pct * 100).toFixed(0) + "% > VWAP"}
+          · ${r.internals_breadth_score != null
+              ? "internals " + (r.internals_breadth_score * 100).toFixed(0) + "% <span class=\"pos\">real</span>"
+              : "participation " + (r.watchlist_participation_pct == null ? "—" : (r.watchlist_participation_pct * 100).toFixed(0) + "%") + " <span class=\"proxy-note\">proxy</span>"}
           · vol ${r.vol_reading == null ? "—" : (r.vol_reading * 100).toFixed(0) + "%"}</div>
         <div style="margin-top:6px">${nxt}</div>
         <div class="factors">${facts}</div>
@@ -605,7 +607,8 @@
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
         <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
-          · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}</div>
+          · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
+          ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
         <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + gate + contract;
       let factors = `<div class="muted">No scorecard.</div>`;

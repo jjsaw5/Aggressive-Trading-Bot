@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
-from pydantic import computed_field, field_validator, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -83,9 +83,59 @@ class Settings(BaseSettings):
     short_duration_enabled: bool = False
     short_duration_opening_range_minutes: int = 15
     short_duration_max_dte: int = 5
+    # Opening-range breakout (0DTE) — adaptive to the session's own volatility.
+    # The breakout buffer scales with the opening-range width (a wider, more volatile
+    # open needs more room before a break counts) but never falls below a floor.
+    # Anti-chase rejects entries already extended too far past the level (poor R:R,
+    # you're paying up into the move). Confirmation mode controls how a break is proven.
+    orb_min_rel_volume: float = 1.3
+    orb_min_break_pct: float = 0.0005          # floor buffer as a fraction of price (0.05%)
+    orb_buffer_pct_of_range: float = 0.10      # adaptive buffer = 10% of the OR width
+    orb_max_extension_pct_of_range: float = 1.0  # reject if extended > 1.0x OR width past the level
+    orb_confirmation_mode: str = "close"       # "close" | "immediate" | "retest"
+    orb_retest_band_pct_of_range: float = 0.25  # retest = pulled back within 25% of OR width of level
+    orb_require_vwap_alignment: bool = True
+    # VWAP-trend continuation (0DTE) — quality-graded. Instead of a hard "never
+    # closed on the wrong side of VWAP" gate, the continuation is graded on six
+    # sub-scores (continuation/structure/vwap-hold/pullback/volume/controlled-reclaim)
+    # and must clear a minimum composite. A brief, cleanly reclaimed VWAP loss is
+    # allowed via the controlled-reclaim sub-score; a whipsaw still fails.
+    vwap_min_abs_slope_pct: float = 0.0002     # per-bar close slope (fraction of price)
+    vwap_lookback_bars: int = 20
+    vwap_min_quality: float = 0.45             # minimum composite quality to fire
+    # Intraday volume profile (time-of-day relative volume). When enabled, relvol
+    # uses a historical per-minute median cumulative-volume baseline instead of the
+    # flat proration. A thin/absent profile degrades to a LABELLED estimate (or
+    # unavailable) — never silently equivalent-quality.
+    short_duration_use_volume_profile: bool = True
+    short_duration_volume_profile_sessions: int = 20        # lookback (completed sessions)
+    short_duration_volume_profile_min_sessions: int = 10    # minimum usable before "estimated"
+    short_duration_volume_profile_use_median: bool = True   # median vs mean baseline
+    short_duration_volume_profile_cache_minutes: int = 360  # profile is stable within a day
+    short_duration_volume_profile_allow_fallback: bool = True
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7
+    # Scoring model — weights are configurable + versioned. Every candidate records
+    # the model + risk-policy version it was scored under (Phase 2). Weights per
+    # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and
+    # contract liquidity, less on raw flow. 1-5DTE is unchanged.
+    scoring_model_version: str = "sd-scoring-2026.07-v2"
+    risk_policy_version: str = "sd-risk-2026.07-v1"
+    scoring_0dte_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "price_structure": 22, "market_alignment": 15, "relvol_momentum": 15,
+            "flow_quality": 10, "contract_liquidity": 18, "volatility": 10,
+            "catalyst_news": 5, "risk_reward": 5,
+        }
+    )
+    scoring_1_5dte_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "daily_trend": 20, "catalyst_news": 15, "multi_session_flow": 15,
+            "market_alignment": 10, "volatility": 10, "contract_liquidity": 10,
+            "technical_entry": 10, "risk_reward": 10,
+        }
+    )
     # Risk controls (Phase 4). Per-DTE per-trade risk %, tighter than the core
     # scanner; the absolute $ cap (max_defined_risk_per_trade_usd) still applies.
     short_duration_0dte_risk_pct: float = 0.03  # 2-3% baseline
@@ -101,6 +151,25 @@ class Settings(BaseSettings):
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
     short_duration_0dte_cutoff_et: str = "15:00"  # no new 0DTE entries after 3pm ET
+    # Structure-aware exit plan (Phase 3). 0DTE is managed off structure + the clock:
+    # flatten well before the close (no settlement/pin risk), and cut on a momentum
+    # stop after N consecutive 1-min closes against the structural level.
+    short_duration_0dte_flatten_et: str = "15:45"  # force flat by here (0DTE, even at a loss)
+    short_duration_momentum_stop_bars: int = 2     # consecutive 1-min closes against structure
+    short_duration_pt1_scale_pct: float = 0.5      # take partial (scale) at PT1
+    short_duration_1_5dte_time_stop_dte: int = 1   # close/roll a 1-5DTE by this DTE
+    # Data-freshness budgets (seconds), tighter for trade-ready 0DTE candidates.
+    # Broad screening tolerates stale data; armed/open 0DTE needs seconds-fresh quotes.
+    freshness_broad_underlying_s: int = 120
+    freshness_broad_option_s: int = 120
+    freshness_watchlist_underlying_s: int = 30
+    freshness_watchlist_option_s: int = 30
+    freshness_armed_underlying_s: int = 8    # 0DTE armed/triggered underlying (5-10)
+    freshness_armed_option_s: int = 12       # selected option quote (5-15)
+    freshness_armed_internals_s: int = 30    # market internals for a trade-ready name
+    freshness_armed_account_s: int = 60      # broker/account state
+    freshness_open_underlying_s: int = 5     # open 0DTE position
+    freshness_open_option_s: int = 10
     # Dedicated fast-loop cadences (seconds). Only runs when SHORT_DURATION_ENABLED
     # and during RTH. Position monitoring is the most frequent (capital at risk).
     short_duration_loop_tick_seconds: int = 5
@@ -169,6 +238,14 @@ class Settings(BaseSettings):
     provider_intraday: ProviderName = ProviderName.MOCK
     provider_news: ProviderName = ProviderName.MOCK
     provider_econ_calendar: ProviderName = ProviderName.MOCK
+    # Real market internals: "mock", or anything else -> the FMP+UW composite feed
+    # (sector breadth + options-flow tide). Set PROVIDER_MARKET_INTERNALS=composite.
+    provider_market_internals: str = "mock"
+    # Account-state source that sizing reads: "paper" (default; the simulated book:
+    # configured base + realized paper P&L, minus open defined-risk) or "fallback"
+    # (the configured equity as a bare constant). Both are UNVERIFIED — a live broker
+    # feed lands later and is the only verified source. Live execution stays gated.
+    provider_account_state: str = "paper"
 
     # --- Provider credentials ---
     fmp_api_key: str | None = None

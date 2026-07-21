@@ -42,6 +42,7 @@ from app.providers.base import (
     IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
+    MarketInternalsProvider,
     NewsProvider,
     OptionsChainProvider,
     OptionsFlowProvider,
@@ -103,6 +104,7 @@ class MockProvider(
     NewsProvider,
     EconomicCalendarProvider,
     BrokerageProvider,
+    MarketInternalsProvider,
 ):
     meta = _META
 
@@ -356,10 +358,23 @@ class MockProvider(
 
     # --- Intraday / news / economic calendar (deterministic) ---
     async def get_intraday_bars(
-        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None,
+        from_date: date | None = None, to_date: date | None = None,
     ) -> list[IntradayBar]:
         """A synthetic RTH session (09:30-16:00 ET) of seeded GBM bars, so VWAP,
-        opening range, and relative volume can be computed deterministically."""
+        opening range, and relative volume can be computed deterministically. A
+        `from_date`/`to_date` range yields concatenated weekday sessions (used to
+        build the intraday volume profile in tests)."""
+        if session_date is None and (from_date is not None or to_date is not None):
+            end = to_date or self._now.astimezone(_ET_TZ).date()
+            start = from_date or (end - timedelta(days=30))
+            out: list[IntradayBar] = []
+            d = start
+            while d <= end:
+                if d.weekday() < 5:
+                    out.extend(await self.get_intraday_bars(symbol, interval=interval, session_date=d))
+                d = d + timedelta(days=1)
+            return out
         step = 1 if interval == "1min" else 5
         d = session_date or self._now.astimezone(_ET_TZ).date()
         open_et = datetime.combine(d, time(9, 30), tzinfo=_ET_TZ)
@@ -446,3 +461,16 @@ class MockProvider(
         if to_date is not None:
             events = [e for e in events if e.scheduled_at.date() <= to_date]
         return events
+
+    async def get_market_internals(self, *, now: datetime | None = None):
+        """Deterministic mildly-bullish internals so the regime path is exercised."""
+        from app.domain.internals import MarketInternals
+        return MarketInternals(
+            as_of=now or self._now, source="mock", is_authoritative=True,
+            sectors_total=11, sectors_advancing=7, sector_breadth_pct=0.636,
+            avg_sector_change_pct=0.21, net_call_premium=2.5e7, net_put_premium=-8.0e6,
+            net_volume=90000.0, tide_direction=0.35, sectors_call_heavy=7, sector_flow_total=11,
+            sector_flow_pct=0.636,
+            unavailable_fields=["advance_decline_issues", "tick", "up_down_volume_ratio", "new_highs_minus_lows"],
+            breadth_score=0.61,
+        )

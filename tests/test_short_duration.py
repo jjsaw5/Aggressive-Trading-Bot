@@ -13,7 +13,7 @@ from app.domain.shortduration import (
     NewsItem,
 )
 from app.providers.mock import MockProvider
-from app.shortduration.breadth import compute_breadth
+from app.shortduration.breadth import compute_breadth, compute_participation
 from app.shortduration.levels import (
     opening_range,
     relative_volume,
@@ -106,15 +106,33 @@ def _levels_for(change_map: dict[str, bool]) -> dict[str, IntradayLevels]:
 
 def test_regime_bull_trend_when_aligned() -> None:
     now = datetime.now(UTC)
+    lv = _levels_for({"SPY": True, "QQQ": True, "IWM": True})
     reg = compute_regime(
         index_change_pct={"SPY": 0.8, "QQQ": 0.9, "IWM": 0.7},
-        index_levels=_levels_for({"SPY": True, "QQQ": True, "IWM": True}),
-        breadth=compute_breadth(list(_levels_for({"SPY": True, "QQQ": True, "IWM": True}).values())),
+        index_levels=lv,
+        participation=compute_participation(list(lv.values())),
         vol_reading=0.3, next_event=None, now=now,
     )
     assert reg.regime == ShortDurationRegime.BULL_TREND
     assert reg.allow_new_trades is True
-    assert reg.confidence > 0.6
+    # Proxy-only participation caps confidence at 0.6 (no real internals available).
+    assert reg.confidence == 0.6 and reg.breadth_is_proxy is True
+
+
+def test_regime_confidence_exceeds_cap_with_real_internals() -> None:
+    from app.domain.internals import MarketInternals
+
+    now = datetime.now(UTC)
+    lv = _levels_for({"SPY": True, "QQQ": True, "IWM": True})
+    internals = MarketInternals(as_of=now, source="test", is_authoritative=True, breadth_score=0.8)
+    reg = compute_regime(
+        index_change_pct={"SPY": 0.8, "QQQ": 0.9, "IWM": 0.7},
+        index_levels=lv, participation=compute_participation(list(lv.values())),
+        internals=internals, vol_reading=0.3, next_event=None, now=now,
+    )
+    # Real internals lift the cap and earn the full breadth bonus.
+    assert reg.regime == ShortDurationRegime.BULL_TREND
+    assert reg.confidence > 0.6 and reg.breadth_is_proxy is False
 
 
 def test_regime_bear_trend_when_aligned_down() -> None:
@@ -253,6 +271,14 @@ def test_short_duration_scan_and_state_machine() -> None:
 
     bad = c.post(f"/short-duration/candidates/{cid}/frobnicate")
     assert bad.status_code == 400  # unknown action rejected
+
+    # Structure-aware exit plan is attached and served.
+    ep = c.get(f"/short-duration/candidates/{cid}/exit-plan")
+    assert ep.status_code == 200
+    body = ep.json()
+    assert body["primary_invalidation"] and body["momentum_stop"]
+    assert body["eod_action"] and body["expiration_action"]
+    assert c.get("/short-duration/candidates/deadbeef00/exit-plan").status_code == 404
 
 
 def test_short_duration_options_and_flow_endpoints() -> None:

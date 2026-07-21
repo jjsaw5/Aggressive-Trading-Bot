@@ -16,6 +16,8 @@ import abc
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from app.domain.account import AccountState
+from app.domain.internals import MarketInternals
 from app.domain.market import (
     CatalystEvent,
     EarningsEvent,
@@ -146,10 +148,13 @@ class IntradayProvider(Provider):
 
     @abc.abstractmethod
     async def get_intraday_bars(
-        self, symbol: str, *, interval: str = "1min", session_date: date | None = None
+        self, symbol: str, *, interval: str = "1min", session_date: date | None = None,
+        from_date: date | None = None, to_date: date | None = None,
     ) -> list[IntradayBar]:
         """Chronological bars for the given interval ("1min"|"5min"). When
-        `session_date` is None, returns the most recent session available."""
+        `session_date` is None, returns the most recent session available. Pass
+        `from_date`/`to_date` for a multi-session range (used to build the
+        historical intraday volume profile); `session_date` takes precedence."""
         ...
 
 
@@ -197,3 +202,23 @@ class BrokerageProvider(Provider):
         ``list[(symbol, list[ImportedLeg])]`` for the position importer. Default
         is empty; override in a broker that can read positions with cost basis."""
         return []
+
+
+class MarketInternalsProvider(Provider):
+    """Real market-wide internals (breadth of price + flow). Distinct from
+    watchlist participation, which is a proxy over our own universe. A provider
+    returns whatever it can source and marks the rest unavailable — it must never
+    fabricate a neutral/bullish value for a field it cannot read."""
+
+    @abc.abstractmethod
+    async def get_market_internals(self, *, now: datetime | None = None) -> MarketInternals: ...
+
+
+class AccountStateProvider(Provider):
+    """The capital picture sizing reads: equity, buying power, and committed
+    (open + pending) defined risk. A provider marks `verified=True` ONLY for a
+    real, authenticated broker feed; paper and configured-fallback implementations
+    are always unverified so nothing becomes live-executable from a constant."""
+
+    @abc.abstractmethod
+    async def get_account_state(self, *, now: datetime | None = None) -> AccountState: ...

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db import repository
 from app.domain.enums import CandidateState, DTECategory
+from app.domain.internals import MarketInternals
 from app.domain.options import FlowAlert, OptionChain
 from app.domain.shortduration import (
     CandidateTransition,
@@ -26,6 +27,7 @@ from app.domain.shortduration import (
     IntradayLevels,
     NewsItem,
     ShortDurationCandidate,
+    ShortDurationExitPlan,
     ShortDurationRegimeState,
     ShortDurationTrade,
 )
@@ -33,7 +35,7 @@ from app.domain.trades import OrderProposal
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.providers import registry
 from app.shortduration import service
-from app.shortduration.breadth import BreadthProxy
+from app.shortduration.breadth import WatchlistParticipation
 from app.shortduration.detection import run_detection
 
 router = APIRouter(prefix="/short-duration", tags=["short-duration"])
@@ -49,7 +51,9 @@ _MANUAL_TRANSITIONS = {
 
 class RegimeResponse(BaseModel):
     regime: ShortDurationRegimeState
-    breadth: BreadthProxy
+    participation: WatchlistParticipation      # our-universe proxy
+    internals: MarketInternals | None = None   # real market internals, when available
+    breadth: WatchlistParticipation            # deprecated alias of `participation`
     levels: list[IntradayLevels]
 
 
@@ -76,10 +80,95 @@ class ConfigResponse(BaseModel):
 # --- Market context ---------------------------------------------------------
 @router.get("/market-regime", response_model=RegimeResponse)
 async def market_regime() -> RegimeResponse:
-    regime, levels, breadth = await service.build_market_regime()
+    regime, levels, participation, internals = await service.build_market_regime()
     return RegimeResponse(
-        regime=regime, breadth=breadth, levels=sorted(levels.values(), key=lambda x: x.symbol)
+        regime=regime, participation=participation, internals=internals, breadth=participation,
+        levels=sorted(levels.values(), key=lambda x: x.symbol),
     )
+
+
+@router.get("/market/internals")
+async def market_internals() -> MarketInternals | None:
+    """Real market-wide internals (sector breadth + options-flow tide). Fields not
+    available on the current provider keys are returned null + listed."""
+    return await service._market_internals(datetime.now(UTC))
+
+
+@router.get("/market/participation", response_model=WatchlistParticipation)
+async def market_participation() -> WatchlistParticipation:
+    """Watchlist participation — a PROXY over our tracked universe, not exchange breadth."""
+    _regime, _levels, participation, _internals = await service.build_market_regime()
+    return participation
+
+
+@router.get("/candidates/{candidate_id}/freshness")
+async def candidate_freshness(candidate_id: str) -> dict:
+    """Re-evaluate the candidate's underlying-quote freshness against the policy for
+    its current state/track — the check a trade-ready 0DTE name must pass."""
+    from app.domain.enums import CandidateState
+    from app.shortduration.freshness import evaluate_quote_freshness
+
+    cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
+    if cand is None:
+        raise HTTPException(404, "Candidate not found.")
+    try:
+        q = await registry.market_data_provider().get_quote(cand.symbol)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Quote unavailable: {exc}") from exc
+    fr = evaluate_quote_freshness(
+        as_of=q.as_of, delayed_minutes=q.delayed_minutes, now=datetime.now(UTC),
+        capability="underlying", state=CandidateState(cand.state) if cand.state else None,
+        dte=DTECategory(cand.dte_category), provider=q.source,
+    )
+    return {"candidate_id": candidate_id, "state": cand.state.value if hasattr(cand.state, "value") else cand.state,
+            "recorded": cand.freshness, "current": fr.model_dump()}
+
+
+@router.get("/candidates/{candidate_id}/exit-plan", response_model=ShortDurationExitPlan)
+async def candidate_exit_plan(candidate_id: str) -> ShortDurationExitPlan:
+    """The structure-aware exit plan for a candidate: structural invalidations,
+    premium backstop, staged profit targets, time/momentum stops, and explicit
+    end-of-day / expiration actions."""
+    cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
+    if cand is None:
+        raise HTTPException(404, "Candidate not found.")
+    if cand.exit_plan is None:
+        raise HTTPException(404, "No exit plan on this candidate.")
+    return cand.exit_plan
+
+
+@router.get("/configuration/freshness")
+async def configuration_freshness() -> dict:
+    """The data-freshness budgets (seconds) by use-case and capability."""
+    return {
+        "broad": {"underlying_s": settings.freshness_broad_underlying_s, "option_s": settings.freshness_broad_option_s},
+        "watchlist": {"underlying_s": settings.freshness_watchlist_underlying_s, "option_s": settings.freshness_watchlist_option_s},
+        "armed_0dte": {"underlying_s": settings.freshness_armed_underlying_s, "option_s": settings.freshness_armed_option_s,
+                       "internals_s": settings.freshness_armed_internals_s, "account_s": settings.freshness_armed_account_s},
+        "open_0dte": {"underlying_s": settings.freshness_open_underlying_s, "option_s": settings.freshness_open_option_s},
+    }
+
+
+@router.get("/configuration/scoring")
+async def configuration_scoring() -> dict:
+    """The active, versioned scoring weights per DTE model. Weights sum to 100.
+    Every candidate records the model + risk-policy version it was scored under."""
+    return {
+        "scoring_model_version": settings.scoring_model_version,
+        "risk_policy_version": settings.risk_policy_version,
+        "watchlist_score": settings.short_duration_watchlist_score,
+        "arm_score": settings.short_duration_arm_score,
+        "models": {
+            "0dte": {
+                "weights": dict(settings.scoring_0dte_weights),
+                "total": round(sum(settings.scoring_0dte_weights.values()), 2),
+            },
+            "1-5dte": {
+                "weights": dict(settings.scoring_1_5dte_weights),
+                "total": round(sum(settings.scoring_1_5dte_weights.values()), 2),
+            },
+        },
+    }
 
 
 @router.get("/levels/{symbol}", response_model=IntradayLevels)

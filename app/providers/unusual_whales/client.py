@@ -350,3 +350,35 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChain
             as_of=datetime.now(UTC),
             source="unusual_whales",
         )
+
+    # --- Market internals inputs (breadth of flow) ---
+    async def get_market_tide(self) -> dict[str, float]:
+        """Latest market-wide net options-premium tide (/api/market/market-tide):
+        net call vs put premium — a real breadth-of-flow signal."""
+        r = await self._http.get_json("/api/market/market-tide")
+        rows = r.get("data") if isinstance(r, dict) else r
+        if not isinstance(rows, list) or not rows:
+            return {}
+        last = rows[-1]  # series is chronological; take the most recent bar
+        return {
+            "net_call_premium": _f(last, "net_call_premium") or 0.0,
+            "net_put_premium": _f(last, "net_put_premium") or 0.0,
+            "net_volume": _f(last, "net_volume") or 0.0,
+        }
+
+    async def get_sector_flow(self) -> dict[str, int]:
+        """Sector-ETF flow breadth (/api/market/sector-etfs): how many sector ETFs
+        are call-premium heavy vs put-premium heavy."""
+        r = await self._http.get_json("/api/market/sector-etfs")
+        rows = r.get("data") if isinstance(r, dict) else r
+        if not isinstance(rows, list) or not rows:
+            return {}
+        call_heavy = total = 0
+        for row in rows:
+            cp, pp = _f(row, "call_premium"), _f(row, "put_premium")
+            if cp is None or pp is None:
+                continue
+            total += 1
+            if cp > pp:
+                call_heavy += 1
+        return {"sectors_call_heavy": call_heavy, "sector_flow_total": total} if total else {}

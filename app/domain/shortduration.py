@@ -54,6 +54,8 @@ class IntradayLevels(BaseModel):
     prior_day_high: float | None = None
     prior_day_low: float | None = None
     relative_volume: float | None = None  # session volume vs typical to-this-point
+    relative_volume_method: str | None = None  # "profile" | "flat_estimate" | "unavailable"
+    relative_volume_estimated: bool = False    # True when the baseline is a weak/flat fallback
     computed_at: datetime
     source: str = "unknown"
 
@@ -191,7 +193,11 @@ class ShortDurationRegimeState(BaseModel):
     spy_trend_pct: float | None = None
     qqq_trend_pct: float | None = None
     iwm_trend_pct: float | None = None
-    breadth_above_vwap_pct: float | None = None
+    breadth_above_vwap_pct: float | None = None  # the breadth signal actually used
+    breadth_is_proxy: bool = True                 # True when only watchlist participation was available
+    watchlist_participation_pct: float | None = None  # our-universe proxy (always a proxy)
+    internals_breadth_score: float | None = None  # real market-internals composite [0,1], or None
+    internals_source: str | None = None
     vol_reading: float | None = None
     as_of: datetime
     notes: str = ""
@@ -219,6 +225,51 @@ class ContractRecommendation(BaseModel):
     breakevens: list[float] = Field(default_factory=list)
     est_fill_net: float | None = None
     liquidity_note: str = ""
+
+
+class ShortDurationExitTarget(BaseModel):
+    """One profit target: a structural level and/or an option-premium mark to work."""
+
+    label: str  # PT1 | PT2 | runner
+    trigger: str = ""  # structural description (e.g. "prior swing high", "1.0x OR width")
+    underlying_price: float | None = None
+    premium_net: float | None = None  # per-share option net to sell/close at
+    pnl_usd: float | None = None  # position P&L if closed here
+    note: str = ""
+
+
+class ShortDurationExitPlan(BaseModel):
+    """A structure-aware exit plan for a short-duration trade.
+
+    Intraday trades are managed off PRICE STRUCTURE (VWAP, opening range, swing
+    levels) and the CLOCK, not just premium percentages. This plan names the
+    primary/secondary invalidations, a premium backstop (the defined-risk hard
+    floor), staged profit targets, a time stop (an intraday clock for 0DTE, DTE
+    for multi-day), a momentum stop, and explicit end-of-day / expiration actions —
+    so a 0DTE is never accidentally carried into settlement. Premium-priced fields
+    are populated only once a contract is sized; the structural plan stands alone.
+    """
+
+    dte_category: DTECategory
+    direction: Direction
+    # Structural invalidations (underlying price levels + the rule).
+    primary_invalidation: str
+    primary_invalidation_price: float | None = None
+    secondary_invalidation: str = ""
+    secondary_invalidation_price: float | None = None
+    # Premium backstop — the defined-risk hard floor on the option itself.
+    premium_stop_net: float | None = None  # per-share net to exit
+    premium_stop_note: str = ""
+    # Staged profit taking.
+    profit_targets: list[ShortDurationExitTarget] = Field(default_factory=list)
+    # Time & momentum discipline.
+    time_stop: str = ""
+    momentum_stop: str = ""
+    # End-of-life handling — critical for 0DTE.
+    eod_action: str = ""
+    expiration_action: str = ""
+    max_loss_usd: float | None = None
+    rationale: str = ""
 
 
 class ShortDurationCandidate(BaseModel):
@@ -252,13 +303,20 @@ class ShortDurationCandidate(BaseModel):
     # Scoring (Phase 3). scorecard carries the full explainable breakdown.
     scorecard: ScoreCard | None = None
     news_score: NewsScore | None = None
+    # Reproducibility (Phase 2): the scoring-model + risk-policy version this
+    # candidate was scored under. Promoted for filtering/A-B comparison across books.
+    scoring_model_version: str = ""
+    risk_policy_version: str = ""
     # Risk / entry gates (Phase 4).
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)
     reject_reasons: list[str] = Field(default_factory=list)
+    freshness: dict | None = None  # data-freshness result at scoring (state/track-aware)
     reward_to_risk: float | None = None
     # The actionable sized structure (source of truth for opening a paper trade).
     trade_plan: TradePlan | None = None
+    # Structure-aware exit plan (Phase 3): how to manage/close the trade intraday.
+    exit_plan: ShortDurationExitPlan | None = None
 
 
 class ShortDurationTrade(BaseModel):
@@ -362,6 +420,10 @@ class ScoreCard(BaseModel):
     components: dict[str, ScoreComponent] = Field(default_factory=dict)
     data_quality: float = 0.0  # [0,1]
     summary: str = ""
+    # Reproducibility (Phase 2): the exact weighting + policy this score was made under.
+    model_version: str = ""
+    risk_policy_version: str = ""
+    weights: dict[str, float] = Field(default_factory=dict)
 
     @property
     def normalized(self) -> float:

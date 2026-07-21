@@ -17,11 +17,13 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from app.db import repository
-from app.domain.enums import ExitReason, OptionAction, OptionType, PaperTradeStatus
+from app.domain.enums import Direction, ExitReason, OptionAction, OptionType, PaperTradeStatus
+from app.domain.shortduration import DirectionalThesis
 from app.domain.trades import PaperTrade
 from app.logging_config import get_logger
 from app.providers import registry
 from app.quant.analytics import structure_breakevens
+from app.quant.probability import probability_of_profit, what_has_to_happen
 from app.tiers.models import PositionRisk
 from app.tiers.tier4_positions import Tier4PositionMonitor
 
@@ -77,6 +79,12 @@ class PositionView(BaseModel):
     breakeven_distance_pct: float | None = None  # signed move to nearest breakeven
     earnings_date: str | None = None
     earnings_before_expiry: bool = False
+    # Market-implied odds + a plain-English "what has to happen" line (informational).
+    probability_of_profit: float | None = None
+    what_has_to_happen: str = ""
+    # Reversal-risk read on the OPEN position (deterministic, informational): is
+    # today's move against the trade, is price near its invalidation, etc.
+    thesis: DirectionalThesis | None = None
 
 
 class SyncResult(BaseModel):
@@ -153,7 +161,8 @@ def _closed_view(t: PaperTrade) -> ClosedPositionView:
 
 
 def _build_view(
-    t: PaperTrade, r: PositionRisk | None, earnings: date | None = None
+    t: PaperTrade, r: PositionRisk | None, earnings: date | None = None,
+    thesis: DirectionalThesis | None = None,
 ) -> PositionView:
     plan = t.trade_plan
     exps = [lg.expiration for lg in plan.legs]
@@ -208,6 +217,25 @@ def _build_view(
     if not breakevens:
         breakevens = structure_breakevens(plan)
 
+    # Market-implied odds + the concrete "what has to happen" line — from the live
+    # spot, the nearest break-even, the marked IV, and days to expiry.
+    bullish = plan.direction == Direction.BULLISH
+    spot = r.underlying_price if r else None
+    pop = None
+    what_has = ""
+    if spot and breakevens:
+        be = min(breakevens, key=lambda b: abs(b - spot))
+        days = dte if dte is not None else None
+        if r and r.atm_iv and days is not None:
+            pop = probability_of_profit(
+                spot=spot, breakeven=be, iv=r.atm_iv, days=float(days), bullish=bullish
+            )
+        what_has = what_has_to_happen(
+            symbol=t.symbol, spot=spot, breakeven=be, days=days, bullish=bullish
+        )
+    if thesis is not None and thesis.reversal_risk in ("elevated", "high"):
+        warnings.append(f"Reversal risk {thesis.reversal_risk.upper()} — see thesis.")
+
     return PositionView(
         id=t.id,
         source=t.scan_id,
@@ -235,6 +263,9 @@ def _build_view(
         breakeven_distance_pct=r.breakeven_distance_pct if r else None,
         earnings_date=str(earnings) if earnings else None,
         earnings_before_expiry=earnings_before,
+        probability_of_profit=pop,
+        what_has_to_happen=what_has,
+        thesis=thesis,
     )
 
 
@@ -258,6 +289,67 @@ async def _earnings_by_symbol(symbols: list[str]) -> dict[str, date]:
     return {sym: d for sym, d in results if d is not None}
 
 
+async def _theses_by_trade(trades: list[PaperTrade]) -> dict[str, DirectionalThesis]:
+    """A deterministic reversal-risk read per open position: fetch each symbol's
+    daily history + quote once, then build the same DirectionalThesis the scanner
+    uses — so a held trade shows a counter-trend day / near-invalidation warning
+    while you're carrying it. Best-effort; a provider miss just omits the thesis.
+
+    Structural (wrong-instrument) warnings are intentionally left to the entry-time
+    thesis: the position view already surfaces earnings-before-expiry on its own,
+    and horizon-mismatch is an entry decision, not a hold signal."""
+    from datetime import UTC, datetime
+
+    from app.domain.enums import DTECategory, ShortDurationRegime, ShortDurationStrategy
+    from app.domain.shortduration import ShortDurationRegimeState
+    from app.shortduration.strategies.base import SetupContext, StrategyDetection
+    from app.shortduration.thesis import build_directional_thesis
+
+    now = datetime.now(UTC)
+    market = registry.market_data_provider()
+    syms = sorted({t.symbol for t in trades})
+    if not syms:
+        return {}
+
+    async def _fetch(sym: str):
+        try:
+            daily = await market.get_price_history(sym, lookback_days=252)
+        except Exception as exc:  # noqa: BLE001 - thesis is optional context
+            log.warning("positions_thesis_daily_failed", symbol=sym, error=str(exc))
+            daily = None
+        try:
+            quote = await market.get_quote(sym)
+        except Exception:  # noqa: BLE001
+            quote = None
+        return sym, daily, quote
+
+    fetched = {sym: (daily, quote) for sym, daily, quote in await asyncio.gather(*(_fetch(s) for s in syms))}
+
+    regime = ShortDurationRegimeState(
+        regime=ShortDurationRegime.RANGE_BOUND, confidence=0.0, allow_new_trades=True, as_of=now
+    )
+    out: dict[str, DirectionalThesis] = {}
+    for t in trades:
+        daily, quote = fetched.get(t.symbol, (None, None))
+        if daily is None:
+            continue
+        chg = None
+        if quote and quote.prev_close:
+            chg = round((quote.price - quote.prev_close) / quote.prev_close * 100, 3)
+        ctx = SetupContext(symbol=t.symbol, now=now, regime=regime, daily=daily, quote=quote, change_pct=chg)
+        # A non-swing strategy + no earnings in ctx keeps this to the reversal-risk /
+        # daily read — the position view owns the earnings and instrument concerns.
+        det = StrategyDetection(
+            strategy=ShortDurationStrategy.CATALYST_CONTINUATION, dte_category=DTECategory.SHORT_DTE,
+            direction=t.trade_plan.direction, setup_score=0.0, entry_trigger="", invalidation="",
+        )
+        try:
+            out[t.id] = build_directional_thesis(ctx, det)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("positions_thesis_build_failed", symbol=t.symbol, error=str(exc))
+    return out
+
+
 @router.get("", response_model=list[PositionView])
 async def list_positions() -> list[PositionView]:
     trades = await run_in_threadpool(repository.list_paper_trades, 200)
@@ -275,8 +367,12 @@ async def list_positions() -> list[PositionView]:
     by_id = {r.trade_id: r for r in risks}
 
     earnings = await _earnings_by_symbol([t.symbol for t in open_trades])
+    theses = await _theses_by_trade(open_trades)
 
-    rows = [_build_view(t, by_id.get(t.id), earnings.get(t.symbol)) for t in open_trades]
+    rows = [
+        _build_view(t, by_id.get(t.id), earnings.get(t.symbol), theses.get(t.id))
+        for t in open_trades
+    ]
     # Surface risk first: stops/take-profits/expiries above holds.
     order = {"stop": 0, "take_profit": 1, "time_stop": 2, "unmarked": 3, "hold": 4}
     rows.sort(key=lambda x: (order.get(x.action, 5), -(x.pnl_usd or 0)))

@@ -149,10 +149,43 @@ async def build_context(
     return ctx
 
 
+def _candidate_odds(
+    det: StrategyDetection, symbol: str, contract: ContractResult, spot: float | None,
+    iv30: float | None, now: datetime,
+) -> tuple[float | None, str]:
+    """Market-implied P(profit) + a plain-English "what has to happen" line for a
+    sized contract. Both informational — from the structure's break-even, IV, and
+    days to expiry. Degrades to (None, "") when the structure or inputs are missing."""
+    from app.domain.enums import Direction
+    from app.quant.analytics import structure_breakevens
+    from app.quant.probability import probability_of_profit, what_has_to_happen
+
+    plan = contract.plan
+    if plan is None or not spot or spot <= 0:
+        return None, ""
+    bes = structure_breakevens(plan)
+    if not bes:
+        return None, ""
+    # One-directional debit structures have a single break-even; pick the one on
+    # the profitable side (nearest is that one for our long/vertical shapes).
+    breakeven = min(bes, key=lambda b: abs(b - spot))
+    bullish = det.direction == Direction.BULLISH
+    exps = [lg.expiration for lg in plan.legs]
+    days = (min(exps) - now.date()).days if exps else None
+    pop = None
+    if iv30 and days is not None:
+        pop = probability_of_profit(spot=spot, breakeven=breakeven, iv=iv30, days=float(days), bullish=bullish)
+    what = what_has_to_happen(
+        symbol=symbol, spot=spot, breakeven=breakeven, days=days, bullish=bullish,
+    )
+    return pop, what
+
+
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
     contract: ContractResult, gate: EntryGate, fresh=None, levels=None, thesis=None,
+    pop=None, what_has="",
 ) -> ShortDurationCandidate:
     from app.shortduration.exit_plan import build_short_duration_exit_plan
 
@@ -180,6 +213,8 @@ def _candidate_from(
         trade_plan=plan,
         exit_plan=exit_plan,
         thesis=thesis,
+        probability_of_profit=pop,
+        what_has_to_happen=what_has,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -215,7 +250,7 @@ async def _detect_symbol(
 
 async def _score_symbol(
     symbol: str, ctx: SetupContext, dets: list[StrategyDetection], now: datetime, account=None
-) -> list[tuple[StrategyDetection, ScoreCard, NewsScore | None, ContractResult, EntryGate]]:
+) -> list[tuple]:
     """For a symbol that produced setups: fetch the chain + IV once, select a
     sized defined-risk contract per detection, score with the real structure, and
     evaluate the entry gates. Chain fetches happen ONLY for symbols with
@@ -282,11 +317,14 @@ async def _score_symbol(
             quote_stale=stale, daily=daily, equity=equity,
         )
         thesis = build_directional_thesis(ctx, det, news_score=news)
+        spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)
+        iv30 = iv.iv30 if iv is not None else None
         for contract in contracts:
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
-            scored.append((det, card, news, contract, gate, fresh, thesis))
+            pop, what_has = _candidate_odds(det, symbol, contract, spot, iv30, now)
+            scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
     return scored
 
 
@@ -322,10 +360,10 @@ async def run_detection(
     for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
         if not scored:
             continue
-        for det, card, news, contract, gate, fresh, thesis in scored:
+        for det, card, news, contract, gate, fresh, thesis, pop, what_has in scored:
             cand = _candidate_from(
                 det, symbol, now, card, news, regime, contract, gate, fresh,
-                levels=_ctx.levels, thesis=thesis,
+                levels=_ctx.levels, thesis=thesis, pop=pop, what_has=what_has,
             )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)

@@ -105,6 +105,27 @@ def test_delete_removes_position_entirely() -> None:
     assert not any(h["id"] == tid for h in c.get("/positions/history").json())
 
 
+def test_position_view_exposes_intelligence_fields() -> None:
+    # A tracked position carries the informational odds + thesis fields, so the UI
+    # can show "chance of profit / what has to happen / reversal risk" while held.
+    c = _client()
+    tid = _import_long_call(c, symbol="AAPL", px=3.00).json()["id"]
+    try:
+        pos = next(p for p in c.get("/positions").json() if p["id"] == tid)
+        # Fields are always present (may be null when the mock chain lacks a spot/IV).
+        assert "probability_of_profit" in pos
+        assert "what_has_to_happen" in pos
+        assert "thesis" in pos
+        # When the chain marked a spot, the plain-English line is populated.
+        if pos.get("underlying_price"):
+            assert pos["what_has_to_happen"]
+        # When a daily history was available, the reversal-risk thesis is built.
+        if pos.get("thesis"):
+            assert pos["thesis"]["reversal_risk"] in ("low", "elevated", "high")
+    finally:
+        c.request("DELETE", f"/positions/{tid}")
+
+
 def test_multiple_positions_on_same_symbol_both_tracked() -> None:
     c = _client()
     # A long call AND a long put on the same underlying — distinct structures.

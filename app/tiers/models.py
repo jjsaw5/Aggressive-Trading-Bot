@@ -82,3 +82,6 @@ class PositionRisk(BaseModel):
     # Signed % the underlying must move to reach the nearest breakeven
     # (>0 = must rise, <0 = must fall).
     breakeven_distance_pct: float | None = None
+    # ATM implied vol from the marked legs, for the market-implied probability of
+    # profit (None when the chain carried no usable IV).
+    atm_iv: float | None = None

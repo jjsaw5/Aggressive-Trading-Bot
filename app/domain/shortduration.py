@@ -377,6 +377,10 @@ class ShortDurationCandidate(BaseModel):
     exit_plan: ShortDurationExitPlan | None = None
     # Plain-English directional thesis + reversal-risk flag (informational).
     thesis: DirectionalThesis | None = None
+    # Market-implied odds (informational): the risk-neutral P(profit at expiry) from
+    # the structure's break-even + IV, and a plain-English "what has to happen" line.
+    probability_of_profit: float | None = None
+    what_has_to_happen: str = ""
 
 
 class ShortDurationTrade(BaseModel):

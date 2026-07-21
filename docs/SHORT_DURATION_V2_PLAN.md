@@ -156,3 +156,26 @@ commit/PR. **Phases are executed one at a time, not in a single pass.**
 Every phase is independently revertable (add-only schema, additive config with safe defaults, new modules).
 Feature flags gate new behavior where it changes outputs (e.g. `SHORT_DURATION_USE_VOLUME_PROFILE`,
 `SHORT_DURATION_SCORING_VERSION`) so a phase can be dark-launched and reverted without a migration rollback.
+
+---
+
+## Phase 1 — DELIVERED (data quality)
+
+Shipped in tested increments:
+
+1. **Intraday time-of-day volume profile** — `app/shortduration/volume_profile.py`. Per-minute median
+   cumulative-volume baseline; honest `estimated`/`unavailable` fallback; feature-flagged. (9 tests)
+2. **Real market internals + participation rename** — `app/providers/internals.py`
+   (FMP sector breadth + UW market-tide + sector-flow). `BreadthProxy → WatchlistParticipation`;
+   regime uses real internals as primary, caps confidence at 0.60 on proxy-only, no proxy hard-gate.
+   `MarketInternalsProvider` capability + mock + config. (8 tests)
+3. **Data-freshness policy** — `app/shortduration/freshness.py`. State/track/use-case budgets
+   (broad 120s → armed-0DTE 8s → open-0DTE 5s); blocks stale/delayed/unknown-source trade-ready 0DTE.
+   Attached to each candidate. (10 tests)
+
+**Migration:** none required for Phase 1 — all new fields ride in existing JSON `payload`s or are
+computed live / in-memory cached (the promoted-columns + payload pattern from §A). Migration `0004`
+lands with Phase 2/3/4 (scoring version, exit plans, paper-book columns).
+
+**APIs added:** `/market/internals`, `/market/participation`, `/short-duration/candidates/{id}/freshness`,
+`/configuration/freshness`. **Tests:** 320 pass, lint clean. **Docs:** `METHODOLOGY.md` §3/§4/§10 updated.

@@ -79,7 +79,13 @@ or opaque.
 
 - **Index votes** — SPY, QQQ, IWM. Each casts a directional vote requiring *both* a move of at least
   `±0.10%` on the day *and* agreement with its own VWAP side.
-- **Breadth proxy** — the share of the tracked universe trading above session VWAP (caveat below).
+- **Market internals (v2, real)** — a composite [0,1] breadth score from FMP sector breadth (advancing
+  sectors) + Unusual Whales market tide (net call/put premium) + sector-flow breadth. This is the primary
+  breadth signal when available. Classic NYSE A/D-issues / TICK / up-down volume aren't on the current
+  keys and are modeled as `unavailable`, never faked.
+- **Watchlist participation (proxy)** — the share of *our tracked universe* above session VWAP. Used only
+  as a low-confidence contextual factor: it does **not** hard-gate the trend and **caps regime confidence
+  at 0.60** when it's the only breadth signal available.
 - **Volatility reading** — SPY IV rank, in [0,1].
 - **Event proximity** — minutes until the next scheduled economic event and its impact tier.
 
@@ -99,10 +105,11 @@ restriction) blocks entries. `reduce_size` trips on high IV-rank, high-vol-chop 
 regimes, or a high-impact event ≤60 min. Regime **confidence** starts at 0.35, adds up to +0.50 for
 index agreement and +0.15 if breadth data exists, capped at 0.50 for range-bound / chop regimes.
 
-> **Caveat — breadth is a proxy.** There is no true market-internals feed (NYSE advance/decline,
-> up/down volume, TICK). "Breadth" is approximated as the % of our own tracked universe above session
-> VWAP. It is labeled a proxy everywhere it appears, and a missing/thin reading never silently reads
-> as bearish — it simply stops gating.
+> **v2 update — real internals now separate the proxy.** A real market-internals composite (sector
+> breadth + options-flow tide) is now the primary breadth signal. Watchlist participation is explicitly
+> a proxy, no longer called "market breadth", never hard-gates the trend, and caps confidence at 0.60
+> when it's the only signal. Fields no provider can source (A/D issues, TICK) are surfaced as
+> `unavailable`, never faked. `GET /market/internals` and `/market/participation` expose both.
 
 ---
 
@@ -114,13 +121,17 @@ All three are pure functions over RTH (09:30–16:00 ET) 1-minute bars.
   Returns nothing if session volume is zero.
 - **Opening range** — high/low of the first 15 minutes (09:30–09:45 ET). Reported *only after the
   window closes* — no premature breakouts off a half-formed range.
-- **Relative volume** — a *documented approximation*. Expected cumulative volume is the 20-day
-  average pro-rated **flat** across the 390-minute session
-  (`expected = avg_daily_vol × minutes_elapsed / 390`); relvol = actual ÷ expected.
+- **Relative volume (v2, time-of-day profile)** — `relvol = today's cumulative volume ÷ historical
+  **median** cumulative volume at this minute-of-session`, built from the last N completed sessions
+  (median resists event-day outliers). This replaces the old flat proration and captures the real
+  U-shaped intraday curve. Under the minimum usable sessions it degrades to a **labeled `estimated`**
+  flat fallback (or `unavailable`) — never silently presented as equivalent quality, and a missing
+  reading can never inflate a score. The method + estimated flag are carried on every levels reading.
 
-> **Caveat — relative volume is flat-distribution.** Real intraday volume is U-shaped (heavy at open
-> and close). Our flat assumption **overstates** relvol mid-morning and **understates** it midday. A
-> true measure needs prior-day intraday volume profiles.
+> **Data note.** Building the profile needs multi-session intraday history. On the current FMP tier,
+> 1-minute history is ~1 session but 5-minute is longer, so the baseline is built from 5-minute bars;
+> when history is still short the reading is honestly marked `estimated` until a deeper-history intraday
+> source (or FMP tier) is available.
 
 ---
 
@@ -283,7 +294,7 @@ Entry is gated on time-of-day and account state; exits are pre-planned at contra
 | Daily-loss halt | Stop new trades past −5% on the day |
 | Consecutive-loss halt | Stop after 2 straight losses |
 | Concurrency | Max 2 concurrent short-duration positions |
-| Stale-quote gate | Quote must be un-delayed and ≤120s old to enter |
+| Freshness gate (v2) | State/track-aware: broad 120s → watchlist 30s → **armed 0DTE 8s** → open 0DTE 5s. A trade-ready 0DTE candidate is blocked on a quote older than its budget, on delayed data, or on an unknown source. `GET /configuration/freshness` and `/candidates/{id}/freshness`. |
 
 Sizing is anchored to a `$2,000` account, max 15% total account risk. On a book that small, the $60
 0DTE cap is deliberately protective — one bad 0DTE is 3% of capital.
@@ -329,11 +340,13 @@ enters manually. Approvals are explicit and attributed.
 We'd rather over-disclose. These are the design choices we're least sure about and would value a
 professional options trader's read on.
 
-1. **Breadth as a VWAP-share proxy.** No real market internals (A/D, TICK, up/down volume). Is a
-   universe-VWAP proxy acceptable to gate a regime on, or a liability?
-2. **Relative volume is flat-distribution.** We pro-rate the 20-day average linearly across the
-   session. Does the U-shaped reality distort the 0DTE relvol filters/scores enough to require a real
-   intraday profile?
+1. **Breadth internals (v2 — partially addressed).** Real internals (sector breadth + options-flow
+   tide) now drive the regime, and the VWAP-share reading is demoted to a capped, non-gating proxy.
+   Still missing on current keys: NYSE A/D-issues, TICK, up/down volume, new highs/lows (modeled as
+   `unavailable`). Is sector-breadth + flow-tide sufficient, or do you consider A/D/TICK essential?
+2. **Relative volume (v2 — addressed).** Now a historical time-of-day **median** cumulative-volume
+   profile, with an honest `estimated`/`unavailable` fallback. Open question: the current FMP tier
+   limits intraday history, so profiles often run `estimated` — worth upgrading the data source?
 3. **Scoring weights are hand-set, not fit.** The 100-point weights (§6) and thresholds (arm 0.70,
    watchlist 0.50) are informed guesses, unvalidated against outcomes. Are the *relative* weightings
    sensible for 0DTE vs 1–5DTE? What would you move?

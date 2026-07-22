@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from app.analytics.outcomes import resolve_underlying
+from app.analytics.outcomes import resolve_from_marks, resolve_underlying
 from app.analytics.snapshots import snapshot_from_candidate
 from app.db import repository
 from app.domain.candidates import TradeCandidate
@@ -70,7 +70,8 @@ async def resolve_pending(
         return []
 
     market = registry.market_data_provider()
-    # One quote per distinct symbol.
+    chains = registry.options_chain_provider()
+    # One quote per distinct symbol (for the proxy fallback + directional return).
     spot: dict[str, float] = {}
     for sym in {s.symbol for s in eligible}:
         try:
@@ -80,13 +81,30 @@ async def resolve_pending(
             log.warning("resolve_quote_failed", symbol=sym, error=str(exc))
 
     resolved: list[DecisionOutcome] = []
+    marks_used = 0
     for snap in eligible:
-        px = spot.get(snap.symbol)
-        if px is None:
-            continue
-        outcome = resolve_underlying(snap, spot_now=px, resolved_at=now)
+        outcome = None
+        # Preferred: mark the structure to the live chain (real option P&L, net of
+        # costs). Fetch only this decision's own expirations.
+        exps = sorted({lg.expiration for lg in snap.trade_plan.legs})
+        try:
+            chain = await chains.get_option_chain_for_expirations(snap.symbol, exps)
+            outcome = resolve_from_marks(snap, chain, resolved_at=now)
+        except Exception as exc:  # chain miss -> fall back to the underlying proxy
+            log.warning("resolve_chain_failed", symbol=snap.symbol, error=str(exc))
+        if outcome is not None:
+            marks_used += 1
+        else:
+            # Last resort: the directional underlying-vs-breakeven proxy.
+            px = spot.get(snap.symbol)
+            if px is None:
+                continue
+            outcome = resolve_underlying(snap, spot_now=px, resolved_at=now)
         await asyncio.to_thread(repository.save_outcome, outcome)
         resolved.append(outcome)
 
-    log.info("decisions_resolved", eligible=len(eligible), resolved=len(resolved))
+    log.info(
+        "decisions_resolved", eligible=len(eligible), resolved=len(resolved),
+        by_marks=marks_used, by_proxy=len(resolved) - marks_used,
+    )
     return resolved

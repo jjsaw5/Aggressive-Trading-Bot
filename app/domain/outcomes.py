@@ -92,10 +92,16 @@ class DecisionOutcome(BaseModel):
     underlying_return_pct: float | None = None
     direction_correct: bool | None = None  # None for non-directional structures
 
-    # Trade result
+    # Trade result. `realized_pnl_usd` is NET of costs (the number that matters);
+    # gross + costs are kept alongside so a good-gross / bad-net picker is visible.
     result: OutcomeResult = OutcomeResult.UNKNOWN
     realized_pnl_usd: float | None = None
+    realized_pnl_gross_usd: float | None = None
+    costs_usd: float | None = None
+    used_bs_fallback: bool = False  # a leg was Black-Scholes-marked, not real NBBO
 
-    # How the result was determined, for honesty about the proxy used.
-    outcome_source: str = "underlying_vs_breakeven"  # or "paper_trade"
+    # How the result was determined, for honesty about the proxy used:
+    # "option_marks" (real), "option_marks_bs_fallback", "paper_trade", or
+    # "underlying_vs_breakeven" (the last-resort directional proxy).
+    outcome_source: str = "underlying_vs_breakeven"
     note: str = ""

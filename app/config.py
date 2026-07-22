@@ -204,6 +204,14 @@ class Settings(BaseSettings):
     # account cannot size these spreads at a 2% ($40) cap. Tighten via env for a
     # more conservative stance (and pair it with a lower-priced universe).
     account_equity_usd: float = 2_000.0
+    # Realistic round-trip costs applied when a decision is resolved to a P&L, so
+    # the outcome ledger stores NET (not gross) — a picker that looks good gross can
+    # be underwater net. commission is per-contract per-leg per-transaction (open +
+    # close both charged); slippage crosses `slippage_spread_fraction` of the summed
+    # leg bid/ask spread over the round trip, with a per-share floor.
+    commission_per_contract_usd: float = 0.65
+    resolution_slippage_spread_fraction: float = 1.0
+    resolution_min_slippage_per_share: float = 0.01
     max_account_risk_pct: float = 0.15
     max_trade_risk_pct: float = 0.05
     max_concurrent_positions: int = 4

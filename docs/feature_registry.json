@@ -1,0 +1,129 @@
+{
+  "any_validated": false,
+  "n_trades": 218,
+  "n_features_tested": 7,
+  "alpha": 0.05,
+  "weights": {},
+  "corpus_note": "engine-selected corpus, eras=2021-22,2023-24,2025-26, net-of-cost label at k=1.0 (full spread).",
+  "verdicts": [
+    {
+      "feature": "dte",
+      "kind": "numeric",
+      "n_oos": 159,
+      "oos_rho": -0.0707,
+      "ci_lo": -0.2825,
+      "ci_hi": 0.135,
+      "reverse_rho": -0.0974,
+      "per_regime": {
+        "low": -0.0409,
+        "high": -0.1099,
+        "mid": -0.2674
+      },
+      "regime_sign_flip": false,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=-0.0707, CI [-0.2825, 0.135] straddles zero."
+    },
+    {
+      "feature": "iv_rank",
+      "kind": "numeric",
+      "n_oos": 159,
+      "oos_rho": -0.0686,
+      "ci_lo": -0.292,
+      "ci_hi": 0.1555,
+      "reverse_rho": 0.0599,
+      "per_regime": {
+        "low": -0.1595,
+        "high": 0.0411,
+        "mid": -0.2056
+      },
+      "regime_sign_flip": true,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=-0.0686, CI [-0.292, 0.1555] straddles zero."
+    },
+    {
+      "feature": "iv_level",
+      "kind": "numeric",
+      "n_oos": 159,
+      "oos_rho": 0.129,
+      "ci_lo": -0.0902,
+      "ci_hi": 0.3453,
+      "reverse_rho": 0.0862,
+      "per_regime": {
+        "low": 0.0706,
+        "high": 0.1543,
+        "mid": 0.2308
+      },
+      "regime_sign_flip": false,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=0.129, CI [-0.0902, 0.3453] straddles zero."
+    },
+    {
+      "feature": "entry_spread_pct",
+      "kind": "numeric",
+      "n_oos": 159,
+      "oos_rho": -0.0264,
+      "ci_lo": -0.2556,
+      "ci_hi": 0.2064,
+      "reverse_rho": -0.0103,
+      "per_regime": {
+        "low": -0.0374,
+        "high": -0.0843,
+        "mid": -0.0934
+      },
+      "regime_sign_flip": false,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=-0.0264, CI [-0.2556, 0.2064] straddles zero."
+    },
+    {
+      "feature": "spot_momentum",
+      "kind": "numeric",
+      "n_oos": 159,
+      "oos_rho": 0.0546,
+      "ci_lo": -0.1496,
+      "ci_hi": 0.2494,
+      "reverse_rho": -0.0214,
+      "per_regime": {
+        "low": 0.0974,
+        "high": 0.0935,
+        "mid": -0.3077
+      },
+      "regime_sign_flip": true,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=0.0546, CI [-0.1496, 0.2494] straddles zero."
+    },
+    {
+      "feature": "direction",
+      "kind": "categorical",
+      "n_oos": 159,
+      "oos_rho": 0.0978,
+      "ci_lo": -0.1149,
+      "ci_hi": 0.302,
+      "reverse_rho": 0.1471,
+      "per_regime": {
+        "low": 0.1223,
+        "high": 0.1267,
+        "mid": -0.0474
+      },
+      "regime_sign_flip": true,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=0.0978, CI [-0.1149, 0.302] straddles zero."
+    },
+    {
+      "feature": "structure",
+      "kind": "categorical",
+      "n_oos": 159,
+      "oos_rho": 0.0742,
+      "ci_lo": -0.1347,
+      "ci_hi": 0.2936,
+      "reverse_rho": 0.1516,
+      "per_regime": {
+        "low": 0.1471,
+        "high": -0.0716,
+        "mid": -0.0474
+      },
+      "regime_sign_flip": true,
+      "validated": false,
+      "note": "NOT validated: OOS \u03c1=0.0742, CI [-0.1347, 0.2936] straddles zero."
+    }
+  ]
+}

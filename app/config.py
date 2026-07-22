@@ -136,6 +136,19 @@ class Settings(BaseSettings):
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7
+    # Layer-1 arming discipline (Conviction-Scanner spec §1/§11). A hand-weighted
+    # tradability rank is NOT calibrated conviction, so arming — the "go" tier — is
+    # gated on the conditions under which the rank is least misleading:
+    #   * ARM only when probability-of-profit is computable (IV present). A blank POP
+    #     must never surface as "armed/clear" (the TSLA-put-spread failure mode).
+    #   * 0DTE never asserts conviction (ZERO_DTE_CONVICTION=false): gamma/theta make
+    #     the hand-weighted rank least trustworthy exactly where it's most tempting.
+    # A blocked candidate is held at WATCHLIST with the reason recorded, never armed.
+    zero_dte_conviction: bool = False
+    # Board rank (Layer-1 cost-drag): within this normalized-score band, order by real
+    # spread cost-drag so the tightest-to-trade expression of a setup ranks first,
+    # rather than a wider one that merely scored a hair higher.
+    board_rank_score_bucket: float = 0.05
     # Scoring model — weights are configurable + versioned. Every candidate records
     # the model + risk-policy version it was scored under (Phase 2). Weights per
     # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and

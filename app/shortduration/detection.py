@@ -181,6 +181,40 @@ def _candidate_odds(
     return pop, what
 
 
+def _apply_cost_drag(contract: ContractResult, chain, as_of: date) -> None:
+    """Attach the structure's round-trip spread cost-drag to the recommendation
+    (Layer-1 cost-drag rank). Cost-drag = the bid/ask spread you forfeit getting in
+    AND out at the quote, as a fraction of the structure's own defined max-loss. It's
+    the tax that makes a wider expression rank below a tighter one at similar merit.
+    Best-effort: leaves the field None when the chain lacks two-sided quotes."""
+    plan = contract.plan
+    if plan is None or chain is None or not plan.legs:
+        return
+    by_key = {
+        (round(c.strike, 4), c.option_type, c.expiration): c for c in chain.contracts
+    }
+    one_way_per_share = 0.0
+    covered = 0
+    for lg in plan.legs:
+        c = by_key.get((round(lg.strike, 4), lg.option_type, lg.expiration))
+        if c is None or c.bid is None or c.ask is None or c.ask <= c.bid:
+            continue
+        one_way_per_share += (c.ask - c.bid) / 2.0
+        covered += 1
+    if covered < len(plan.legs) or one_way_per_share <= 0:
+        return  # can't price every leg's spread → don't fabricate a drag number
+    round_trip_usd = one_way_per_share * 2.0 * 100.0 * plan.contracts
+    max_loss = plan.risk.max_loss_usd if plan.risk else None
+    if not max_loss or max_loss <= 0:
+        return
+    ratio = round(round_trip_usd / max_loss, 4)
+    contract.recommendation.cost_drag_ratio = ratio
+    contract.recommendation.cost_drag_note = (
+        f"Round-trip spread tax ≈ ${round_trip_usd:.0f} = {ratio * 100:.0f}% of "
+        f"${max_loss:.0f} max risk."
+    )
+
+
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
@@ -331,6 +365,7 @@ async def _score_symbol(
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
+            _apply_cost_drag(contract, chain, now.date())
             pop, what_has = _candidate_odds(det, symbol, contract, spot, iv30, now)
             scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
     return scored
@@ -379,10 +414,22 @@ async def run_detection(
                 await asyncio.to_thread(repository.append_candidate_transition, tr)
             created.append(cand)
 
-    created.sort(key=lambda c: c.score, reverse=True)
+    created.sort(key=_board_rank_key)
     _record_scan_metrics(dte, created)
     log.info("sd_detection", dte=dte.value, detected=len(created))
     return created
+
+
+def _board_rank_key(c: ShortDurationCandidate) -> tuple:
+    """Layer-1 board order: by score bucket first (highest merit on top), then by
+    real spread cost-drag within the bucket so the tightest-to-trade expression of a
+    near-equal setup ranks above a wider one that merely scored a hair higher. Missing
+    cost-drag sorts last within its bucket (unknown tax is not treated as cheap)."""
+    bucket = settings.board_rank_score_bucket or 0.05
+    score_bucket = round(c.score / bucket)  # coarse merit band
+    drag = c.contract.cost_drag_ratio if c.contract else None
+    drag_key = drag if drag is not None else float("inf")
+    return (-score_bucket, drag_key, -c.score)
 
 
 def _record_scan_metrics(dte: DTECategory, created: list[ShortDurationCandidate]) -> None:
@@ -428,13 +475,33 @@ def _classify_transitions(
                        reason=why, at=now)
         )
         return trail
+    # Layer-1 arming discipline: the hand-weighted rank is not calibrated conviction,
+    # so ARM (the "go" tier) is withheld unless the rank is least misleading — POP must
+    # be computable, and 0DTE never asserts conviction unless explicitly enabled. A
+    # blocked-but-arm-worthy candidate is held at WATCHLIST with the reason recorded.
+    sc = cand.scorecard
+    pop_ok = bool(sc.pop_available) if sc is not None else False
+    zero_dte = det.dte_category == DTECategory.ZERO_DTE
+    arm_blocked_reason = ""
+    if not pop_ok:
+        arm_blocked_reason = "POP uncomputable (no IV) — held at watchlist, not armed."
+    elif zero_dte and not settings.zero_dte_conviction:
+        arm_blocked_reason = "0DTE asserts no calibrated conviction — held at watchlist, not armed."
+    allow_arm = not arm_blocked_reason
     target = classify_initial_state(
         cand.score, watchlist_at=settings.short_duration_watchlist_score,
-        arm_at=settings.short_duration_arm_score,
+        arm_at=settings.short_duration_arm_score, allow_arm=allow_arm,
     )
+    if not allow_arm and cand.score >= settings.short_duration_arm_score:
+        # The score cleared the arm bar but arming was withheld — make that visible
+        # on the candidate, not just in the transition audit trail.
+        cand.reasons.append(f"Arm withheld: {arm_blocked_reason}")
     if target != CandidateState.EVALUATING:
+        reason = f"Score {cand.score:.2f} crossed the {target.value} threshold."
+        if not allow_arm and cand.score >= settings.short_duration_arm_score:
+            reason = f"Score {cand.score:.2f} is arm-worthy but {arm_blocked_reason}"
         trail.append(
             transition(cand, target, trigger="score_threshold", actor="system",
-                       reason=f"Score {cand.score:.2f} crossed the {target.value} threshold.", at=now)
+                       reason=reason, at=now)
         )
     return trail

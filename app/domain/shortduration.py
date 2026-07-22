@@ -258,6 +258,11 @@ class ContractRecommendation(BaseModel):
     breakevens: list[float] = Field(default_factory=list)
     est_fill_net: float | None = None
     liquidity_note: str = ""
+    # Cost-drag (Layer-1): the structure's round-trip bid/ask spread tax as a
+    # fraction of its own defined max-loss. This is the tax you pay just to get in
+    # and out at the quoted spread — the tightest-drag expression ranks first.
+    cost_drag_ratio: float | None = None
+    cost_drag_note: str = ""
 
 
 class ShortDurationExitTarget(BaseModel):

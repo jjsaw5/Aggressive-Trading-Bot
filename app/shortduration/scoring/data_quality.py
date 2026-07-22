@@ -33,10 +33,10 @@ def compute_data_quality(
     check("intraday bars", bool(ctx.bars_1m))
     check("VWAP", ctx.levels is not None and ctx.levels.vwap is not None)
     fresh_quote = False
-    if ctx.quote is not None:
+    if ctx.quote is not None and ctx.quote.as_of is not None:
         age = (ctx.now - ctx.quote.as_of).total_seconds()
         fresh_quote = ctx.quote.delayed_minutes == 0 and age <= _QUOTE_STALE_SECONDS
-    check("fresh quote", fresh_quote)
+    check("fresh quote", fresh_quote)  # a missing timestamp is NOT fresh
     check("option liquidity (chain)", chain is not None and bool(chain.contracts))
     check("IV context", iv is not None and iv.iv_rank is not None)
 
@@ -52,8 +52,8 @@ def compute_data_quality(
 
 
 def quote_is_stale(ctx: SetupContext, now: datetime | None = None) -> bool:
-    if ctx.quote is None:
-        return True
+    if ctx.quote is None or ctx.quote.as_of is None:
+        return True  # no quote, or no usable timestamp -> treat as stale
     now = now or ctx.now
     age = (now - ctx.quote.as_of).total_seconds()
     return ctx.quote.delayed_minutes > 0 or age > _QUOTE_STALE_SECONDS

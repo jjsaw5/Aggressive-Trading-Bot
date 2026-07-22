@@ -66,11 +66,13 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-def _epoch_to_dt(ts: Any) -> datetime:
+def _epoch_to_dt(ts: Any) -> datetime | None:
+    # None on an unparseable epoch — never substitute "now", which would disguise
+    # a quote of unknown age as seconds-fresh and slip it past the freshness gate.
     try:
         return datetime.fromtimestamp(float(ts), tz=UTC)
     except (TypeError, ValueError):
-        return datetime.now(UTC)
+        return None
 
 
 # FMP intraday/news timestamps are US/Eastern wall-clock without a tzoffset
@@ -130,8 +132,10 @@ class FMPProvider(
             ask=_to_float(row.get("ask")),
             volume=int(row["volume"]) if row.get("volume") is not None else None,
             prev_close=_to_float(row.get("previousClose")),
-            as_of=_epoch_to_dt(ts) if ts is not None else datetime.now(UTC),
-            delayed_minutes=0,  # Confirm actual delay for your tier before trusting.
+            # No timestamp -> as_of=None (unknown age), NOT now(); the freshness gate
+            # treats that as stale rather than trusting fabricated freshness.
+            as_of=_epoch_to_dt(ts),
+            delayed_minutes=settings.fmp_quote_delay_minutes,
             source="fmp",
         )
 

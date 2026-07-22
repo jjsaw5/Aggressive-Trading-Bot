@@ -253,6 +253,10 @@ class Settings(BaseSettings):
     slack_webhook_url: str | None = None
 
     # --- Provider routing ---
+    # Real quote-feed delay for the configured FMP tier (minutes). Many FMP plans
+    # deliver ~15-min-delayed equity quotes; set this to arm the freshness gate's
+    # delayed-data check (dead when left at 0 across every provider). 0 = real-time.
+    fmp_quote_delay_minutes: int = 0
     provider_market_data: ProviderName = ProviderName.MOCK
     provider_options_flow: ProviderName = ProviderName.MOCK
     provider_options_chain: ProviderName = ProviderName.MOCK

@@ -141,6 +141,50 @@ observed ~$24/trade spread tax). It is open to the auditor's revision **before t
 verdict run** — changing it after seeing results is forbidden.
 
 ---
+
+## Amendment 1 — pre-results (2026-07-22, on auditor guidance)
+
+Two facts surfaced *after* the original freeze but *before* any results, disclosed
+here per the deviation rule (a pre-results correction is legitimate; changing
+anything after seeing results is not).
+
+**A. Flow-data horizon.** The flow-side `/historic` fields (`ask_volume`,
+`bid_volume`, `sweep_volume`, `multi_leg_volume`, `total_premium`) are densely
+populated only from **~2023 onward** — for a 2021–22 contract they appear on ~2% of
+days. Pricing/NBBO/IV reach 2021, but the **flow proxy is only buildable
+~2023–2026.** Correction to §2's caveat: `multi_leg_volume` **is** present on this
+window, so single-vs-multi-leg *is* captured; only the opening-vs-closing-trade
+discrimination is missing.
+
+**B. §4.2 honored by intent, not by relaxation.** The 2021 melt-up and the sustained
+2022 bear are unreachable. Rather than lower the bar, §4.2's purpose (stop a regime
+coincidence passing as edge) is met by promoting the **April-2025 ~19% risk-off
+drawdown to the mandatory stress fold**:
+
+- **Mandatory stress fold.** The walk-forward fold whose test window covers the
+  spring-2025 selloff (`FLOW_EXP_STRESS_WINDOW = 2025-02-15 .. 2025-04-30`) is the
+  stress fold. **The CONFIRM−OPPOSE lift MUST hold the same sign through it** — a
+  flow edge that appears only in the up-tape and reverses in the drawdown fails
+  (the same trend-follower-gets-chopped failure the structures already showed). This
+  makes §4.4's same-sign requirement concrete and non-negotiable at the drawdown.
+- **Regimes present and tested:** 2023 recovery, 2024 melt-up, chop, and a sharp
+  ~19% drawdown (spring 2025).
+- **The one gap, named precisely:** *not* tested against a sustained multi-quarter
+  grinding bear (2022-style). The difference is a **fast crash vs. a slow bleed** —
+  the stress fold covers severe fast downside, not the prolonged-grind character.
+
+**Bounded conclusion (frozen).** A pass may be reported only as: *"flow adds edge
+across uptrend, chop, and a sharp ~19% drawdown (2023–2026); sustained
+grinding-bear behavior untested."* Never as full regime coverage.
+
+**Sequencing (frozen).** The paid path (deeper historical flow to 2021–22) is gated
+on the free result: money is spent to close the last regime gap **only if** the free
+experiment shows a real CONFIRM−OPPOSE lift that survives the April-2025 stress fold.
+A null here — including through the drawdown — is a sufficient answer to stop.
+
+**Added frozen constant:** `FLOW_EXP_STRESS_WINDOW = 2025-02-15 .. 2025-04-30`.
+
+---
 *Research and decision-support only — not investment advice. This experiment
 characterizes a signal's out-of-sample behavior on historical marks; it is not a
 forecast and does not authorize any trade.*

@@ -81,6 +81,8 @@ class ExperimentResult:
     n_folds: int
     fold_results: list[FoldResult]
     same_sign_all_folds: bool
+    stress_fold_ok: bool  # CONFIRM−OPPOSE held the same sign through the drawdown
+    stress_fold_spread: float | None
     grid_summary: object  # GridSummary over all folds' OOS lifts
     pooled_ci: DiffCI | None  # full-sample pooled CONFIRM−OPPOSE at k=1.0 (best θ)
     loss_floor_ok: bool
@@ -104,6 +106,7 @@ def run_experiment(
     n_folds: int,
     embargo_days: int,
     material_margin: float,
+    stress_window: tuple[date, date] | None = None,
     reverse: bool = False,
 ) -> ExperimentResult:
     folds = walk_forward_folds(
@@ -127,6 +130,19 @@ def run_experiment(
     same_sign = bool(test_spreads) and (
         all(s > 0 for s in test_spreads) or all(s < 0 for s in test_spreads)
     )
+
+    # Mandatory stress fold: the fold whose test window overlaps the drawdown. The
+    # lift MUST hold the SAME (positive) sign through it — a flow edge that only
+    # works in the up-tape and reverses in the selloff fails here.
+    stress_spread: float | None = None
+    stress_fold_ok = False
+    if stress_window is not None:
+        s_lo, s_hi = stress_window
+        for fr, f in zip(fold_results, folds, strict=True):
+            if f.test_start <= s_hi and f.test_end >= s_lo and fr.test_spread is not None:
+                stress_spread = fr.test_spread
+                stress_fold_ok = fr.test_spread > 0
+                break
     # Full-sample estimate at the globally-best θ (reported alongside, not the verdict).
     best_global = _tune(trades, grid, _K_VERDICT)
     pooled_ci = pooled_confirm_minus_oppose(trades, best_global, _K_VERDICT) if best_global else None
@@ -148,10 +164,16 @@ def run_experiment(
         reasons.append(f"pooled spread ${pooled_ci.point:.2f} below material margin ${material_margin:.2f}")
     if not loss_floor_ok:
         reasons.append("an arm is below the real-loss floor (uncalibratable)")
+    if stress_window is not None and not stress_fold_ok:
+        reasons.append(
+            "CONFIRM−OPPOSE did not hold a positive sign through the April-2025 "
+            f"stress fold (spread {stress_spread}) — flow reverses in the drawdown"
+        )
 
     verdict = "fail_to_reject_H0" if reasons else "candidate_edge_proxy_only"
     return ExperimentResult(
         n_trades=len(trades), n_folds=len(folds), fold_results=fold_results,
-        same_sign_all_folds=same_sign, grid_summary=summarize_grid(all_oos),
+        same_sign_all_folds=same_sign, stress_fold_ok=stress_fold_ok,
+        stress_fold_spread=stress_spread, grid_summary=summarize_grid(all_oos),
         pooled_ci=pooled_ci, loss_floor_ok=loss_floor_ok, verdict=verdict, reasons=reasons,
     )

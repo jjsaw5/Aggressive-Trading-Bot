@@ -154,3 +154,27 @@ def test_within_cell_spread_and_null_verdict() -> None:
     res = run_experiment(trades, grid, n_folds=2, embargo_days=55, material_margin=15.0)
     assert res.verdict == "fail_to_reject_H0"
     assert any("CI does not exclude zero" in r or "insufficient sample" in r for r in res.reasons)
+
+
+def test_stress_fold_reversal_fails() -> None:
+    # CONFIRM beats OPPOSE in 2024 but REVERSES in 2025 (which holds the stress
+    # window) -> the stress fold must fail the verdict with the drawdown reason.
+    out = []
+    base = date(2024, 1, 8)
+    for i in range(120):
+        e = base + timedelta(days=i * 5)  # ~2024-01 .. 2025-08
+        arm_confirm = i % 2 == 0
+        feat = _confirm_feat() if arm_confirm else _oppose_feat()
+        pre_2025 = e < date(2025, 1, 1)
+        # 2024: CONFIRM wins; 2025 (incl. stress): CONFIRM loses. Both arms carry losses.
+        pnl = (40.0 if arm_confirm else -40.0) if pre_2025 else (-40.0 if arm_confirm else 40.0)
+        out.append(ExpTrade(entry_date=e, exit_date=e + timedelta(days=20),
+                            direction="bullish", regime="mixed",
+                            net_by_k={0.5: pnl + 5, 1.0: pnl}, flow=feat))
+    grid = [FlowThresholds(lean=0.1, sweep=0.2, prem=1.0)]
+    res = run_experiment(out, grid, n_folds=2, embargo_days=55, material_margin=15.0,
+                         stress_window=(date(2025, 2, 15), date(2025, 4, 30)))
+    assert res.stress_fold_spread is not None  # a fold overlapped the drawdown
+    assert res.stress_fold_ok is False  # flow reversed in the selloff
+    assert res.verdict == "fail_to_reject_H0"
+    assert any("stress fold" in r for r in res.reasons)

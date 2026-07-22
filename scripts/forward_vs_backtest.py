@@ -142,16 +142,22 @@ async def main() -> None:
         rows.append(cross_check_trade(t, await hist(t.long_id), await hist(t.short_id)))
     await provider.aclose()
 
-    print(f"{'ref':11} {'sym':5} {'strategy':18} {'ledger':>9} {'real k=1':>9} {'flip':>5}")
+    print(f"{'sym':5} {'strategy':18} {'ledger':>8} {'k=0.5':>8} {'k=1.0':>8}  verdict")
     for r in rows:
-        flip = "FLIP" if r.sign_flip else ("ok" if r.agree else ("—" if not r.repriced else "diff"))
-        rm = f"{r.real_mark_pnl_k1:+.0f}" if r.real_mark_pnl_k1 is not None else "n/a"
         led = f"{r.recorded_pnl:+.0f}" if r.recorded_pnl is not None else "n/a"
-        print(f"{r.ref:11} {r.symbol:5} {r.strategy:18.18} {led:>9} {rm:>9} {flip:>5}"
-              + (f"   ({r.note})" if r.note else ""))
+        if not r.repriced:
+            print(f"{r.symbol:5} {r.strategy:18.18} {led:>8} {'—':>8} {'—':>8}  ({r.note})")
+            continue
+        a = f"{r.real_mark_pnl_k05:+.0f}"
+        b = f"{r.real_mark_pnl_k1:+.0f}"
+        verdict = ("FLIP even at mid" if r.sign_flip_optimistic
+                   else "slippage-fragile flip" if r.sign_flip
+                   else "consistent")
+        print(f"{r.symbol:5} {r.strategy:18.18} {led:>8} {a:>8} {b:>8}  {verdict}")
 
     s = summarize(rows)
-    print(f"\nrepriced {s.n_repriced}/{s.n}  |  agree {s.n_agree}  |  SIGN FLIPS {s.n_sign_flip}")
+    print(f"\nrepriced {s.n_repriced}/{s.n}  |  agree@k1 {s.n_agree}  |  "
+          f"flips@k=1.0 {s.n_sign_flip}  |  flips@k=0.5(mid) {s.n_sign_flip_optimistic}")
     for f in s.flips:
         print(f"  ⚑ {f}")
     if s.unrepriced_reasons:

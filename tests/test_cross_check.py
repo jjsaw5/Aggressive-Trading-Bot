@@ -53,6 +53,7 @@ def test_sign_flip_is_surfaced() -> None:
     assert row.recorded_result == "win"
     assert row.real_mark_result == "loss"
     assert row.sign_flip is True
+    assert row.sign_flip_optimistic is True  # a real loss even at mid — not a slippage artifact
     assert row.agree is False
     assert row.pnl_gap_usd is not None and row.pnl_gap_usd > 0  # ledger over-credited
 
@@ -81,4 +82,5 @@ def test_summary_counts_flips() -> None:
     s = summarize([flip, agree])
     assert s.n == 2 and s.n_repriced == 2
     assert s.n_sign_flip == 1 and s.n_agree == 1
+    assert s.n_sign_flip_optimistic == 1  # the flip case loses even at mid
     assert len(s.flips) == 1 and "real-mark loss" in s.flips[0]

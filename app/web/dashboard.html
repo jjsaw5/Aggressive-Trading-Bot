@@ -414,6 +414,9 @@
       const modeSel = `<div style="margin:8px 0">Mode
         <select id="rmMode"><option value="engine">engine (scanner's picks)</option>
           <option value="fixed">fixed (systematic grid)</option></select>
+        &nbsp;Regime
+        <select id="rmRegime"><option value="2021-22">2021–22 (crisis)</option>
+          <option value="2023-24">2023–24 (non-crisis)</option></select>
         <button data-act="rm-run">Run validation</button>
         <span class="muted">runs live against UW history — may take ~20s the first time</span></div>`;
       const r = state.realmark;
@@ -436,6 +439,8 @@
       return intro + modeSel +
         `<div style="margin-bottom:8px">
           <span class="badge">${r.validating ? "VALIDATING" : "not validating"}</span>
+          <span class="badge">regime ${r.regime || "—"}</span>
+          <span class="badge">${r.mode || ""}</span>
           <span class="badge">trades ${r.n_included}/${r.n_trades}</span>
           <span class="badge">excluded ${r.n_excluded}</span>
           <span class="badge">slippage-fragile ${r.slippage_fragile_n}</span></div>
@@ -1220,8 +1225,9 @@
             render();
           } else if (act === "rm-run") {
             const mode = ($("#rmMode") && $("#rmMode").value) || "engine";
-            $("#view").innerHTML = `<div class="empty">Running real-mark validation (${mode})…</div>`;
-            state.realmark = await api("GET", `/backtest/real-mark?mode=${mode}`);
+            const regime = ($("#rmRegime") && $("#rmRegime").value) || "2021-22";
+            $("#view").innerHTML = `<div class="empty">Running real-mark validation (${mode}, ${regime})…</div>`;
+            state.realmark = await api("GET", `/backtest/real-mark?mode=${mode}&regime=${regime}`);
             render();
           } else if (act === "pos-refresh") {
             render();

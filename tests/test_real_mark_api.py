@@ -26,3 +26,10 @@ def test_real_mark_route_gated_off_returns_reason() -> None:
 def test_real_mark_route_rejects_bad_mode() -> None:
     r = client.get("/backtest/real-mark?mode=bogus")
     assert r.status_code == 422  # pattern-validated query param
+
+
+def test_real_mark_route_accepts_both_regimes_and_rejects_bad() -> None:
+    for regime in ("2021-22", "2023-24"):
+        r = client.get(f"/backtest/real-mark?mode=engine&regime={regime}")
+        assert r.status_code == 200 and r.json()["available"] is False  # gated off in CI
+    assert client.get("/backtest/real-mark?regime=1999").status_code == 422

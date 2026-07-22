@@ -1,11 +1,13 @@
 """Short-duration contract selection.
 
-Turns a confirmed setup into a sized, DEFINED-RISK option expression, reusing the
+Turns a confirmed setup into sized, DEFINED-RISK option expressions, reusing the
 core selection + sizing + exit-plan machinery with short-DTE-tuned configs. The
-policy is the small-account guardrail: try a near-the-money single leg first, and
-if its debit exceeds the per-trade risk cap, fall back to a defined-risk debit
-vertical that fits. If nothing liquid fits the cap, the setup is REJECTED with a
-reason — never forced.
+plural selector (`select_short_duration_contracts`) returns EVERY viable
+defined-risk expression — the near-ATM single leg AND the defined-risk debit
+vertical, whichever fit the cap — so the board offers a mix to rank. The singular
+`select_short_duration_contract` keeps the older one-best behaviour (single leg
+preferred, then spread, then reject). If nothing liquid fits the per-trade cap,
+the setup is REJECTED with a reason — never forced.
 """
 
 from __future__ import annotations

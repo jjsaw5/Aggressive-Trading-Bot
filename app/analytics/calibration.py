@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.analytics.metrics import expectancy, max_drawdown, profit_factor
+from app.analytics.metrics import expectancy, max_drawdown, profit_factor, spearman
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot, OutcomeResult
 
 # Outcome fidelity for de-duplication: a closed paper trade (realized fill) and a
@@ -49,6 +49,18 @@ def _horizon(dte_at_entry: int | None) -> str:
     if dte_at_entry <= 55:
         return "swing"
     return "longer"
+
+
+def _flow_quality_band(q: float | None) -> str | None:
+    """Bucket the shadow flow-quality metric (see app/engine/flow_quality.py).
+    Its floor is ~0.5 (a bare print), so bands are set to discriminate above it."""
+    if q is None:
+        return None
+    if q < 0.6:
+        return "weak"
+    if q < 0.75:
+        return "moderate"
+    return "strong"
 
 
 def _vol_regime(iv_rank: float | None) -> str | None:
@@ -102,6 +114,16 @@ class Scorecard(BaseModel):
     by_direction: list[GroupStat] = Field(default_factory=list)
     by_vol_regime: list[GroupStat] = Field(default_factory=list)
     by_horizon: list[GroupStat] = Field(default_factory=list)  # 0DTE / 1-5DTE / swing
+    # --- Shadow instrumentation: the sibling scanner's flow-quality metric ---
+    # Recorded observationally (never fed into the score). These fields are the
+    # ledger's verdict on whether it EARNS a place in scoring: does it separate
+    # winners from losers on real-dollar outcomes, and does it beat the score we
+    # already trust? Promotion is gated on a positive, non-degenerate answer here.
+    by_flow_quality_band: list[GroupStat] = Field(default_factory=list)
+    flow_quality_pnl_spearman: float | None = None  # corr(flow_quality, net P&L)
+    score_pnl_spearman: float | None = None  # baseline: corr(composite_score, net P&L)
+    flow_quality_lift: float | None = None  # flow_quality corr minus score corr
+    flow_quality_verdict: str = "insufficient"
     # Is this a trustworthy validation source? "real_marks" when most decisive
     # outcomes are option-mark / paper-trade P&L; "proxy_only" when it rests on the
     # directional underlying proxy; "insufficient" when nothing is decisive.
@@ -209,6 +231,29 @@ def _degeneracy_warnings(
     return warns
 
 
+def _flow_quality_verdict(
+    flow_priced: list[tuple[DecisionSnapshot, DecisionOutcome]],
+    flow_pnl_sp: float | None,
+    flow_lift: float | None,
+) -> str:
+    """Gate the shadow metric's promotion. Deliberately conservative — a thin or
+    single-regime sample can manufacture a correlation, so it must clear a real
+    sample size, show a positive P&L correlation, AND beat the incumbent score.
+    Anything short of that reads as 'keep watching', never 'promote'."""
+    n = len(flow_priced)
+    if n < 10 or flow_pnl_sp is None:
+        return "insufficient"
+    losses = sum(1 for _, o in flow_priced if (o.realized_pnl_usd or 0) < 0)
+    wins = sum(1 for _, o in flow_priced if (o.realized_pnl_usd or 0) > 0)
+    if losses < 2 or wins < 2:
+        return "insufficient"  # no spread to correlate against
+    if flow_pnl_sp <= 0:
+        return "not_predictive"
+    if flow_lift is not None and flow_lift <= 0:
+        return "no_lift_over_score"
+    return "candidate_for_promotion"
+
+
 def build_scorecard(
     snapshots: list[DecisionSnapshot], outcomes: list[DecisionOutcome]
 ) -> Scorecard:
@@ -233,6 +278,26 @@ def build_scorecard(
         else "insufficient"
     )
     regime_pairs = [(s, o) for s, o in pairs if _vol_regime(s.iv_rank) is not None]
+
+    # Shadow flow-quality: does the sibling's metric track real P&L, and does it
+    # beat the composite score we already rely on? Measured only over outcomes
+    # carrying a real dollar P&L, and only for decisions that had gradeable flow.
+    flow_priced = [(s, o) for s, o in priced if s.flow_quality_proprietary is not None]
+    flow_pnl_sp = spearman(
+        [s.flow_quality_proprietary for s, _ in flow_priced],
+        [o.realized_pnl_usd for _, o in flow_priced],
+    )
+    score_pnl_sp = spearman(
+        [s.composite_score for s, _ in flow_priced],
+        [o.realized_pnl_usd for _, o in flow_priced],
+    )
+    flow_lift = (
+        round(flow_pnl_sp - score_pnl_sp, 4)
+        if (flow_pnl_sp is not None and score_pnl_sp is not None)
+        else None
+    )
+    flow_band_pairs = [(s, o) for s, o in pairs if s.flow_quality_proprietary is not None]
+    flow_verdict = _flow_quality_verdict(flow_priced, flow_pnl_sp, flow_lift)
 
     # Direction accuracy over outcomes that carry a directional verdict.
     dir_calls = [o for _, o in pairs if o.direction_correct is not None]
@@ -297,6 +362,13 @@ def build_scorecard(
         by_direction=_grouped(pairs, lambda s: s.direction.value),
         by_vol_regime=_grouped(regime_pairs, lambda s: _vol_regime(s.iv_rank)),
         by_horizon=_grouped(pairs, lambda s: _horizon(s.dte_at_entry)),
+        by_flow_quality_band=_grouped(
+            flow_band_pairs, lambda s: _flow_quality_band(s.flow_quality_proprietary)
+        ),
+        flow_quality_pnl_spearman=flow_pnl_sp,
+        score_pnl_spearman=score_pnl_sp,
+        flow_quality_lift=flow_lift,
+        flow_quality_verdict=flow_verdict,
         validation_grade=grade,
         warnings=_degeneracy_warnings(decisive),
         note=(

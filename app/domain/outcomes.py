@@ -65,6 +65,11 @@ class DecisionSnapshot(BaseModel):
     entry_spot: float
     entry_iv: float | None = None
     iv_rank: float | None = None
+    # Shadow signal (see app/engine/flow_quality.py): the sibling scanner's
+    # premium-weighted flow-conviction metric, recorded observationally so the
+    # ledger can test it against real outcomes. It NEVER enters the composite
+    # score; promotion into scoring is gated on the scorecard validating it.
+    flow_quality_proprietary: float | None = None
 
     # --- Structure economics ---
     entry_net_per_share: float  # debit > 0, credit < 0

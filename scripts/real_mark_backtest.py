@@ -1,103 +1,135 @@
-"""First real-mark backtest against live UW per-contract history.
+"""Scaled real-mark backtest against live UW per-contract history.
 
-Builds a small, real, multi-regime population of verticals on liquid SPY/AAPL
-contracts spanning the 2021 calm and the 2022 selloff, reprices every leg from
-recorded NBBO (net of round-trip commissions, at both k=0.5 and k=1.0), and
-prints the aggregate. This is a validation of *structure economics* on real
-option marks — the thing the Black-Scholes backtest structurally cannot do.
+Fetches option-contract histories (disk-cached so re-runs are instant), builds a
+multi-name / multi-expiry / multi-entry population, reprices every leg from
+recorded NBBO, and prints the aggregate report — in two modes:
 
-Run (requires the UW historic entitlement):
+    fixed   systematic call-debit / put-credit / put-debit verticals
+    engine  the scanner's own selection rule chooses the trade (§2)
+
+Run (needs the UW historic entitlement):
     UW_HISTORIC_ENABLED=true UNUSUAL_WHALES_API_KEY=... \
-        python -m scripts.real_mark_backtest
+        python -m scripts.real_mark_backtest --mode both
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import os
 from datetime import date
 
-from app.backtest.real_mark import ExitRule, RealMarkTrade, evaluate_real_mark_trade
+from app.backtest.real_mark import evaluate_real_mark_trade
 from app.backtest.real_mark_runner import aggregate
+from app.backtest.real_mark_seed import (
+    build_engine_verticals,
+    build_fixed_verticals,
+    monthly_expiries,
+    occ,
+    reconstruct_spot_path,
+)
+from app.domain.historic import HistoricOptionBar
 from app.providers import registry
 
-# (root, expiry ymd, expiry date, near-money strike K, width)
-_UNDERLYINGS = [
-    ("SPY", "211217", date(2021, 12, 17), 450, 10),
-    ("AAPL", "211217", date(2021, 12, 17), 160, 10),
-    ("SPY", "220617", date(2022, 6, 17), 400, 20),
-    ("AAPL", "220617", date(2022, 6, 17), 150, 10),
+_CACHE = os.path.join(
+    os.environ.get("SCRATCH", "/tmp"), "hist_cache"
+)
+
+# (root, strike ladder, vertical width) — clean names with no split in 2021-22.
+_UNIVERSE = [
+    ("SPY", list(range(340, 481, 20)), 20),
+    ("QQQ", list(range(280, 401, 20)), 20),
+    ("AAPL", list(range(120, 191, 10)), 10),
+    ("MSFT", list(range(220, 341, 20)), 20),
 ]
-# structure -> (option type, long strike offset, short strike offset, direction)
-# offsets are in multiples of `width` from K.
-_STRUCTURES = {
-    "call_debit_spread": ("C", 0, +1, "bullish"),      # long K, short K+w
-    "put_credit_spread": ("P", -1, 0, "bullish"),       # long K-w, short K (bull put credit)
-    "put_debit_spread": ("P", 0, -1, "bearish"),        # long K, short K-w
-}
-_ENTRY_OFFSETS = [60, 40, 25]  # trading days before expiry
-_EXIT = ExitRule(profit_target_pct=0.5, stop_loss_pct=0.5, time_stop_days=21)
+_EXPIRIES = monthly_expiries(date(2021, 10, 1), date(2022, 12, 31))[::2]  # ~every other month
 
 
-def _occ(root: str, ymd: str, cp: str, strike: int) -> str:
-    return f"{root}{ymd}{cp}{int(strike * 1000):08d}"
+def _cache_path(cid: str) -> str:
+    return os.path.join(_CACHE, f"{cid}.json")
 
 
-def _regime(iv: float | None) -> str:
-    if iv is None:
-        return "unknown"
-    if iv < 0.30:
-        return "low"
-    if iv < 0.50:
-        return "mid"
-    return "high"
+def _load(cid: str) -> list[HistoricOptionBar] | None:
+    p = _cache_path(cid)
+    if not os.path.exists(p):
+        return None
+    rows = json.load(open(p))
+    return [
+        HistoricOptionBar(
+            contract_id=cid, date=date.fromisoformat(r["date"]),
+            nbbo_bid=r["bid"], nbbo_ask=r["ask"], iv=r["iv"],
+            open_interest=r["oi"], volume=r["vol"], trades=r["trades"],
+        )
+        for r in rows
+    ]
 
 
-async def main() -> None:
+def _save(cid: str, bars: list[HistoricOptionBar]) -> None:
+    os.makedirs(_CACHE, exist_ok=True)
+    json.dump(
+        [{"date": b.date.isoformat(), "bid": b.nbbo_bid, "ask": b.nbbo_ask,
+          "iv": b.iv, "oi": b.open_interest, "vol": b.volume, "trades": b.trades}
+         for b in bars],
+        open(_cache_path(cid), "w"),
+    )
+
+
+async def _fetch_all(provider, ids: set[str]) -> dict[str, list[HistoricOptionBar]]:
+    hist: dict[str, list[HistoricOptionBar]] = {}
+    fetched = 0
+    for cid in sorted(ids):
+        cached = _load(cid)
+        if cached is not None:
+            hist[cid] = cached
+            continue
+        bars = await provider.get_contract_history(cid)
+        _save(cid, bars)
+        hist[cid] = bars
+        fetched += 1
+    print(f"[fetch] {len(ids)} contracts ({fetched} live, {len(ids)-fetched} cached)")
+    return hist
+
+
+async def main(mode: str) -> None:
     provider = registry.historical_options_provider()
 
-    # 1) Collect every contract we need and fetch its history once.
-    need: set[str] = set()
-    specs = []
-    for root, ymd, exp, k, w in _UNDERLYINGS:
-        for name, (cp, lo, so, direction) in _STRUCTURES.items():
-            long_id = _occ(root, ymd, cp, k + lo * w)
-            short_id = _occ(root, ymd, cp, k + so * w)
-            need.add(long_id)
-            need.add(short_id)
-            specs.append((root, ymd, exp, name, direction, long_id, short_id))
+    ids: set[str] = set()
+    for root, strikes, _ in _UNIVERSE:
+        for exp in _EXPIRIES:
+            for cp in "CP":
+                for k in strikes:
+                    ids.add(occ(root, exp, cp, k))
 
-    hist = {}
-    for cid in sorted(need):
-        hist[cid] = await provider.get_contract_history(cid)
+    hist = await _fetch_all(provider, ids)
     await provider.aclose()
 
-    # 2) Build trades: pick real entry dates from each expiry's trading calendar.
-    pairs = []
-    for root, ymd, exp, name, direction, long_id, short_id in specs:
-        long_bars = hist.get(long_id, [])
-        short_bars = hist.get(short_id, [])
-        if not long_bars or not short_bars:
-            continue
-        cal = [b.date for b in long_bars]  # ascending; expiry is last
-        for off in _ENTRY_OFFSETS:
-            if off + 1 > len(cal):
-                continue
-            entry_date = cal[-(off + 1)]
-            entry_bar = next((b for b in long_bars if b.date == entry_date), None)
-            regime = _regime(entry_bar.iv if entry_bar else None)
-            trade = RealMarkTrade(
-                trade_id=f"{root}:{ymd}:{name}:{off}dte",
-                long_id=long_id, short_id=short_id, entry_date=entry_date,
-                dte_at_entry=(exp - entry_date).days, contracts=1,
-                strategy=name, direction=direction, vol_regime=regime,
-            )
-            res = evaluate_real_mark_trade(trade, long_bars, short_bars, _EXIT)
-            pairs.append((trade, res))
+    for m in (["fixed", "engine"] if mode == "both" else [mode]):
+        builder = build_fixed_verticals if m == "fixed" else build_engine_verticals
+        trades = []
+        for root, strikes, width in _UNIVERSE:
+            for exp in _EXPIRIES:
+                calls = {k: hist.get(occ(root, exp, "C", k), []) for k in strikes}
+                puts = {k: hist.get(occ(root, exp, "P", k), []) for k in strikes}
+                calls = {k: v for k, v in calls.items() if v}
+                puts = {k: v for k, v in puts.items() if v}
+                if len(calls) < 3 or len(puts) < 3:
+                    continue
+                dates = sorted({b.date for v in calls.values() for b in v})
+                spot = reconstruct_spot_path(calls, puts, dates)
+                trades += builder(root, exp, width, calls, puts, spot)
 
-    report = aggregate(pairs)
-    print(json.dumps(report.as_dict(), indent=2, default=str))
+        pairs = []
+        for trade, rule in trades:
+            lb = hist.get(trade.long_id, [])
+            sb = hist.get(trade.short_id, [])
+            pairs.append((trade, evaluate_real_mark_trade(trade, lb, sb, rule)))
+        report = aggregate(pairs)
+        print(f"\n===== MODE: {m} =====")
+        print(json.dumps(report.as_dict(), indent=2, default=str))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["fixed", "engine", "both"], default="both")
+    asyncio.run(main(ap.parse_args().mode))

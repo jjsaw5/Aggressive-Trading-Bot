@@ -198,6 +198,61 @@ def aggregate(
     )
 
 
+async def build_and_run(
+    provider,
+    universe: list[tuple[str, list[int], int]],
+    expiries: list,
+    *,
+    mode: str = "engine",
+) -> RealMarkReport:
+    """Fetch each (name, expiry) ladder, reconstruct spot via parity, build the
+    population (`engine` = the scanner's own selection rule; `fixed` = a
+    systematic grid), reprice from real marks, and aggregate. This is the callable
+    the CLI and scripts share."""
+    from app.backtest.real_mark import evaluate_real_mark_trade
+    from app.backtest.real_mark_seed import (
+        build_engine_verticals,
+        build_fixed_verticals,
+        occ,
+        reconstruct_spot_path,
+    )
+
+    builder = build_fixed_verticals if mode == "fixed" else build_engine_verticals
+    ids = {
+        occ(root, exp, cp, k)
+        for root, strikes, _ in universe
+        for exp in expiries
+        for cp in "CP"
+        for k in strikes
+    }
+    hist: dict[str, list] = {}
+    for cid in sorted(ids):
+        try:
+            hist[cid] = await provider.get_contract_history(cid)
+        except Exception as exc:  # noqa: BLE001 — isolate a bad contract
+            log.warning("real_mark_contract_fetch_failed", contract_id=cid, error=str(exc))
+            hist[cid] = []
+
+    trades: list[tuple[RealMarkTrade, ExitRule]] = []
+    for root, strikes, width in universe:
+        for exp in expiries:
+            calls = {k: hist.get(occ(root, exp, "C", k), []) for k in strikes}
+            puts = {k: hist.get(occ(root, exp, "P", k), []) for k in strikes}
+            calls = {k: v for k, v in calls.items() if v}
+            puts = {k: v for k, v in puts.items() if v}
+            if len(calls) < 3 or len(puts) < 3:
+                continue
+            dates = sorted({b.date for v in calls.values() for b in v})
+            spot = reconstruct_spot_path(calls, puts, dates)
+            trades += builder(root, exp, width, calls, puts, spot)
+
+    pairs = [
+        (t, evaluate_real_mark_trade(t, hist.get(t.long_id, []), hist.get(t.short_id, []), rule))
+        for t, rule in trades
+    ]
+    return aggregate(pairs)
+
+
 async def run_real_mark_backtest(
     trades: list[tuple[RealMarkTrade, ExitRule]],
     provider,

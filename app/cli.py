@@ -78,6 +78,32 @@ async def _backtest(num_paths: int, as_json: bool, historical: bool) -> None:
     print()
 
 
+async def _real_mark_backtest(mode: str) -> None:
+    """Validating backtest over REAL recorded option marks (UW per-contract
+    history). Requires UW_HISTORIC_ENABLED + the entitled token; swing/short-DTE
+    horizons only (EOD data -> 0DTE is NOT_TESTABLE)."""
+    from datetime import date
+
+    from app.backtest.real_mark_runner import build_and_run
+    from app.backtest.real_mark_seed import monthly_expiries
+    from app.providers import registry
+    from app.providers.registry import ProviderConfigError
+
+    try:
+        provider = registry.historical_options_provider()
+    except ProviderConfigError as exc:
+        print(f"real-mark backtest unavailable: {exc}")
+        return
+
+    # Small default population — a quick, real proof. The scaled sweep lives in
+    # scripts/real_mark_backtest.py.
+    universe = [("SPY", list(range(360, 461, 20)), 20), ("AAPL", list(range(130, 171, 10)), 10)]
+    expiries = monthly_expiries(date(2021, 12, 1), date(2022, 6, 30))[::2]
+    report = await build_and_run(provider, universe, expiries, mode=mode)
+    await provider.aclose()
+    print(json.dumps(report.as_dict(), indent=2, default=str))
+
+
 def main() -> None:
     configure_logging()
     parser = argparse.ArgumentParser(prog="atb", description="Aggressive Trading Bot CLI")
@@ -96,6 +122,15 @@ def main() -> None:
     )
     bt_p.add_argument("--json", action="store_true", help="JSON output")
 
+    rmb_p = sub.add_parser(
+        "real-mark-backtest",
+        help="Validating backtest over real recorded option marks (needs UW historic)",
+    )
+    rmb_p.add_argument(
+        "--mode", choices=["engine", "fixed"], default="engine",
+        help="engine = the scanner's own selection rule picks the trade; fixed = systematic grid",
+    )
+
     sub.add_parser("providers", help="Show provider configuration status")
 
     args = parser.parse_args()
@@ -104,6 +139,8 @@ def main() -> None:
         asyncio.run(_scan(args.json, args.actionable))
     elif args.command == "backtest":
         asyncio.run(_backtest(args.paths, args.json, args.historical))
+    elif args.command == "real-mark-backtest":
+        asyncio.run(_real_mark_backtest(args.mode))
     elif args.command == "providers":
         from app.providers import registry
 

@@ -36,14 +36,23 @@ _CACHE = os.path.join(
     os.environ.get("SCRATCH", "/tmp"), "hist_cache"
 )
 
-# (root, strike ladder, vertical width) — clean names with no split in 2021-22.
-_UNIVERSE = [
-    ("SPY", list(range(340, 481, 20)), 20),
-    ("QQQ", list(range(280, 401, 20)), 20),
-    ("AAPL", list(range(120, 191, 10)), 10),
-    ("MSFT", list(range(220, 341, 20)), 20),
-]
-_EXPIRIES = monthly_expiries(date(2021, 10, 1), date(2022, 12, 31))[::2]  # ~every other month
+# (root, strike ladder, vertical width) per era — clean names, no split in window.
+_PRESETS = {
+    "2021-22": (
+        [("SPY", list(range(340, 481, 20)), 20),
+         ("QQQ", list(range(280, 401, 20)), 20),
+         ("AAPL", list(range(120, 191, 10)), 10),
+         ("MSFT", list(range(220, 341, 20)), 20)],
+        monthly_expiries(date(2021, 10, 1), date(2022, 12, 31))[::2],
+    ),
+    "2023-24": (  # a non-crisis regime: prices higher, trend mostly up
+        [("SPY", list(range(380, 601, 20)), 20),
+         ("QQQ", list(range(280, 501, 20)), 20),
+         ("AAPL", list(range(140, 241, 10)), 10),
+         ("MSFT", list(range(240, 461, 20)), 20)],
+        monthly_expiries(date(2023, 3, 1), date(2024, 6, 30))[::3],
+    ),
+}
 
 
 def _cache_path(cid: str) -> str:
@@ -91,12 +100,13 @@ async def _fetch_all(provider, ids: set[str]) -> dict[str, list[HistoricOptionBa
     return hist
 
 
-async def main(mode: str) -> None:
+async def main(mode: str, preset: str) -> None:
+    universe, expiries = _PRESETS[preset]
     provider = registry.historical_options_provider()
 
     ids: set[str] = set()
-    for root, strikes, _ in _UNIVERSE:
-        for exp in _EXPIRIES:
+    for root, strikes, _ in universe:
+        for exp in expiries:
             for cp in "CP":
                 for k in strikes:
                     ids.add(occ(root, exp, cp, k))
@@ -107,8 +117,8 @@ async def main(mode: str) -> None:
     for m in (["fixed", "engine"] if mode == "both" else [mode]):
         builder = build_fixed_verticals if m == "fixed" else build_engine_verticals
         trades = []
-        for root, strikes, width in _UNIVERSE:
-            for exp in _EXPIRIES:
+        for root, strikes, width in universe:
+            for exp in expiries:
                 calls = {k: hist.get(occ(root, exp, "C", k), []) for k in strikes}
                 puts = {k: hist.get(occ(root, exp, "P", k), []) for k in strikes}
                 calls = {k: v for k, v in calls.items() if v}
@@ -132,4 +142,6 @@ async def main(mode: str) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["fixed", "engine", "both"], default="both")
-    asyncio.run(main(ap.parse_args().mode))
+    ap.add_argument("--preset", choices=list(_PRESETS), default="2021-22")
+    args = ap.parse_args()
+    asyncio.run(main(args.mode, args.preset))

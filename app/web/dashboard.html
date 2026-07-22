@@ -120,6 +120,7 @@
       <button data-tab="proposals">Proposals</button>
       <button data-tab="paper">Paper trades</button>
       <button data-tab="calibration">Calibration</button>
+      <button data-tab="realmark">Real-mark BT</button>
       <button data-tab="ops">Ops</button>
     </div>
     <div class="tabs" id="sdTabs" hidden>
@@ -402,6 +403,51 @@
          <b>By direction</b>
          <table style="margin-top:4px"><thead><tr><th>Direction</th><th class="num">n</th>
            <th class="num">Win rate</th></tr></thead><tbody>${dirRows}</tbody></table>`;
+    }
+
+    async function renderRealMark() {
+      const intro = `<div class="banner"><h2>Real-mark backtest — validation on recorded option economics</h2>
+        <p class="muted">Reprices verticals from real recorded NBBO (net of commissions + spread
+        crossing) at k=0.5 (fill at mid, optimistic) and k=1.0 (pay the full spread). This is the
+        only backtest that reflects true option costs — unlike the Black-Scholes path.
+        <b>engine</b> mode lets the scanner's own selection rule pick the trade.</p></div>`;
+      const modeSel = `<div style="margin:8px 0">Mode
+        <select id="rmMode"><option value="engine">engine (scanner's picks)</option>
+          <option value="fixed">fixed (systematic grid)</option></select>
+        <button data-act="rm-run">Run validation</button>
+        <span class="muted">runs live against UW history — may take ~20s the first time</span></div>`;
+      const r = state.realmark;
+      if (!r) return intro + modeSel + `<div class="empty">Pick a mode and run.</div>`;
+      if (r.available === false)
+        return intro + modeSel + `<div class="card"><b>Not available.</b> <span class="muted">${r.reason || ""}</span>
+          <br>Set <code>UW_HISTORIC_ENABLED=true</code> + <code>UNUSUAL_WHALES_API_KEY</code> once the historic
+          entitlement is confirmed.</div>`;
+      const k = (kk) => r.by_k[kk] || {};
+      const row = (label, s) => `<tr><td>${label}</td><td class="num">${s.n}</td>
+        <td class="num">${pct(s.win_rate)}</td><td class="num">$${fmt(s.net_pnl_usd)}</td>
+        <td class="num">$${fmt(s.expectancy_usd)}</td><td class="num">${fmt(s.profit_factor)}</td>
+        <td class="num">$${fmt(s.max_drawdown_usd)}</td></tr>`;
+      const structRows = (r.by_structure || []).map(g =>
+        `<tr><td>${g[0]}</td><td class="num">${g[1]}</td><td class="num">$${fmt(g[2])}</td>
+         <td class="num">${pct(g[3])}</td></tr>`).join("");
+      const warn = (r.warnings || []).length
+        ? `<div class="card" style="border-color:#c94">${r.warnings.map(w => `⚠ ${w}`).join("<br>")}</div>`
+        : `<div class="muted">No degeneracy warnings — a gradeable, multi-regime, loss-bearing sample.</div>`;
+      return intro + modeSel +
+        `<div style="margin-bottom:8px">
+          <span class="badge">${r.validating ? "VALIDATING" : "not validating"}</span>
+          <span class="badge">trades ${r.n_included}/${r.n_trades}</span>
+          <span class="badge">excluded ${r.n_excluded}</span>
+          <span class="badge">slippage-fragile ${r.slippage_fragile_n}</span></div>
+         <b>Cost-net P&L by spread-crossing assumption</b>
+         <table style="margin:4px 0 16px"><thead><tr><th>k</th><th class="num">n</th><th class="num">Win</th>
+           <th class="num">Net $</th><th class="num">Exp/trade</th><th class="num">PF</th><th class="num">MaxDD</th></tr></thead>
+           <tbody>${row("0.5 (optimistic)", k("0.5"))}${row("1.0 (pays spread)", k("1.0"))}</tbody></table>
+         <b>By structure</b> <span class="muted">(k=1.0)</span>
+         <table style="margin:4px 0 16px"><thead><tr><th>Structure</th><th class="num">n</th>
+           <th class="num">Net $</th><th class="num">Win rate</th></tr></thead><tbody>${structRows}</tbody></table>
+         ${warn}
+         <p class="muted" style="margin-top:8px">${r.disclaimer || ""}</p>`;
     }
 
     function posBadge(a) {
@@ -1107,6 +1153,7 @@
         else if (state.tab === "positions") $("#view").innerHTML = await renderPositions();
         else if (state.tab === "proposals") $("#view").innerHTML = await renderProposals();
         else if (state.tab === "calibration") $("#view").innerHTML = await renderCalibration();
+        else if (state.tab === "realmark") $("#view").innerHTML = await renderRealMark();
         else if (state.tab === "ops") $("#view").innerHTML = await renderOps();
         else $("#view").innerHTML = await renderPaper();
       } catch (e) { showErr(e); }
@@ -1170,6 +1217,11 @@
           } else if (act === "resolve") {
             const d = await api("POST", "/outcomes/resolve?min_age_days=0");
             alert("Resolved " + d.resolved + " decision(s) against current prices.");
+            render();
+          } else if (act === "rm-run") {
+            const mode = ($("#rmMode") && $("#rmMode").value) || "engine";
+            $("#view").innerHTML = `<div class="empty">Running real-mark validation (${mode})…</div>`;
+            state.realmark = await api("GET", `/backtest/real-mark?mode=${mode}`);
             render();
           } else if (act === "pos-refresh") {
             render();

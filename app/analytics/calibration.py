@@ -37,6 +37,20 @@ def _fidelity(o: DecisionOutcome) -> int:
     return _FIDELITY.get(o.outcome_source, 0)
 
 
+def _horizon(dte_at_entry: int | None) -> str:
+    """Bucket a decision by its trade horizon so one ledger reports 0DTE, short-DTE
+    and swing calibration side by side (Phase 4: merged horizons, one scorecard)."""
+    if dte_at_entry is None:
+        return "unknown"
+    if dte_at_entry <= 1:
+        return "0DTE"
+    if dte_at_entry <= 5:
+        return "1-5DTE"
+    if dte_at_entry <= 55:
+        return "swing"
+    return "longer"
+
+
 def _vol_regime(iv_rank: float | None) -> str | None:
     """Bucket IV rank into cheap/fair/rich/extreme (accepts 0-1 or 0-100)."""
     if iv_rank is None:
@@ -87,6 +101,7 @@ class Scorecard(BaseModel):
     by_strategy: list[GroupStat] = Field(default_factory=list)
     by_direction: list[GroupStat] = Field(default_factory=list)
     by_vol_regime: list[GroupStat] = Field(default_factory=list)
+    by_horizon: list[GroupStat] = Field(default_factory=list)  # 0DTE / 1-5DTE / swing
     # Is this a trustworthy validation source? "real_marks" when most decisive
     # outcomes are option-mark / paper-trade P&L; "proxy_only" when it rests on the
     # directional underlying proxy; "insufficient" when nothing is decisive.
@@ -281,6 +296,7 @@ def build_scorecard(
         by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),
         by_vol_regime=_grouped(regime_pairs, lambda s: _vol_regime(s.iv_rank)),
+        by_horizon=_grouped(pairs, lambda s: _horizon(s.dte_at_entry)),
         validation_grade=grade,
         warnings=_degeneracy_warnings(decisive),
         note=(

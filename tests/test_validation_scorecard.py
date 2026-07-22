@@ -22,7 +22,7 @@ from app.domain.trades import RiskPlan, TradePlan
 _GEN = datetime(2026, 6, 1, tzinfo=UTC)
 
 
-def _snap(did: str, *, iv_rank: float, score: float = 0.7) -> DecisionSnapshot:
+def _snap(did: str, *, iv_rank: float, score: float = 0.7, dte: int = 46) -> DecisionSnapshot:
     plan = TradePlan(
         symbol="AAA", direction=Direction.BULLISH, strategy=StrategyType.BULL_PUT_SPREAD,
         legs=[], net_debit=-100.0, contracts=1,
@@ -34,7 +34,7 @@ def _snap(did: str, *, iv_rank: float, score: float = 0.7) -> DecisionSnapshot:
         direction=Direction.BULLISH, strategy=StrategyType.BULL_PUT_SPREAD, generated_at=_GEN,
         composite_score=score, probability_of_profit=0.7, iv_rank=iv_rank, entry_spot=100.0,
         entry_net_per_share=-1.0, max_loss_usd=400.0, max_profit_usd=100.0, contracts=1,
-        expiration=date(2026, 7, 17), dte_at_entry=46, trade_plan=plan,
+        expiration=date(2026, 7, 17), dte_at_entry=dte, trade_plan=plan,
     )
 
 
@@ -75,6 +75,21 @@ def test_scorecard_flags_no_loss_single_regime_book() -> None:
     card = build_scorecard(snaps, outs)
     assert any("loss" in w for w in card.warnings)
     assert any("single vol regime" in w and "extreme" in w for w in card.warnings)
+
+
+def test_scorecard_reports_per_horizon_calibration() -> None:
+    # Phase 4: one ledger, calibration bucketed by trade horizon (0DTE/1-5DTE/swing).
+    snaps = [
+        _snap("z", iv_rank=0.5, dte=0), _snap("s", iv_rank=0.5, dte=3),
+        _snap("w1", iv_rank=0.5, dte=30), _snap("w2", iv_rank=0.5, dte=45),
+    ]
+    outs = [
+        _marks_outcome("z", 40, 1), _marks_outcome("s", -30, 2),
+        _marks_outcome("w1", 120, 3), _marks_outcome("w2", -50, 4),
+    ]
+    card = build_scorecard(snaps, outs)
+    horizons = {g.key: g.n for g in card.by_horizon}
+    assert horizons == {"0DTE": 1, "1-5DTE": 1, "swing": 2}
 
 
 def test_scorecard_grades_proxy_only_when_no_real_marks() -> None:

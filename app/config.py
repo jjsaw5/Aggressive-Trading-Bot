@@ -260,6 +260,11 @@ class Settings(BaseSettings):
     # deliver ~15-min-delayed equity quotes; set this to arm the freshness gate's
     # delayed-data check (dead when left at 0 across every provider). 0 = real-time.
     fmp_quote_delay_minutes: int = 0
+    # Session-aware scanning (Phase 4): skip the periodic research scan when the
+    # market is fully closed (overnight / weekends / holidays) instead of running
+    # 24/7 and wasting API budget on stale off-hours data. Extended (pre/post)
+    # sessions still scan. Set True to force round-the-clock scans.
+    scan_when_closed: bool = False
     provider_market_data: ProviderName = ProviderName.MOCK
     provider_options_flow: ProviderName = ProviderName.MOCK
     provider_options_chain: ProviderName = ProviderName.MOCK

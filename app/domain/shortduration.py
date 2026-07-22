@@ -500,6 +500,15 @@ class ScoreCard(BaseModel):
     model_version: str = ""
     risk_policy_version: str = ""
     weights: dict[str, float] = Field(default_factory=dict)
+    # Conviction trust (Conviction-Scanner spec §6, honest degrade). Until a live
+    # calibration gate is established and green, `total` is a hand-weighted
+    # TRADABILITY rank, NOT calibrated conviction — surfaced as such rather than
+    # displayed as earned confidence. `pop_available` is False when the
+    # probability-of-profit could not be computed (e.g. missing IV) — the exact
+    # blank-POP case that must not read as high conviction.
+    conviction_status: str = "UNCALIBRATED"  # UNCALIBRATED | CALIBRATED
+    pop_available: bool = True
+    conviction_note: str = ""
 
     @property
     def normalized(self) -> float:

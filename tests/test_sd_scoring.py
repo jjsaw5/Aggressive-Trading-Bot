@@ -156,6 +156,22 @@ def test_score_candidate_missing_input_is_low_not_neutral() -> None:
     assert liq.raw < 0.5 and "no data" in liq.explanation.lower()
 
 
+def test_conviction_stamped_uncalibrated_and_flags_missing_pop() -> None:
+    # Honest degrade: the hand-weighted score is a TRADABILITY rank, never displayed
+    # as earned conviction until a calibration gate is green.
+    ctx = SetupContext(symbol="SPY", now=_NOW, regime=_regime(), levels=_levels(), change_pct=0.8)
+    card = score_candidate(ctx, _detection(), chain=_chain(), iv=_iv())
+    assert card.conviction_status == "UNCALIBRATED"
+    assert card.pop_available is True
+    assert "UNCALIBRATED" in card.summary and "tradability" in card.summary.lower()
+    assert "not calibrated conviction" in card.summary.lower()
+    # No IV -> POP uncomputable: must not read as high conviction (the blank-POP case).
+    blind = score_candidate(ctx, _detection(), chain=_chain(), iv=None)
+    assert blind.pop_available is False
+    assert "POP unknown" in blind.summary
+    assert "pop uncomputable" in blind.conviction_note.lower()
+
+
 def test_0dte_v2_weights_are_configured_and_versioned() -> None:
     # v2 rebalance: more on structure + liquidity, less on raw flow.
     from app.config import get_settings

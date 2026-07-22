@@ -810,14 +810,19 @@
         <div class="banner ${riskCls}" style="margin-top:8px"><b>Reversal risk: ${th.reversal_risk.toUpperCase()}</b>
           ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
         <div class="proxy-note" style="margin-top:6px">Informational only — this never changes the score or blocks entry.</div></div>`;
+      const uncal = !sc || sc.conviction_status !== "CALIBRATED";
+      const convBanner = `<div class="banner ${uncal ? 'regime-stop' : ''}" style="margin-top:8px">
+        <b>${uncal ? '⚠ UNCALIBRATED — tradability rank, not conviction' : 'CALIBRATED conviction'}</b>
+        ${sc && sc.pop_available === false ? ' <span class="neg">· POP unknown (no IV)</span>' : ''}
+        ${sc && sc.conviction_note ? `<div class="muted" style="margin-top:4px">${sc.conviction_note}</div>` : ''}</div>`;
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
-        <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
+        <div class="sub">State <span class="pill">${c.state}</span> · <span class="muted">tradability</span> <strong>${(c.score*100).toFixed(0)}</strong>/100
           · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
           ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}
           ${c.scoring_model_version ? '· model <code>'+c.scoring_model_version+'</code>' : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
-        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + thesisCard + gate + contract + exitPlan + signalMeta;
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + convBanner + thesisCard + gate + contract + exitPlan + signalMeta;
       let factors = `<div class="muted">No scorecard.</div>`;
       if (sc) {
         const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>

@@ -121,9 +121,28 @@ def score_candidate(
         "risk_quality": c_rr,
     }
     top = sorted(factors, key=lambda f: f.points, reverse=True)[:2]
+
+    # Honest degrade (Conviction-Scanner spec §6): no conviction feature has cleared
+    # the validation gate and no live calibration exists, so this number is a
+    # hand-weighted TRADABILITY rank, not calibrated conviction. Say so. And when IV
+    # is absent the probability-of-profit is uncomputable — that must never read as
+    # high conviction (it's the blank-POP case).
+    pop_available = comps["volatility"].value is not None
+    conviction_status = "UNCALIBRATED"
+    if not pop_available:
+        conviction_note = (
+            "POP uncomputable (no IV) — tradability rank only; this is a clean "
+            "structure, not a predicted winner. Your thesis required."
+        )
+    else:
+        conviction_note = (
+            "Hand-weighted tradability rank, not validated/calibrated conviction "
+            "(no feature has cleared the net-of-cost validation gate). Your thesis required."
+        )
+    stamp = "UNCALIBRATED" + ("" if pop_available else " · POP unknown")
     summary = (
-        f"{cat} score {total:.0f}/100 (conf {overall:.2f}, data {data_quality:.2f}). "
-        f"Led by {top[0].label} & {top[1].label}."
+        f"[{stamp}] {cat} tradability {total:.0f}/100 (data {data_quality:.2f}). "
+        f"Led by {top[0].label} & {top[1].label}. Not calibrated conviction."
     )
     return ScoreCard(
         dte_category=cat, total=total, overall_confidence=overall, factors=factors,
@@ -131,4 +150,6 @@ def score_candidate(
         model_version=settings.scoring_model_version,
         risk_policy_version=settings.risk_policy_version,
         weights={k: float(weights.get(k, 0.0)) for k in keys},
+        conviction_status=conviction_status, pop_available=pop_available,
+        conviction_note=conviction_note,
     )

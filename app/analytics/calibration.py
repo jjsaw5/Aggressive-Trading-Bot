@@ -19,7 +19,36 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.analytics.metrics import expectancy, max_drawdown, profit_factor
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot, OutcomeResult
+
+# Outcome fidelity for de-duplication: a closed paper trade (realized fill) and a
+# live option-mark P&L are real dollars; the underlying-vs-breakeven proxy is a
+# directional read with no P&L. Higher wins when a decision has several outcomes.
+_FIDELITY = {
+    "paper_trade": 3,
+    "option_marks": 2,
+    "option_marks_bs_fallback": 2,
+    "underlying_vs_breakeven": 1,
+}
+
+
+def _fidelity(o: DecisionOutcome) -> int:
+    return _FIDELITY.get(o.outcome_source, 0)
+
+
+def _vol_regime(iv_rank: float | None) -> str | None:
+    """Bucket IV rank into cheap/fair/rich/extreme (accepts 0-1 or 0-100)."""
+    if iv_rank is None:
+        return None
+    r = iv_rank if iv_rank <= 1.0 else iv_rank / 100.0
+    if r < 0.25:
+        return "cheap"
+    if r < 0.50:
+        return "fair"
+    if r <= 0.70:
+        return "rich"
+    return "extreme"
 
 
 class Bucket(BaseModel):
@@ -47,10 +76,22 @@ class Scorecard(BaseModel):
     realized_win_rate: float | None = None
     calibration_gap: float | None = None
     brier_score: float | None = None
+    # Cost-adjusted P&L metrics, from outcomes that carry a realized dollar P&L
+    # (real option marks or a closed paper trade); the underlying proxy is excluded.
+    net_pnl_usd: float | None = None
+    expectancy_usd: float | None = None
+    profit_factor: float | None = None
+    max_drawdown_usd: float | None = None
     pop_buckets: list[Bucket] = Field(default_factory=list)
     score_buckets: list[Bucket] = Field(default_factory=list)
     by_strategy: list[GroupStat] = Field(default_factory=list)
     by_direction: list[GroupStat] = Field(default_factory=list)
+    by_vol_regime: list[GroupStat] = Field(default_factory=list)
+    # Is this a trustworthy validation source? "real_marks" when most decisive
+    # outcomes are option-mark / paper-trade P&L; "proxy_only" when it rests on the
+    # directional underlying proxy; "insufficient" when nothing is decisive.
+    validation_grade: str = "insufficient"
+    warnings: list[str] = Field(default_factory=list)
     note: str = ""
 
 
@@ -69,11 +110,10 @@ def select_scoring_outcomes(
         if cur is None:
             best[o.decision_id] = o
             continue
-        cur_paper = cur.outcome_source == "paper_trade"
-        new_paper = o.outcome_source == "paper_trade"
-        if new_paper and not cur_paper:
+        cf, nf = _fidelity(cur), _fidelity(o)
+        if nf > cf:
             best[o.decision_id] = o
-        elif new_paper == cur_paper and (o.elapsed_days or 0) >= (cur.elapsed_days or 0):
+        elif nf == cf and (o.elapsed_days or 0) >= (cur.elapsed_days or 0):
             best[o.decision_id] = o
     return best
 
@@ -127,6 +167,33 @@ def _grouped(
     return out
 
 
+def _degeneracy_warnings(
+    decisive: list[tuple[DecisionSnapshot, DecisionOutcome]]
+) -> list[str]:
+    """Flag a sample that cannot yet grade the score: too few losses (an unpaid
+    short-vol tail reads as a win streak) or winners concentrated in one vol
+    regime. Same guard the sibling scanner uses, so a lucky run never passes
+    silently as validation."""
+    warns: list[str] = []
+    if not decisive:
+        return warns
+    losses = sum(1 for _, o in decisive if o.result == OutcomeResult.LOSS)
+    if losses < 2:
+        warns.append(
+            f"only {losses} loss in {len(decisive)} decisive outcomes — the score "
+            "cannot be calibrated against outcomes it has never seen (unpaid "
+            "short-vol tail). Accumulate more resolved trades before trusting."
+        )
+    win_regimes = {_vol_regime(s.iv_rank) for s, o in decisive if o.result == OutcomeResult.WIN}
+    win_regimes.discard(None)
+    if len(win_regimes) == 1:
+        warns.append(
+            f"all winners sit in a single vol regime ({next(iter(win_regimes))}) — "
+            "concentrated exposure, not diversified edge."
+        )
+    return warns
+
+
 def build_scorecard(
     snapshots: list[DecisionSnapshot], outcomes: list[DecisionOutcome]
 ) -> Scorecard:
@@ -136,6 +203,21 @@ def build_scorecard(
 
     decisive = [(s, o) for s, o in pairs if o.result in (OutcomeResult.WIN, OutcomeResult.LOSS)]
     wins = sum(1 for _, o in decisive if o.result == OutcomeResult.WIN)
+
+    # Cost-adjusted P&L metrics from outcomes carrying a realized dollar P&L (real
+    # marks or a closed paper trade), ordered by resolution time for drawdown.
+    priced = sorted(
+        [(s, o) for s, o in pairs if o.realized_pnl_usd is not None],
+        key=lambda so: so[1].resolved_at,
+    )
+    pnls = [o.realized_pnl_usd for _, o in priced]
+    real_n = sum(1 for _, o in decisive if _fidelity(o) >= 2)
+    grade = (
+        "real_marks" if decisive and real_n >= max(1, len(decisive) // 2)
+        else "proxy_only" if decisive
+        else "insufficient"
+    )
+    regime_pairs = [(s, o) for s, o in pairs if _vol_regime(s.iv_rank) is not None]
 
     # Direction accuracy over outcomes that carry a directional verdict.
     dir_calls = [o for _, o in pairs if o.direction_correct is not None]
@@ -190,13 +272,21 @@ def build_scorecard(
             else None
         ),
         brier_score=brier,
+        net_pnl_usd=round(sum(pnls), 2) if pnls else None,
+        expectancy_usd=expectancy(pnls),
+        profit_factor=profit_factor(pnls),
+        max_drawdown_usd=max_drawdown(pnls) if pnls else None,
         pop_buckets=[b for b in pop_buckets if b.n > 0],
         score_buckets=[b for b in score_buckets if b.n > 0],
         by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),
+        by_vol_regime=_grouped(regime_pairs, lambda s: _vol_regime(s.iv_rank)),
+        validation_grade=grade,
+        warnings=_degeneracy_warnings(decisive),
         note=(
-            "Win rate is over decisive outcomes (wins+losses); scratches/unknowns "
-            "excluded. Underlying-vs-breakeven outcomes are an intrinsic-at-horizon "
-            "proxy; paper-trade outcomes use realized P&L."
+            "P&L metrics are net of costs and come only from option-mark / "
+            "paper-trade outcomes; the underlying-vs-breakeven proxy carries no "
+            "P&L. validation_grade flags whether this rests on real marks. Win "
+            "rate is over decisive outcomes (wins+losses); scratches excluded."
         ),
     )

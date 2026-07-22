@@ -685,8 +685,21 @@
       </div>`;
     }
 
+    // A defined-risk cost & probability calculator, not a picker: no signal here has
+    // shown net-of-cost edge out-of-sample (docs/FLOW_FEATURE_VALIDATION_RESULT.md).
+    // Shown on every short-duration tab so the framing is never lost.
+    function sdTruthBanner() {
+      return `<div class="banner regime-warn" style="margin-bottom:12px">
+        <b>What this is:</b> a defined-risk <b>tradability + cost/odds</b> calculator — not a trade signal.
+        <div class="muted" style="margin-top:4px">Across a full-cycle real-mark backtest, a pre-registered flow
+        experiment, and out-of-sample feature validation (pricing <i>and</i> flow), <b>no feature has shown
+        net-of-cost edge</b> — every layer reduces to directional beta + spread tax. These ranks show you the
+        odds (POP), the spread tax (cost-drag), the regime and what has to happen. <b>The thesis is yours.</b></div></div>`;
+    }
+
     const SD_BUCKET_LABEL = {
-      0: "🟢 Ready to trade", 1: "🟡 Armed — entry blocked", 2: "⚪ Watchlist",
+      0: "🟢 Tradable structure — gates clear (not a validated pick)",
+      1: "🟡 Structure ready — entry blocked", 2: "⚪ Watchlist",
       3: "🔵 In flight", 4: "▫️ Evaluating", 5: "🔴 Rejected / closed",
     };
     function sdBucket(c) {
@@ -857,7 +870,7 @@
         return `<div class="empty">No setups detected. Run a scan.</div>`;
       const COLS = 11;
       const head = `<thead><tr><th>#</th><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
-        <th>State</th><th class="num">Score</th><th class="num">R:R</th><th class="num">Risk</th>
+        <th>State</th><th class="num">Tradability</th><th class="num">R:R</th><th class="num">Risk</th>
         <th>Entry</th><th></th></tr></thead>`;
       // Sort by actionability (mirrors the backend) so grouping is correct even
       // for the combined 0DTE+1-5DTE view, which concatenates two ranked lists.
@@ -901,7 +914,7 @@
         <td class="num">${l.relative_volume == null ? "—" : l.relative_volume + "x"}</td></tr>`).join("");
       const newsRows = (news || []).map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
         <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
-      return toolbar + regimeBanner(r.regime) + `
+      return toolbar + sdTruthBanner() + regimeBanner(r.regime) + `
         <div class="card" style="margin-bottom:14px"><h3>Candidate board (0DTE)</h3>${sdCandTable(cands)}</div>
         <div class="autogrid">
         <div class="card"><h3>Market internals <span class="proxy-note">(breadth = universe proxy)</span></h3>
@@ -925,7 +938,7 @@
         <span class="muted">Trend + catalyst continuation. Setups only — contract selection is Phase 4.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
-      return toolbar + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
+      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
         <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
         <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
         <tbody>${evRows || `<tr><td colspan="3" class="muted">none</td></tr>`}</tbody></table></div>`;
@@ -936,7 +949,8 @@
         api("GET", "/short-duration/0dte/candidates?limit=100"),
         api("GET", "/short-duration/1-5dte/candidates?limit=100"),
       ]);
-      return `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
+      return sdTruthBanner()
+        + `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
         + sdCandTable([...zero, ...short]);
     }
 

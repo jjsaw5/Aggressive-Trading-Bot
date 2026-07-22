@@ -22,6 +22,8 @@ from app.backtest.walk_forward import walk_forward_folds
 
 _K_VERDICT = 1.0
 _MIN_LOSSES = 2  # loss floor per arm (degeneracy guard)
+_MIN_STRESS_ARM = 3  # min CONFIRM and OPPOSE trades IN the drawdown to even test it
+_MIN_POOLED_ARM = 25  # min per-arm sample for a credible pooled differential claim
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,8 @@ class ExperimentResult:
     same_sign_all_folds: bool
     stress_fold_ok: bool  # CONFIRM−OPPOSE held the same sign through the drawdown
     stress_fold_spread: float | None
+    stress_confirm_n: int  # CONFIRM trades IN the drawdown (0 => stress test vacuous)
+    stress_oppose_n: int
     grid_summary: object  # GridSummary over all folds' OOS lifts
     pooled_ci: DiffCI | None  # full-sample pooled CONFIRM−OPPOSE at k=1.0 (best θ)
     loss_floor_ok: bool
@@ -131,21 +135,28 @@ def run_experiment(
         all(s > 0 for s in test_spreads) or all(s < 0 for s in test_spreads)
     )
 
-    # Mandatory stress fold: the fold whose test window overlaps the drawdown. The
-    # lift MUST hold the SAME (positive) sign through it — a flow edge that only
-    # works in the up-tape and reverses in the selloff fails here.
-    stress_spread: float | None = None
-    stress_fold_ok = False
-    if stress_window is not None:
-        s_lo, s_hi = stress_window
-        for fr, f in zip(fold_results, folds, strict=True):
-            if f.test_start <= s_hi and f.test_end >= s_lo and fr.test_spread is not None:
-                stress_spread = fr.test_spread
-                stress_fold_ok = fr.test_spread > 0
-                break
     # Full-sample estimate at the globally-best θ (reported alongside, not the verdict).
     best_global = _tune(trades, grid, _K_VERDICT)
     pooled_ci = pooled_confirm_minus_oppose(trades, best_global, _K_VERDICT) if best_global else None
+
+    # Mandatory stress test: CONFIRM−OPPOSE among trades ENTERED IN the drawdown,
+    # at the globally-best θ. It must have real trades in BOTH arms within the
+    # drawdown — you cannot claim the lift "holds through the drawdown" if the
+    # CONFIRM arm is empty there — and be positive. Vacuous or reversed => fail.
+    stress_spread: float | None = None
+    stress_confirm_n = stress_oppose_n = 0
+    stress_fold_ok = False
+    if stress_window is not None and best_global is not None:
+        s_lo, s_hi = stress_window
+        s_trades = [t for t in trades if s_lo <= t.entry_date <= s_hi]
+        stress_confirm_n = sum(1 for t in s_trades if flow_arm(t.flow, t.direction, best_global) == "CONFIRM")
+        stress_oppose_n = sum(1 for t in s_trades if flow_arm(t.flow, t.direction, best_global) == "OPPOSE")
+        ci_s = pooled_confirm_minus_oppose(s_trades, best_global, _K_VERDICT)
+        stress_spread = ci_s.point if ci_s else None
+        stress_fold_ok = (
+            stress_confirm_n >= _MIN_STRESS_ARM and stress_oppose_n >= _MIN_STRESS_ARM
+            and stress_spread is not None and stress_spread > 0
+        )
     loss_floor_ok = best_global is not None and (
         _arm_losses(trades, best_global, "CONFIRM", _K_VERDICT) >= _MIN_LOSSES
         and _arm_losses(trades, best_global, "OPPOSE", _K_VERDICT) >= _MIN_LOSSES
@@ -164,16 +175,28 @@ def run_experiment(
         reasons.append(f"pooled spread ${pooled_ci.point:.2f} below material margin ${material_margin:.2f}")
     if not loss_floor_ok:
         reasons.append("an arm is below the real-loss floor (uncalibratable)")
-    if stress_window is not None and not stress_fold_ok:
+    if pooled_ci is not None and (pooled_ci.n_a < _MIN_POOLED_ARM or pooled_ci.n_b < _MIN_POOLED_ARM):
         reasons.append(
-            "CONFIRM−OPPOSE did not hold a positive sign through the April-2025 "
-            f"stress fold (spread {stress_spread}) — flow reverses in the drawdown"
+            f"pooled comparison too thin ({pooled_ci.n_a} CONFIRM vs {pooled_ci.n_b} OPPOSE, "
+            f"floor {_MIN_POOLED_ARM}/arm) — a differential claim can't rest on this few trades"
         )
+    if stress_window is not None and not stress_fold_ok:
+        if stress_confirm_n < _MIN_STRESS_ARM or stress_oppose_n < _MIN_STRESS_ARM:
+            reasons.append(
+                f"stress test vacuous — only {stress_confirm_n} CONFIRM / {stress_oppose_n} OPPOSE "
+                "trades entered in the April-2025 drawdown; the flow-confirmed edge cannot be tested "
+                "where it must hold (flow-confirmed trend-longs barely exist in a selloff)"
+            )
+        else:
+            reasons.append(
+                f"CONFIRM−OPPOSE did not hold positive through the drawdown (spread {stress_spread})"
+            )
 
     verdict = "fail_to_reject_H0" if reasons else "candidate_edge_proxy_only"
     return ExperimentResult(
         n_trades=len(trades), n_folds=len(folds), fold_results=fold_results,
         same_sign_all_folds=same_sign, stress_fold_ok=stress_fold_ok,
-        stress_fold_spread=stress_spread, grid_summary=summarize_grid(all_oos),
+        stress_fold_spread=stress_spread, stress_confirm_n=stress_confirm_n,
+        stress_oppose_n=stress_oppose_n, grid_summary=summarize_grid(all_oos),
         pooled_ci=pooled_ci, loss_floor_ok=loss_floor_ok, verdict=verdict, reasons=reasons,
     )

@@ -174,7 +174,8 @@ def test_stress_fold_reversal_fails() -> None:
     grid = [FlowThresholds(lean=0.1, sweep=0.2, prem=1.0)]
     res = run_experiment(out, grid, n_folds=2, embargo_days=55, material_margin=15.0,
                          stress_window=(date(2025, 2, 15), date(2025, 4, 30)))
-    assert res.stress_fold_spread is not None  # a fold overlapped the drawdown
+    assert res.stress_fold_spread is not None  # trades existed in the drawdown window
+    assert res.stress_confirm_n >= 3 and res.stress_oppose_n >= 3  # both arms present
     assert res.stress_fold_ok is False  # flow reversed in the selloff
     assert res.verdict == "fail_to_reject_H0"
-    assert any("stress fold" in r for r in res.reasons)
+    assert any("drawdown" in r for r in res.reasons)

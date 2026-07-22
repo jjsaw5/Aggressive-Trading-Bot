@@ -36,6 +36,7 @@ _AUTH_PARAMS = {"apikey", "api_key", "token", "auth_token"}
 # Ordered (path-substring -> TTL seconds). First match wins; else DEFAULT_TTL.
 # Volatile market data gets seconds; static reference data gets hours/days.
 TTL_RULES: list[tuple[str, int]] = [
+    ("/historic", 86_400),  # per-contract history: immutable once the day closes
     ("profile", 86_400),  # fundamentals: effectively static intraday
     ("iv-rank", 3_600),  # 1Y IV series
     ("historical-price-eod", 3_600),  # daily bars

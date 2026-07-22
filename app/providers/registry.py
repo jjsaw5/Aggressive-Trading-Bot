@@ -24,6 +24,7 @@ from app.providers.base import (
     CalendarProvider,
     EconomicCalendarProvider,
     FundamentalsProvider,
+    HistoricalOptionsProvider,
     IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
@@ -60,6 +61,13 @@ def _uw():
     from app.providers.unusual_whales.client import UnusualWhalesProvider
 
     return UnusualWhalesProvider()
+
+
+@lru_cache
+def _uw_historic():
+    from app.providers.unusual_whales.historical import UWHistoricalOptionsProvider
+
+    return UWHistoricalOptionsProvider()
 
 
 @lru_cache
@@ -116,6 +124,20 @@ def _resolve(name: ProviderName, capability: str, iface: type):
 
 def market_data_provider() -> MarketDataProvider:
     return _resolve(settings.provider_market_data, "market_data", MarketDataProvider)
+
+
+def historical_options_provider() -> HistoricalOptionsProvider:
+    """Real per-contract historical marks for validating backtests. Gated on the
+    UW historic entitlement being explicitly enabled AND the token present — off
+    by default, so nothing calls the paid endpoint until it is licensed."""
+    if not settings.uw_historic_enabled:
+        raise ProviderConfigError(
+            "UW_HISTORIC_ENABLED is false — real-mark backtesting is off until the "
+            "UW historic API entitlement is confirmed on this token."
+        )
+    if not settings.unusual_whales_api_key:
+        raise ProviderConfigError("UNUSUAL_WHALES_API_KEY is not set")
+    return _uw_historic()
 
 
 def fundamentals_provider() -> FundamentalsProvider:

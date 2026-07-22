@@ -215,6 +215,22 @@ class Settings(BaseSettings):
     commission_per_contract_usd: float = 0.65
     resolution_slippage_spread_fraction: float = 1.0
     resolution_min_slippage_per_share: float = 0.01
+
+    # --- Real-mark historical backtest (UW per-contract history) ---
+    # OFF until the UW *API tier* entitlement for the historic endpoint is
+    # confirmed on this deployment's token (the website subscription is NOT the
+    # API add-on). The fill model crosses real NBBO at a fraction `k` of the
+    # half-spread: k=0.5 fills at mid (optimistic), k=1.0 fully pays the spread.
+    # Every backtest runs BOTH and a strategy that only clears at 0.5 is labeled
+    # slippage-fragile, never certified. Liquidity guard rejects an entry-day
+    # contract that could not realistically have been filled.
+    uw_historic_enabled: bool = False
+    bt_fill_k_optimistic: float = 0.5
+    bt_fill_k_conservative: float = 1.0
+    bt_min_oi: int = 250
+    bt_min_vol: int = 20
+    bt_max_spread_pct: float = 0.15
+    bt_commission_per_contract: float = 0.65  # set to your broker's real rate
     max_account_risk_pct: float = 0.15
     max_trade_risk_pct: float = 0.05
     max_concurrent_positions: int = 4

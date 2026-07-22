@@ -275,6 +275,12 @@ async def _score_symbol(
     except Exception as exc:  # noqa: BLE001
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
 
+    # Enrich the IV context with a basic put/call skew read from the chain we just
+    # fetched (the provider's get_iv_context has no chain to compute it from).
+    if iv is not None and chain is not None and chain.underlying_price:
+        from app.quant.iv import put_call_iv_skew
+        iv.iv_skew = put_call_iv_skew(chain, chain.underlying_price)
+
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
     # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
     # quote, not the 120s broad-screen budget. Evaluate at the trade-ready

@@ -117,9 +117,13 @@ def contract_liquidity(chain: OptionChain | None, direction: Direction) -> Score
 
 
 def volatility_suitability(iv: IVContext | None) -> ScoreComponent:
-    if iv is None or iv.iv_rank is None:
-        return ScoreComponent(value=None, explanation="No IV rank.")
-    r = iv.iv_rank
+    # Two INDEPENDENT reads of how rich IV is: iv_rank (min-max window, spike-
+    # sensitive) and iv_percentile (distribution-based, robust). Averaging them is
+    # steadier than either alone. Term structure and the rank source then adjust it.
+    if iv is None or (iv.iv_rank is None and iv.iv_percentile is None):
+        return ScoreComponent(value=None, explanation="No IV rank/percentile.")
+    reads = [x for x in (iv.iv_rank, iv.iv_percentile) if x is not None]
+    r = sum(reads) / len(reads)
     # Directional debit expression: cheap enough to buy, live enough to move.
     if 0.2 <= r <= 0.5:
         val = 1.0
@@ -127,7 +131,20 @@ def volatility_suitability(iv: IVContext | None) -> ScoreComponent:
         val = 0.5 + r  # very low IV -> muted movement
     else:
         val = max(0.2, 1.0 - (r - 0.5))  # rich IV -> crush risk on debits
-    return ScoreComponent(value=round(min(1.0, val), 3), explanation=f"IV rank {r:.2f}")
+    parts = [f"IV level {r:.2f} ({len(reads)}-feature)"]
+    # Backwardation (front IV richer than back, negative slope) warns of an event /
+    # IV-crush ahead — a debit buyer pays up now and gets crushed on the print.
+    if iv.term_structure_slope is not None and iv.term_structure_slope < -0.01:
+        val *= 0.85
+        parts.append("backwardated (crush risk)")
+    # An HV-proxy "rank" is a realized-vol stand-in, NOT the traded IV surface —
+    # discount it and label it so it is never mistaken for a true IV rank.
+    if iv.iv_rank_source == "hv_proxy":
+        val *= 0.85
+        parts.append("HV-proxy, not true IV rank")
+    if iv.iv_skew is not None:
+        parts.append(f"skew {iv.iv_skew:+.2f}")
+    return ScoreComponent(value=round(min(1.0, val), 3), explanation="; ".join(parts))
 
 
 def catalyst_news(ctx: SetupContext, news: NewsScore | None) -> ScoreComponent:

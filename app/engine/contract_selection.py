@@ -96,7 +96,12 @@ def select_long_contract(
     as_of: date,
     sel: SelectionConfig | None = None,
     liq: OptionLiquidityConfig | None = None,
+    *,
+    prefer_strike: float | None = None,
 ) -> ContractChoice | None:
+    """Pick the best long leg. `prefer_strike` (e.g. a strike carrying real
+    same-direction options flow) adds a proximity term that breaks ties toward
+    that strike WITHOUT overriding the liquidity/delta requirements."""
     sel = sel or SelectionConfig()
     liq = liq or OptionLiquidityConfig()
 
@@ -131,7 +136,13 @@ def select_long_contract(
         # DTE fit: prefer the middle of the window.
         mid_dte = (sel.min_dte + sel.max_dte) / 2
         dte_fit = 1.0 - abs(dte - mid_dte) / mid_dte
-        fit = round(0.5 * liq_score + 0.35 * delta_fit + 0.15 * dte_fit, 4)
+        if prefer_strike and prefer_strike > 0:
+            # Flow-strike proximity breaks ties toward where the money is going,
+            # holding liquidity dominant (0.45) so a hot but illiquid strike loses.
+            strike_fit = max(0.0, 1.0 - abs(c.strike - prefer_strike) / prefer_strike)
+            fit = round(0.45 * liq_score + 0.30 * delta_fit + 0.10 * dte_fit + 0.15 * strike_fit, 4)
+        else:
+            fit = round(0.5 * liq_score + 0.35 * delta_fit + 0.15 * dte_fit, 4)
 
         if best is None or fit > best.fit_score:
             best = ContractChoice(contract=c, fit_score=fit)

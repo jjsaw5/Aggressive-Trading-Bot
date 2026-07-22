@@ -313,14 +313,16 @@ async def _score_symbol(
         # own structure. A rejected setup yields a single non-tradeable candidate.
         contracts: list[ContractResult] = [ContractResult(None, ContractRecommendation(description=""))]
         if chain is not None:
+            from app.shortduration.strategies.base import dominant_flow_strike
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
                 policy=short_duration_policy(det.dte_category, equity=equity),
                 as_of=now.date(), open_risk_usd=open_risk, swing=is_swing(det.strategy),
+                prefer_strike=dominant_flow_strike(ctx.flow, det.direction),
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
-            quote_stale=stale, daily=daily, equity=equity,
+            quote_stale=stale, daily=daily, equity=equity, symbol=symbol,
         )
         thesis = build_directional_thesis(ctx, det, news_score=news)
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)

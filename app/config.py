@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     # it only changes contract sizing for research/paper. Turn OFF for real sizing.
     short_duration_paper_unconstrained: bool = False
     short_duration_max_concurrent: int = 2
+    # Max same-direction open positions within one correlation cluster (Phase 3.4):
+    # a second bullish semi is a concentrated re-bet, not diversification.
+    short_duration_max_correlated_same_dir: int = 1
     short_duration_daily_loss_pct: float = 0.05  # halt new trades past -5% on the day
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble

@@ -257,8 +257,15 @@ def daily_risk_state(now: datetime | None = None):
             consec += 1
         else:
             break
-    open_count = sum(1 for t in trades if t.status == "open")
-    return DailyRiskState(realized_pnl_usd=realized, consecutive_losses=consec, open_positions=open_count)
+    open_trades = [t for t in trades if t.status == "open"]
+    open_book = [
+        (t.symbol, t.direction.value if hasattr(t.direction, "value") else str(t.direction))
+        for t in open_trades
+    ]
+    return DailyRiskState(
+        realized_pnl_usd=realized, consecutive_losses=consec,
+        open_positions=len(open_trades), open_book=open_book,
+    )
 
 
 # --- Performance -------------------------------------------------------------

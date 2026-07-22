@@ -47,6 +47,19 @@ def mark_net_per_share(plan: TradePlan, chain: OptionChain) -> float | None:
     return round(net, 4)
 
 
+def structure_spread(plan: TradePlan, chain: OptionChain) -> float:
+    """Summed absolute bid/ask spread (per share) across the structure's legs — the
+    slippage a fill should cross. Legs the chain can't quote contribute 0 (the
+    engine's per-share floor still applies), so a partial chain never overstates it."""
+    by_key = _chain_index(chain)
+    total = 0.0
+    for leg in plan.legs:
+        c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
+        if c is not None and c.bid is not None and c.ask is not None:
+            total += max(0.0, c.ask - c.bid)
+    return round(total, 4)
+
+
 @dataclass(frozen=True)
 class StructureMark:
     """A structure marked to the live chain — the input to a real-mark P&L.

@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from app.backtest.flow_experiment import ExpTrade, pooled_confirm_minus_oppose, run_experiment
 from app.backtest.flow_proxy import (
+    FlowFeatures,
     FlowThresholds,
     aggregate_day,
     features,
@@ -60,7 +62,6 @@ def _mkraw(prem):
 
 
 def test_flow_arm_confirm_oppose_neutral() -> None:
-    from app.backtest.flow_proxy import FlowFeatures
     bull = FlowFeatures(at_ask_lean=0.5, sweep_frac=0.25, premium_z=0.0, net_call_put=0.6, voloi=0.2)
     thr = FlowThresholds(lean=0.1, sweep=0.2, prem=1.0)
     assert flow_arm(bull, "bullish", thr) == "CONFIRM"
@@ -114,3 +115,42 @@ def test_grid_summary_reports_median_not_argmax() -> None:
     assert g.frac_positive == round(3 / 5, 4)
     assert g.best_lift == 8.0
     assert bonferroni_alpha(0.05, 36) == 0.05 / 36
+
+
+# --- orchestration: honest null on a no-signal sample ------------------------
+def _confirm_feat() -> FlowFeatures:
+    return FlowFeatures(at_ask_lean=0.5, sweep_frac=0.3, premium_z=0.0, net_call_put=0.6, voloi=0.2)
+
+
+def _oppose_feat() -> FlowFeatures:
+    return FlowFeatures(at_ask_lean=-0.5, sweep_frac=0.3, premium_z=0.0, net_call_put=-0.6, voloi=0.2)
+
+
+def _no_signal_trades() -> list[ExpTrade]:
+    # Same P&L distribution for CONFIRM and OPPOSE within one regime×direction cell
+    # => the flow gate carries no information => the spread must be ~0.
+    out = []
+    base = date(2023, 1, 2)
+    pnls = [40.0, -30.0, 50.0, -60.0, 20.0, -20.0]
+    for i in range(60):
+        feat = _confirm_feat() if i % 2 == 0 else _oppose_feat()
+        # Pair (2k, 2k+1) share a P&L, so CONFIRM and OPPOSE see the SAME
+        # distribution — arm carries no information.
+        pnl = pnls[(i // 2) % len(pnls)]
+        e = base + timedelta(days=i * 5)
+        out.append(ExpTrade(entry_date=e, exit_date=e + timedelta(days=20),
+                            direction="bullish", regime="recovery",
+                            net_by_k={0.5: pnl + 5, 1.0: pnl}, flow=feat))
+    return out
+
+
+def test_within_cell_spread_and_null_verdict() -> None:
+    trades = _no_signal_trades()
+    thr = FlowThresholds(lean=0.1, sweep=0.2, prem=1.0)
+    ci = pooled_confirm_minus_oppose(trades, thr, 1.0)
+    assert ci is not None and not ci.excludes_zero  # no information -> CI spans zero
+
+    grid = [FlowThresholds(lean=lo, sweep=0.2, prem=1.0) for lo in (0.1, 0.2)]
+    res = run_experiment(trades, grid, n_folds=2, embargo_days=55, material_margin=15.0)
+    assert res.verdict == "fail_to_reject_H0"
+    assert any("CI does not exclude zero" in r or "insufficient sample" in r for r in res.reasons)

@@ -17,7 +17,9 @@ class Quote(BaseModel):
     ask: float | None = None
     volume: int | None = None
     prev_close: float | None = None
-    as_of: datetime
+    # None means the provider did not supply a usable timestamp — treated as STALE
+    # (unknown age) by the freshness gate, never silently backfilled to "now".
+    as_of: datetime | None = None
     delayed_minutes: int = 0
     source: str = "unknown"
 

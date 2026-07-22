@@ -38,6 +38,20 @@ _DEFAULT_VOL = 0.40
 _RISK_FREE = 0.04
 
 
+# This backtest reprices option legs with Black-Scholes over a synthetic (GBM) or
+# real-underlying path — it never touches a real historical option mark, so it
+# cannot see IV mispricing, skew, or gamma/theta, the very things a 0-5DTE options
+# strategy trades. Per the consolidation plan it is therefore NOT a validation
+# source; the forward-outcome Scorecard (validation_grade="real_marks") is. The
+# universe is also survivorship-biased (a hard-coded list of today's large-caps).
+_BACKTEST_DISCLAIMER = (
+    "NOT A VALIDATION SOURCE: legs are Black-Scholes-repriced (no real option "
+    "marks), so IV mispricing / skew / gamma are invisible. Use the forward-outcome "
+    "scorecard for validation. Universe is survivorship-biased (hard-coded current "
+    "large-caps); results exclude delisted/blown-up names."
+)
+
+
 @dataclass
 class BacktestReport:
     num_candidates: int
@@ -47,10 +61,14 @@ class BacktestReport:
     by_strategy: list[PerformanceStats]
     by_direction: list[PerformanceStats]
     mode: str = "simulated"
+    validating: bool = False  # a BS-repricing backtest is never a validation source
+    disclaimer: str = _BACKTEST_DISCLAIMER
 
     def as_dict(self) -> dict:
         return {
             "mode": self.mode,
+            "validating": self.validating,
+            "disclaimer": self.disclaimer,
             "num_candidates": self.num_candidates,
             "num_paths": self.num_paths,
             "num_trades": self.num_trades,

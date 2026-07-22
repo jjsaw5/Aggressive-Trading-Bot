@@ -1,11 +1,13 @@
 """Short-duration contract selection.
 
-Turns a confirmed setup into a sized, DEFINED-RISK option expression, reusing the
+Turns a confirmed setup into sized, DEFINED-RISK option expressions, reusing the
 core selection + sizing + exit-plan machinery with short-DTE-tuned configs. The
-policy is the small-account guardrail: try a near-the-money single leg first, and
-if its debit exceeds the per-trade risk cap, fall back to a defined-risk debit
-vertical that fits. If nothing liquid fits the cap, the setup is REJECTED with a
-reason — never forced.
+plural selector (`select_short_duration_contracts`) returns EVERY viable
+defined-risk expression — the near-ATM single leg AND the defined-risk debit
+vertical, whichever fit the cap — so the board offers a mix to rank. The singular
+`select_short_duration_contract` keeps the older one-best behaviour (single leg
+preferred, then spread, then reject). If nothing liquid fits the per-trade cap,
+the setup is REJECTED with a reason — never forced.
 """
 
 from __future__ import annotations
@@ -122,10 +124,11 @@ def _any_liquid(chain: OptionChain, direction: Direction, dte: DTECategory, as_o
 def _long_expression(
     chain: OptionChain, direction: Direction, dte: DTECategory,
     policy: RiskPolicy, as_of: date, open_risk_usd: float, swing: bool,
+    prefer_strike: float | None = None,
 ) -> ContractResult | None:
     """Near-the-money single leg (defined risk = debit), or None if none fits."""
     sel, liq = _configs(dte, swing)
-    choice = select_long_contract(chain, direction, as_of, sel, liq)
+    choice = select_long_contract(chain, direction, as_of, sel, liq, prefer_strike=prefer_strike)
     plan = (
         build_long_option_plan(choice.contract, direction, policy, as_of, open_risk_usd=open_risk_usd)
         if choice else None
@@ -164,6 +167,7 @@ def select_short_duration_contracts(
     as_of: date,
     open_risk_usd: float = 0.0,
     swing: bool = False,
+    prefer_strike: float | None = None,
 ) -> list[ContractResult]:
     """EVERY viable defined-risk expression for the setup — the near-ATM single leg
     AND the defined-risk debit vertical, whichever are available — so the board
@@ -177,7 +181,7 @@ def select_short_duration_contracts(
             [RejectReason.NO_VALID_CONTRACT],
         )]
     out: list[ContractResult] = []
-    long_res = _long_expression(chain, direction, dte, policy, as_of, open_risk_usd, swing)
+    long_res = _long_expression(chain, direction, dte, policy, as_of, open_risk_usd, swing, prefer_strike)
     spread_res = _spread_expression(chain, direction, dte, policy, as_of, open_risk_usd, swing)
     if long_res is not None:
         out.append(long_res)

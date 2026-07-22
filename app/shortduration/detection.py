@@ -275,6 +275,12 @@ async def _score_symbol(
     except Exception as exc:  # noqa: BLE001
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
 
+    # Enrich the IV context with a basic put/call skew read from the chain we just
+    # fetched (the provider's get_iv_context has no chain to compute it from).
+    if iv is not None and chain is not None and chain.underlying_price:
+        from app.quant.iv import put_call_iv_skew
+        iv.iv_skew = put_call_iv_skew(chain, chain.underlying_price)
+
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
     # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
     # quote, not the 120s broad-screen budget. Evaluate at the trade-ready
@@ -307,14 +313,16 @@ async def _score_symbol(
         # own structure. A rejected setup yields a single non-tradeable candidate.
         contracts: list[ContractResult] = [ContractResult(None, ContractRecommendation(description=""))]
         if chain is not None:
+            from app.shortduration.strategies.base import dominant_flow_strike
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
                 policy=short_duration_policy(det.dte_category, equity=equity),
                 as_of=now.date(), open_risk_usd=open_risk, swing=is_swing(det.strategy),
+                prefer_strike=dominant_flow_strike(ctx.flow, det.direction),
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
-            quote_stale=stale, daily=daily, equity=equity,
+            quote_stale=stale, daily=daily, equity=equity, symbol=symbol,
         )
         thesis = build_directional_thesis(ctx, det, news_score=news)
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)

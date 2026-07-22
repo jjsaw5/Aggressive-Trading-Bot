@@ -40,6 +40,28 @@ def iv_percentile(current: float, history: list[float]) -> float | None:
     return round(below / len(vals), 4)
 
 
+def put_call_iv_skew(chain, spot: float, *, band: float = 0.05) -> float | None:
+    """A basic vertical-skew read: the mean implied vol of near-OTM PUTS minus that
+    of near-OTM CALLS at a similar distance from spot. Positive means the market is
+    paying up for downside protection (fear); ~0 is symmetric. None when the chain
+    lacks usable IVs on both wings. Uses the nearest expiry present."""
+    from app.domain.enums import OptionType
+
+    if not spot or spot <= 0 or not getattr(chain, "contracts", None):
+        return None
+    exp = min((c.expiration for c in chain.contracts), default=None)
+    lo, hi = spot * (1 - band * 2), spot * (1 + band * 2)
+    puts = [c.implied_volatility for c in chain.contracts
+            if c.expiration == exp and c.option_type == OptionType.PUT
+            and c.implied_volatility and lo <= c.strike < spot]
+    calls = [c.implied_volatility for c in chain.contracts
+             if c.expiration == exp and c.option_type == OptionType.CALL
+             and c.implied_volatility and spot < c.strike <= hi]
+    if not puts or not calls:
+        return None
+    return round(sum(puts) / len(puts) - sum(calls) / len(calls), 4)
+
+
 def realized_vol(closes: list[float], window: int = 20) -> float | None:
     """Annualized realized volatility over the last `window` returns."""
     if len(closes) < window + 1:

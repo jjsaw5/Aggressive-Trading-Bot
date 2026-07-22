@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.analytics.metrics import max_drawdown
 from app.backtest.engine import BacktestResult
 
 
@@ -24,6 +25,7 @@ class PerformanceStats:
     total_pnl_usd: float
     expectancy_usd: float  # avg P&L per trade
     profit_factor: float | None  # gross wins / gross losses (None if no losses)
+    max_drawdown_usd: float  # largest peak-to-trough drop of cumulative P&L
     avg_mfe_usd: float
     avg_mae_usd: float
     avg_days_held: float
@@ -36,6 +38,7 @@ class PerformanceStats:
             "expectancy_usd": round(self.expectancy_usd, 2),
             "total_pnl_usd": round(self.total_pnl_usd, 2),
             "profit_factor": round(self.profit_factor, 2) if self.profit_factor is not None else None,
+            "max_drawdown_usd": round(self.max_drawdown_usd, 2),
             "avg_mfe_usd": round(self.avg_mfe_usd, 2),
             "avg_mae_usd": round(self.avg_mae_usd, 2),
             "avg_days_held": round(self.avg_days_held, 1),
@@ -49,6 +52,9 @@ def _stats_for(group: str, results: list[BacktestResult]) -> PerformanceStats:
     losses = [p for p in pnls if p < 0]
     gross_win = sum(wins)
     gross_loss = -sum(losses)
+    # Drawdown needs a chronological equity curve: order by close time (fall back to
+    # trade id for deterministic ordering when close times are missing/equal).
+    ordered = sorted(results, key=lambda r: (r.trade.closed_at or r.trade.opened_at, r.trade.id))
     return PerformanceStats(
         group=group,
         trades=n,
@@ -58,6 +64,7 @@ def _stats_for(group: str, results: list[BacktestResult]) -> PerformanceStats:
         total_pnl_usd=sum(pnls),
         expectancy_usd=sum(pnls) / n if n else 0.0,
         profit_factor=(gross_win / gross_loss) if gross_loss > 0 else None,
+        max_drawdown_usd=max_drawdown([r.realized_pnl_usd for r in ordered]),
         avg_mfe_usd=sum(r.trade.mfe_usd for r in results) / n if n else 0.0,
         avg_mae_usd=sum(r.trade.mae_usd for r in results) / n if n else 0.0,
         avg_days_held=sum(r.days_held for r in results) / n if n else 0.0,

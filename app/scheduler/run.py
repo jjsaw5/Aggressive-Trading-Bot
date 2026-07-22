@@ -5,9 +5,10 @@ market-calendar provider; for now it runs on a fixed interval and logs results.
 It NEVER places orders — it only produces and stores research.
 
 The cadence is configurable via SCAN_INTERVAL_MINUTES (default 180 = every 3
-hours). Because the scanner is not yet market-session-aware and runs 24/7, a
-slow baseline keeps closed-market API waste low until per-tier session-aware
-cadences land.
+hours). The scan is session-aware: it idles when the market is fully closed
+(overnight / weekends / holidays) unless SCAN_WHEN_CLOSED is set — extended
+(pre/post) sessions still scan. The full per-tier session scheduler is the
+TIERING_ENABLED path.
 """
 
 from __future__ import annotations
@@ -30,7 +31,20 @@ from app.services.scan_service import run_scan
 log = get_logger(__name__)
 
 
+def _market_is_dark(now=None) -> bool:
+    """True when the market is fully closed (overnight / weekend / holiday) — the
+    only time a session-aware scanner should idle. Extended (pre/post) sessions
+    still scan."""
+    from app.scheduling.clock import MarketClock, MarketSession
+
+    return MarketClock().session(now) in (MarketSession.CLOSED, MarketSession.OVERNIGHT)
+
+
 async def scheduled_scan() -> None:
+    # Phase 4: session-aware. Don't burn API budget scanning a dark market.
+    if _market_is_dark() and not settings.scan_when_closed:
+        log.info("scheduled_scan_skipped", reason="market_closed")
+        return
     try:
         candidates = await run_scan()
         actionable = sum(c.is_actionable for c in candidates)

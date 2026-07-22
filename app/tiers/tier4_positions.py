@@ -10,7 +10,8 @@ into events.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 
 from app.domain.enums import ExitReason as _ExitReason
 from app.domain.enums import OptionAction
@@ -20,6 +21,7 @@ from app.logging_config import get_logger
 from app.providers.base import OptionsChainProvider
 from app.providers.ratelimit import Priority, use_priority
 from app.quant.analytics import structure_breakevens
+from app.quant.pricing import black_scholes_price
 from app.services.paper_engine import check_exit
 from app.tiers.concurrency import bounded_gather
 from app.tiers.models import PositionRisk
@@ -43,6 +45,69 @@ def mark_net_per_share(plan: TradePlan, chain: OptionChain) -> float | None:
             return None
         net += (1.0 if leg.action in _BUY else -1.0) * c.mark
     return round(net, 4)
+
+
+def structure_spread(plan: TradePlan, chain: OptionChain) -> float:
+    """Summed absolute bid/ask spread (per share) across the structure's legs — the
+    slippage a fill should cross. Legs the chain can't quote contribute 0 (the
+    engine's per-share floor still applies), so a partial chain never overstates it."""
+    by_key = _chain_index(chain)
+    total = 0.0
+    for leg in plan.legs:
+        c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
+        if c is not None and c.bid is not None and c.ask is not None:
+            total += max(0.0, c.ask - c.bid)
+    return round(total, 4)
+
+
+@dataclass(frozen=True)
+class StructureMark:
+    """A structure marked to the live chain — the input to a real-mark P&L.
+
+    `net` is the signed net per share (debit>0/credit<0). `total_spread` sums the
+    per-leg bid/ask spread (per share) across the legs the chain could quote — the
+    round-trip slippage cost is charged against it. `used_bs` is True when any leg
+    fell back to a Black-Scholes mark (labeled so P&L honesty is preserved)."""
+
+    net: float
+    total_spread: float
+    used_bs: bool
+    priced_legs: int
+    total_legs: int
+
+
+def mark_structure(
+    plan: TradePlan, chain: OptionChain, *, fallback_iv: float | None, as_of: date
+) -> StructureMark | None:
+    """Signed net per share from live NBBO mids, Black-Scholes-pricing any leg the
+    chain can't quote (mirrors the fidelity ladder in the sibling scanner: real mid
+    first, modeled mark only as a labeled fallback). Returns None only when a leg
+    can be priced by neither route (missing from chain AND no IV for a BS mark)."""
+    by_key = _chain_index(chain)
+    spot = chain.underlying_price
+    net = 0.0
+    total_spread = 0.0
+    used_bs = False
+    priced = 0
+    for leg in plan.legs:
+        c = by_key.get((leg.expiration, round(leg.strike, 4), leg.option_type))
+        mid = c.mark if (c is not None and c.mark is not None) else None
+        if c is not None and c.bid is not None and c.ask is not None:
+            total_spread += max(0.0, c.ask - c.bid)
+        if mid is None:
+            iv = (c.implied_volatility if c is not None else None) or fallback_iv
+            if not spot or not iv:
+                return None
+            t_years = max(0.0, (leg.expiration - as_of).days) / 365.0
+            mid = black_scholes_price(spot, leg.strike, t_years, iv, leg.option_type)
+            used_bs = True
+        else:
+            priced += 1
+        net += (1.0 if leg.action in _BUY else -1.0) * mid
+    return StructureMark(
+        net=round(net, 4), total_spread=round(total_spread, 4),
+        used_bs=used_bs, priced_legs=priced, total_legs=len(plan.legs),
+    )
 
 
 def position_iv(plan: TradePlan, chain: OptionChain) -> float | None:

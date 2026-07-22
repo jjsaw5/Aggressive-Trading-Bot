@@ -13,14 +13,6 @@ DEFAULT_UNIVERSE: list[str] = [
     "AAPL", "MSFT", "NVDA", "AMD", "META", "AMZN", "GOOGL", "TSLA", "NFLX",
 ]
 
-# Opt-in lower-priced, liquid, actively-optioned names. Useful when running
-# tighter per-trade caps where mega-cap spreads are unaffordable (see
-# docs/RISK_POLICY.md). Not enabled by default — the primary universe above is
-# the specified target set.
-AFFORDABLE_UNIVERSE: list[str] = [
-    "F", "SOFI", "PLTR", "INTC", "T", "PFE", "BAC", "CCL", "NIO", "RIVN",
-]
-
 # --- Short-duration universes ------------------------------------------------
 # 0DTE is restricted to names that reliably list SAME-DAY expirations: the index
 # ETFs and the mega-caps that now carry dailies. Trading "0DTE" on a name without

@@ -86,6 +86,28 @@ def flow_confirms(flow: list[FlowAlert], direction: Direction) -> bool | None:
     return None
 
 
+def dominant_flow_strike(flow: list[FlowAlert], direction: Direction) -> float | None:
+    """The strike carrying the most same-direction options-flow premium — a proxy
+    for where informed money is positioned. Calls for a bullish thesis, puts for a
+    bearish one. None when there is no usable directional flow. Used only to BIAS
+    strike selection toward real flow, never to override liquidity."""
+    from app.domain.enums import OptionType
+
+    want = (
+        OptionType.CALL if direction == Direction.BULLISH
+        else OptionType.PUT if direction == Direction.BEARISH
+        else None
+    )
+    if want is None:
+        return None
+    by_strike: dict[float, float] = {}
+    for a in flow:
+        if a.option_type != want or a.strike is None:
+            continue
+        by_strike[a.strike] = by_strike.get(a.strike, 0.0) + (a.premium or 0.0)
+    return max(by_strike, key=by_strike.get) if by_strike else None
+
+
 def regime_supports(regime: ShortDurationRegimeState, direction: Direction) -> bool:
     """The intraday regime must not directly contradict the setup direction."""
     from app.domain.enums import ShortDurationRegime as R

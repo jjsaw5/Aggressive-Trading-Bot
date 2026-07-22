@@ -16,6 +16,7 @@ from __future__ import annotations
 from app.domain.enums import Direction
 from app.domain.options import FlowAlert
 from app.domain.signals import SignalScore
+from app.engine.flow_quality import proprietary_flow_quality
 
 # Premium (USD) at which flow is considered clearly "significant" for a
 # mega-cap. Below this it is scored proportionally.
@@ -31,7 +32,7 @@ def analyze_flow(symbol: str, alerts: list[FlowAlert]) -> SignalScore:
             direction=Direction.NEUTRAL,
             confidence=0.2,
             rationale="No qualifying flow prints.",
-            details={"alert_count": 0},
+            details={"alert_count": 0, "flow_quality_proprietary": None},
         )
 
     total_premium = sum(a.premium or 0.0 for a in relevant)
@@ -85,5 +86,7 @@ def analyze_flow(symbol: str, alerts: list[FlowAlert]) -> SignalScore:
             "sweep_ratio": round(sweep_ratio, 3),
             "opening_ratio": round(opening_ratio, 3),
             "agreement": round(agreement, 3),
+            # Shadow-only: recorded for the ledger, never fed into the score.
+            "flow_quality_proprietary": proprietary_flow_quality(relevant),
         },
     )

@@ -66,6 +66,23 @@ class DailyRiskState:
     realized_pnl_usd: float = 0.0
     consecutive_losses: int = 0
     open_positions: int = 0
+    # (symbol, direction) of the currently-open book, for correlation concentration.
+    open_book: list[tuple[str, str]] = field(default_factory=list)
+
+
+# Names in a cluster move together, so a second same-direction position in the same
+# cluster is a concentrated re-bet, not diversification (Phase 3.4).
+_CORRELATION_GROUP = {
+    "SPY": "index", "QQQ": "index", "IWM": "index", "DIA": "index",
+    "NVDA": "semis", "AMD": "semis", "AVGO": "semis", "MU": "semis", "SMH": "semis",
+    "AAPL": "megatech", "MSFT": "megatech", "META": "megatech", "GOOGL": "megatech",
+    "AMZN": "megatech", "NFLX": "megatech",
+}
+
+
+def correlation_group(symbol: str) -> str:
+    """Correlation cluster for a ticker (its own symbol if unclustered)."""
+    return _CORRELATION_GROUP.get((symbol or "").upper(), (symbol or "").upper())
 
 
 @dataclass
@@ -75,6 +92,7 @@ class RiskGateConfig:
     daily_loss_pct: float = 0.05
     consecutive_loss_halt: int = 2
     max_concurrent: int = 2
+    max_correlated_same_dir: int = 1  # same-cluster same-direction open positions
 
     @classmethod
     def from_settings(cls) -> RiskGateConfig:
@@ -85,6 +103,7 @@ class RiskGateConfig:
             daily_loss_pct=settings.short_duration_daily_loss_pct,
             consecutive_loss_halt=settings.short_duration_consecutive_loss_halt,
             max_concurrent=settings.short_duration_max_concurrent,
+            max_correlated_same_dir=settings.short_duration_max_correlated_same_dir,
         )
 
 
@@ -105,6 +124,7 @@ def evaluate_entry_gates(
     quote_stale: bool,
     daily: DailyRiskState,
     equity: float,
+    symbol: str | None = None,
     clock: MarketClock | None = None,
     config: RiskGateConfig | None = None,
 ) -> EntryGate:
@@ -140,6 +160,16 @@ def evaluate_entry_gates(
     if daily.open_positions >= cfg.max_concurrent:
         reasons.append(f"At the max {cfg.max_concurrent} concurrent short-duration positions.")
         rejects.append(RejectReason.PORTFOLIO_LIMIT)
+    if symbol and daily.open_book:
+        grp = correlation_group(symbol)
+        same = sum(1 for s, d in daily.open_book
+                   if correlation_group(s) == grp and d == direction.value)
+        if same >= cfg.max_correlated_same_dir:
+            reasons.append(
+                f"Already holding {same} correlated {direction.value} position(s) in the "
+                f"{grp} cluster — concentration limit."
+            )
+            rejects.append(RejectReason.PORTFOLIO_LIMIT)
 
     if not regime.allow_new_trades:
         reasons.append("Regime blocks new trades (event/volatility).")

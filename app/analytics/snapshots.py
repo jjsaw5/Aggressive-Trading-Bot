@@ -25,6 +25,16 @@ def _iv_from_signals(candidate: TradeCandidate) -> tuple[float | None, float | N
     )
 
 
+def _flow_quality_from_signals(candidate: TradeCandidate) -> float | None:
+    """The sibling scanner's proprietary flow-quality, frozen from the flow
+    signal's details. Shadow only — recorded, never scored."""
+    flow = next((s for s in candidate.signals if s.name == "options_flow"), None)
+    if flow is None:
+        return None
+    q = flow.details.get("flow_quality_proprietary")
+    return float(q) if isinstance(q, (int, float)) and not isinstance(q, bool) else None
+
+
 def snapshot_from_candidate(
     candidate: TradeCandidate, *, source: DecisionSource = DecisionSource.SCAN
 ) -> DecisionSnapshot | None:
@@ -36,6 +46,7 @@ def snapshot_from_candidate(
     analytics = plan.analytics
     exit_plan = plan.exit_plan
     iv30, iv_rank = _iv_from_signals(candidate)
+    flow_quality = _flow_quality_from_signals(candidate)
 
     # Entry spot: frozen on the analytics at compute time.
     entry_spot = (analytics.spot_at_analysis if analytics else None) or 0.0
@@ -71,6 +82,7 @@ def snapshot_from_candidate(
         entry_spot=round(entry_spot, 4),
         entry_iv=iv30,
         iv_rank=iv_rank,
+        flow_quality_proprietary=flow_quality,
         entry_net_per_share=entry_net,
         max_profit_usd=plan.risk.max_profit_usd,
         max_loss_usd=plan.risk.max_loss_usd,

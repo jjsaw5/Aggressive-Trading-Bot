@@ -49,10 +49,11 @@ curl -X POST 'localhost:8000/backtest/historical?lookback_days=365'
   defined-risk verticals, sized by the live risk policy. No look-ahead: entry
   direction/vol use only data up to the entry index.
 
-> **Affordability note:** with the default $40 per-trade cap (2% of $2k), spreads
-> on the mega-cap universe cannot be sized (a $1-wide spread on a $560 name is
-> ~$50), so historical mode returns **0 trades**. Set a per-trade budget matching
-> the universe (see `docs/RISK_POLICY.md`) to get trades. This is the risk
+> **Affordability note:** the per-trade cap is `min(equity × max_trade_risk_pct,
+> max_defined_risk_per_trade_usd)` — by default `min($2k × 5%, $100) = $100`. A
+> tighter cap (e.g. the older 2% → $40) cannot size a $1-wide spread on a $560
+> name (~$50), so historical mode returns **0 trades** there. Set a per-trade
+> budget matching the universe (see `docs/RISK_POLICY.md`). This is the risk
 > engine correctly reporting that the universe is unaffordable at that cap.
 
 ## Why the harness is trustworthy (and its limits)

@@ -129,6 +129,7 @@ class IVContext(BaseModel):
     iv_percentile: float | None = None  # [0, 1]
     hv20: float | None = None  # 20-day realized vol
     term_structure_slope: float | None = None  # front-to-back IV slope
+    iv_skew: float | None = None  # OTM-put IV minus OTM-call IV (>0 = downside fear)
     # How iv_rank/iv_percentile were derived: "iv_history" (true IV rank),
     # "hv_proxy" (realized-vol proxy), or "provider" (opaque provider field).
     iv_rank_source: str | None = None

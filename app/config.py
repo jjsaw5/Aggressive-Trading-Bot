@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     # it only changes contract sizing for research/paper. Turn OFF for real sizing.
     short_duration_paper_unconstrained: bool = False
     short_duration_max_concurrent: int = 2
+    # Max same-direction open positions within one correlation cluster (Phase 3.4):
+    # a second bullish semi is a concentrated re-bet, not diversification.
+    short_duration_max_correlated_same_dir: int = 1
     short_duration_daily_loss_pct: float = 0.05  # halt new trades past -5% on the day
     short_duration_consecutive_loss_halt: int = 2  # stop after N straight losses
     short_duration_no_entry_first_minutes: int = 5  # skip the opening scramble
@@ -204,6 +207,14 @@ class Settings(BaseSettings):
     # account cannot size these spreads at a 2% ($40) cap. Tighten via env for a
     # more conservative stance (and pair it with a lower-priced universe).
     account_equity_usd: float = 2_000.0
+    # Realistic round-trip costs applied when a decision is resolved to a P&L, so
+    # the outcome ledger stores NET (not gross) — a picker that looks good gross can
+    # be underwater net. commission is per-contract per-leg per-transaction (open +
+    # close both charged); slippage crosses `slippage_spread_fraction` of the summed
+    # leg bid/ask spread over the round trip, with a per-share floor.
+    commission_per_contract_usd: float = 0.65
+    resolution_slippage_spread_fraction: float = 1.0
+    resolution_min_slippage_per_share: float = 0.01
     max_account_risk_pct: float = 0.15
     max_trade_risk_pct: float = 0.05
     max_concurrent_positions: int = 4
@@ -245,6 +256,15 @@ class Settings(BaseSettings):
     slack_webhook_url: str | None = None
 
     # --- Provider routing ---
+    # Real quote-feed delay for the configured FMP tier (minutes). Many FMP plans
+    # deliver ~15-min-delayed equity quotes; set this to arm the freshness gate's
+    # delayed-data check (dead when left at 0 across every provider). 0 = real-time.
+    fmp_quote_delay_minutes: int = 0
+    # Session-aware scanning (Phase 4): skip the periodic research scan when the
+    # market is fully closed (overnight / weekends / holidays) instead of running
+    # 24/7 and wasting API budget on stale off-hours data. Extended (pre/post)
+    # sessions still scan. Set True to force round-the-clock scans.
+    scan_when_closed: bool = False
     provider_market_data: ProviderName = ProviderName.MOCK
     provider_options_flow: ProviderName = ProviderName.MOCK
     provider_options_chain: ProviderName = ProviderName.MOCK

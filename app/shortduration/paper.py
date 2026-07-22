@@ -24,7 +24,7 @@ from app.logging_config import get_logger
 from app.providers import registry
 from app.services.paper_engine import check_exit, close_paper_trade, open_paper_trade, update_mark
 from app.shortduration.state import advance, transition
-from app.tiers.tier4_positions import mark_net_per_share
+from app.tiers.tier4_positions import mark_net_per_share, structure_spread
 
 log = get_logger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -89,6 +89,19 @@ def _advance_to_open(cand: ShortDurationCandidate, now: datetime) -> list:
                    reason="Opened paper trade.", at=now)
 
 
+async def _entry_spread(plan, symbol: str, now: datetime) -> float:
+    """Best-effort real bid/ask spread of the structure at entry, so the paper fill
+    crosses realistic slippage rather than only the per-share floor. A chain miss
+    degrades to 0.0 (floor still applies) — never blocks the open."""
+    exps = sorted({lg.expiration for lg in plan.legs})
+    try:
+        chain = await registry.options_chain_provider().get_option_chain_for_expirations(symbol, exps)
+    except Exception as exc:  # noqa: BLE001 - a chain miss must not block opening
+        log.warning("sd_entry_spread_chain_failed", symbol=symbol, error=str(exc))
+        return 0.0
+    return structure_spread(plan, chain)
+
+
 async def open_short_duration_paper(
     candidate: ShortDurationCandidate, *, now: datetime | None = None
 ) -> ShortDurationTrade:
@@ -101,7 +114,11 @@ async def open_short_duration_paper(
         raise ValueError(f"Candidate is {candidate.state.value}; cannot open.")
 
     entry_mid = round(plan.net_debit / 100.0, 4)  # per-share net debit
-    pt = open_paper_trade(plan, scan_id=f"sd:{candidate.id}", entry_mid=entry_mid, now=now)
+    entry_spread = await _entry_spread(plan, candidate.symbol, now)
+    pt = open_paper_trade(
+        plan, scan_id=f"sd:{candidate.id}", entry_mid=entry_mid,
+        entry_spread=entry_spread, now=now,
+    )
     await asyncio.to_thread(repository.save_paper_trade, pt)
 
     ns = candidate.news_score
@@ -198,7 +215,10 @@ async def monitor_short_duration_positions(*, now: datetime | None = None) -> li
         sd.mfe_usd, sd.mae_usd = pt.mfe_usd, pt.mae_usd
 
         if reason is not None:
-            pt = close_paper_trade(pt, exit_mid=net, reason=reason, now=now)
+            # Cross the real bid/ask spread on the exit fill too (chain in hand).
+            pt = close_paper_trade(
+                pt, exit_mid=net, reason=reason, exit_spread=structure_spread(plan, chain), now=now,
+            )
             await asyncio.to_thread(repository.save_paper_trade, pt)
             sd.status = "closed"
             sd.exit_net = pt.exit_fill
@@ -237,8 +257,15 @@ def daily_risk_state(now: datetime | None = None):
             consec += 1
         else:
             break
-    open_count = sum(1 for t in trades if t.status == "open")
-    return DailyRiskState(realized_pnl_usd=realized, consecutive_losses=consec, open_positions=open_count)
+    open_trades = [t for t in trades if t.status == "open"]
+    open_book = [
+        (t.symbol, t.direction.value if hasattr(t.direction, "value") else str(t.direction))
+        for t in open_trades
+    ]
+    return DailyRiskState(
+        realized_pnl_usd=realized, consecutive_losses=consec,
+        open_positions=len(open_trades), open_book=open_book,
+    )
 
 
 # --- Performance -------------------------------------------------------------

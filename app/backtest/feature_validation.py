@@ -35,12 +35,16 @@ from dataclasses import dataclass
 
 from app.backtest.features import (
     ALL_FEATURES,
+    FLOW_FEATURES,
     NUMERIC_FEATURES,
     FeatureVector,
     exit_or_entry,
 )
 from app.backtest.stats import bonferroni_alpha, bootstrap_corr_ci, spearman
 from app.backtest.walk_forward import walk_forward_folds
+
+# Flow features are continuous, so they rank-correlate like the other numerics.
+_NUMERIC = set(NUMERIC_FEATURES) | set(FLOW_FEATURES)
 
 _MIN_FOLD_TEST = 8  # a test fold smaller than this can't estimate an OOS association
 _MIN_POOLED = 30  # pooled OOS pairs below this → underpowered, report but don't validate
@@ -88,7 +92,7 @@ def _oos_pairs_one_direction(
     the oriented OOS pairs — for ONE walk direction. Directions are kept separate so
     the forward pass gives the CI and the reverse pass is an independent same-sign
     check (pooling both would double-count rows and narrow the CI artificially)."""
-    pair_fn = _numeric_pairs if feat in NUMERIC_FEATURES else _categorical_pairs
+    pair_fn = _numeric_pairs if feat in _NUMERIC else _categorical_pairs
     pooled: list[tuple[float, float, str]] = []
     folds = walk_forward_folds(
         items, lambda fv: fv.entry_date, exit_or_entry,
@@ -129,7 +133,7 @@ def _regime_signs(pooled: list[tuple[float, float, str]]) -> dict[str, float | N
 def validate_feature(
     items: list[FeatureVector], feat: str, *, n_folds: int, embargo_days: int, alpha: float, n_features: int
 ) -> FeatureVerdict:
-    kind = "numeric" if feat in NUMERIC_FEATURES else "categorical"
+    kind = "numeric" if feat in _NUMERIC else "categorical"
     fwd = _oos_pairs_one_direction(items, feat, n_folds=n_folds, embargo_days=embargo_days, reverse=False)
     rev = _oos_pairs_one_direction(items, feat, n_folds=n_folds, embargo_days=embargo_days, reverse=True)
     reverse_rho = spearman([p for p, _, _ in rev], [y for _, y, _ in rev]) if len(rev) >= _MIN_FOLD_TEST else None

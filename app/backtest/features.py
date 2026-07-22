@@ -25,6 +25,11 @@ from app.domain.historic import HistoricOptionBar
 # feature that was never validated.
 NUMERIC_FEATURES = ("dte", "iv_rank", "iv_level", "entry_spread_pct", "spot_momentum")
 CATEGORICAL_FEATURES = ("direction", "structure")
+# Flow features — the app's actual premise — measured on the option being BOUGHT
+# (the long leg), causally, over a trailing window ending at entry. Populated only
+# when the historic bars carry UW flow fields (2023+); None otherwise, so a corpus
+# without flow simply can't validate them (never silently zero). See §8.
+FLOW_FEATURES = ("flow_at_ask", "flow_sweep", "flow_premium", "flow_rel_volume", "flow_oi_trend")
 ALL_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 
@@ -70,6 +75,58 @@ def _spot_momentum(spot_path: dict[date, float], entry: date, lookback: int = 20
     return round((cur - ref) / ref, 5)
 
 
+def _flow_features(long_bars: list[HistoricOptionBar], entry: date, lookback: int = 5) -> dict[str, float | None]:
+    """Flow on the option being BOUGHT, over a trailing window ending at entry — the
+    aggression / conviction signal the app is premised on. All causal (date <= entry).
+    Returns all-None when the bars carry no flow fields (pre-2023 / pricing-only)."""
+    window = [b for b in long_bars if b.date <= entry][-lookback:]
+    if not window:
+        return dict.fromkeys(FLOW_FEATURES, None)
+
+    def _mean(vals: list[float]) -> float | None:
+        vals = [v for v in vals if v is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    # at-ask ratio: share of volume lifting the offer (aggressive buyers of this option)
+    at_ask_vals = [
+        b.ask_volume / (b.ask_volume + b.bid_volume)
+        for b in window
+        if b.ask_volume is not None and b.bid_volume is not None and (b.ask_volume + b.bid_volume) > 0
+    ]
+    sweep_vals = [
+        b.sweep_volume / b.volume
+        for b in window
+        if b.sweep_volume is not None and b.volume not in (None, 0)
+    ]
+    prem_vals = [b.total_premium for b in window if b.total_premium is not None]
+    at_ask = _mean(at_ask_vals)
+    sweep = _mean(sweep_vals)
+    premium = _mean(prem_vals)
+    # relative volume: entry-day volume vs the trailing mean (unusual participation)
+    entry_bar = next((b for b in window if b.date == entry), window[-1])
+    trail_vol = _mean([b.volume for b in window[:-1]]) if len(window) > 1 else None
+    rel_volume = (
+        entry_bar.volume / trail_vol
+        if entry_bar.volume is not None and trail_vol and trail_vol > 0
+        else None
+    )
+    # OI trend across the window (position building in the option being bought)
+    oi_first = next((b.open_interest for b in window if b.open_interest is not None), None)
+    oi_last = next((b.open_interest for b in reversed(window) if b.open_interest is not None), None)
+    oi_trend = (
+        (oi_last - oi_first) / oi_first
+        if oi_first not in (None, 0) and oi_last is not None
+        else None
+    )
+    return {
+        "flow_at_ask": round(at_ask, 5) if at_ask is not None else None,
+        "flow_sweep": round(sweep, 5) if sweep is not None else None,
+        "flow_premium": round(premium, 2) if premium is not None else None,
+        "flow_rel_volume": round(rel_volume, 4) if rel_volume is not None else None,
+        "flow_oi_trend": round(oi_trend, 5) if oi_trend is not None else None,
+    }
+
+
 def extract_features(
     trade,
     result,
@@ -104,6 +161,7 @@ def extract_features(
         "direction": trade.direction,
         "structure": trade.strategy,
     }
+    values.update(_flow_features(long_bars, entry))
     return FeatureVector(
         trade_id=trade.trade_id, entry_date=entry, exit_date=result.exit_date,
         vol_regime=trade.vol_regime or "unknown", net_pnl=net, values=values,

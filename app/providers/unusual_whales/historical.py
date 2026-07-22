@@ -67,6 +67,10 @@ def _bar_from_row(contract_id: str, row: dict) -> HistoricOptionBar | None:
         trading_day = date.fromisoformat(str(d)[:10])
     except (TypeError, ValueError):
         return None
+    otype = None
+    if len(contract_id) >= 15:
+        c = contract_id[-15:][6].upper()  # yymmdd(6) + C/P(1) + strike(8)
+        otype = c if c in ("C", "P") else None
     return HistoricOptionBar(
         contract_id=contract_id,
         date=trading_day,
@@ -79,6 +83,11 @@ def _bar_from_row(contract_id: str, row: dict) -> HistoricOptionBar | None:
         open_interest=parse_int(row.get("open_interest")),
         volume=parse_int(row.get("volume")),
         trades=parse_int(row.get("trades")),
+        ask_volume=parse_int(row.get("ask_volume")),
+        bid_volume=parse_int(row.get("bid_volume")),
+        sweep_volume=parse_int(row.get("sweep_volume")),
+        total_premium=parse_float(row.get("total_premium")),
+        option_type=otype,
     )
 
 

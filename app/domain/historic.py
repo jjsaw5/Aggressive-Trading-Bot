@@ -45,6 +45,13 @@ class HistoricOptionBar:
     open_interest: int | None = None
     volume: int | None = None
     trades: int | None = None
+    # Flow-side daily volumes (for the reconstructed EOD flow proxy). Optional so
+    # nothing that only needs pricing has to populate them.
+    ask_volume: int | None = None
+    bid_volume: int | None = None
+    sweep_volume: int | None = None
+    total_premium: float | None = None
+    option_type: str | None = None  # "C" | "P", from the OCC symbol
     source: str = "unusual_whales"
 
     @property

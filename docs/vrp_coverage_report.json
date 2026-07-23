@@ -1,0 +1,346 @@
+{
+  "generated_from": "hist_cache + flow_cache per-contract UW bars (disk), FMP closes",
+  "underlying_iv_series_note": "UW /iv-rank underlying series is capped at 1Y regardless of timespan (probed 2026-07-23) \u2014 it cannot serve the 2021/2022 eras. Per-contract bars are the only IV source reaching 2021, and are tenor-honest.",
+  "fmp_ranges": {
+    "AAPL": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "AMD": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "AMZN": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "BAC": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "COST": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "CRM": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "DIA": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "DIS": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "GOOGL": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "HD": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "INTC": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "IWM": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "JPM": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "KO": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "META": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "MSFT": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "NFLX": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "ORCL": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "PEP": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "QQQ": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "SPY": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "TSLA": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "UNH": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "V": [
+      "2021-07-26",
+      "2026-07-23"
+    ],
+    "XOM": [
+      "2021-07-26",
+      "2026-07-23"
+    ]
+  },
+  "threshold": {
+    "min_symbols": 3,
+    "min_obs_per_symbol": 20
+  },
+  "horizons": {
+    "30": [
+      {
+        "era": "2021_meltup",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 0,
+        "median_obs_per_symbol": 14,
+        "total_obs": 70,
+        "per_symbol": {
+          "AAPL": 14,
+          "IWM": 14,
+          "MSFT": 14,
+          "QQQ": 14,
+          "SPY": 14
+        },
+        "verdict": "INSUFFICIENT"
+      },
+      {
+        "era": "2022_bear",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 5,
+        "median_obs_per_symbol": 32,
+        "total_obs": 157,
+        "per_symbol": {
+          "AAPL": 31,
+          "IWM": 33,
+          "MSFT": 32,
+          "QQQ": 27,
+          "SPY": 34
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2023_24_recovery",
+        "symbols_with_data": 25,
+        "symbols_meeting_min_obs": 21,
+        "median_obs_per_symbol": 25,
+        "total_obs": 701,
+        "per_symbol": {
+          "AAPL": 53,
+          "AMD": 24,
+          "AMZN": 27,
+          "BAC": 26,
+          "COST": 10,
+          "CRM": 24,
+          "DIA": 27,
+          "DIS": 19,
+          "GOOGL": 26,
+          "HD": 27,
+          "INTC": 24,
+          "IWM": 52,
+          "JPM": 11,
+          "KO": 16,
+          "META": 25,
+          "MSFT": 51,
+          "NFLX": 20,
+          "ORCL": 27,
+          "PEP": 27,
+          "QQQ": 50,
+          "SPY": 53,
+          "TSLA": 20,
+          "UNH": 20,
+          "V": 21,
+          "XOM": 21
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2025_drawdown_chop",
+        "symbols_with_data": 25,
+        "symbols_meeting_min_obs": 5,
+        "median_obs_per_symbol": 14,
+        "total_obs": 443,
+        "per_symbol": {
+          "AAPL": 38,
+          "AMD": 13,
+          "AMZN": 12,
+          "BAC": 14,
+          "COST": 14,
+          "CRM": 18,
+          "DIA": 19,
+          "DIS": 17,
+          "GOOGL": 13,
+          "HD": 14,
+          "INTC": 17,
+          "IWM": 39,
+          "JPM": 16,
+          "KO": 13,
+          "META": 10,
+          "MSFT": 31,
+          "NFLX": 6,
+          "ORCL": 5,
+          "PEP": 19,
+          "QQQ": 36,
+          "SPY": 36,
+          "TSLA": 7,
+          "UNH": 5,
+          "V": 12,
+          "XOM": 19
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2026_ytd",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 0,
+        "median_obs_per_symbol": 7,
+        "total_obs": 35,
+        "per_symbol": {
+          "AAPL": 7,
+          "IWM": 7,
+          "MSFT": 7,
+          "QQQ": 7,
+          "SPY": 7
+        },
+        "verdict": "INSUFFICIENT"
+      }
+    ],
+    "45": [
+      {
+        "era": "2021_meltup",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 0,
+        "median_obs_per_symbol": 16,
+        "total_obs": 80,
+        "per_symbol": {
+          "AAPL": 16,
+          "IWM": 16,
+          "MSFT": 16,
+          "QQQ": 16,
+          "SPY": 16
+        },
+        "verdict": "INSUFFICIENT"
+      },
+      {
+        "era": "2022_bear",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 5,
+        "median_obs_per_symbol": 27,
+        "total_obs": 140,
+        "per_symbol": {
+          "AAPL": 27,
+          "IWM": 31,
+          "MSFT": 25,
+          "QQQ": 26,
+          "SPY": 31
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2023_24_recovery",
+        "symbols_with_data": 25,
+        "symbols_meeting_min_obs": 22,
+        "median_obs_per_symbol": 28,
+        "total_obs": 768,
+        "per_symbol": {
+          "AAPL": 53,
+          "AMD": 28,
+          "AMZN": 25,
+          "BAC": 28,
+          "COST": 14,
+          "CRM": 28,
+          "DIA": 28,
+          "DIS": 24,
+          "GOOGL": 28,
+          "HD": 28,
+          "INTC": 22,
+          "IWM": 55,
+          "JPM": 13,
+          "KO": 19,
+          "META": 28,
+          "MSFT": 52,
+          "NFLX": 28,
+          "ORCL": 28,
+          "PEP": 28,
+          "QQQ": 54,
+          "SPY": 55,
+          "TSLA": 26,
+          "UNH": 21,
+          "V": 28,
+          "XOM": 27
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2025_drawdown_chop",
+        "symbols_with_data": 25,
+        "symbols_meeting_min_obs": 15,
+        "median_obs_per_symbol": 21,
+        "total_obs": 563,
+        "per_symbol": {
+          "AAPL": 40,
+          "AMD": 20,
+          "AMZN": 21,
+          "BAC": 17,
+          "COST": 18,
+          "CRM": 21,
+          "DIA": 21,
+          "DIS": 18,
+          "GOOGL": 14,
+          "HD": 21,
+          "INTC": 21,
+          "IWM": 40,
+          "JPM": 21,
+          "KO": 18,
+          "META": 18,
+          "MSFT": 33,
+          "NFLX": 12,
+          "ORCL": 10,
+          "PEP": 21,
+          "QQQ": 40,
+          "SPY": 40,
+          "TSLA": 17,
+          "UNH": 19,
+          "V": 21,
+          "XOM": 21
+        },
+        "verdict": "USABLE"
+      },
+      {
+        "era": "2026_ytd",
+        "symbols_with_data": 5,
+        "symbols_meeting_min_obs": 0,
+        "median_obs_per_symbol": 7,
+        "total_obs": 35,
+        "per_symbol": {
+          "AAPL": 7,
+          "IWM": 7,
+          "MSFT": 7,
+          "QQQ": 7,
+          "SPY": 7
+        },
+        "verdict": "INSUFFICIENT"
+      }
+    ]
+  }
+}

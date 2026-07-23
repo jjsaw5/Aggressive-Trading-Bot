@@ -482,6 +482,19 @@ async def run_detection(
                 await asyncio.to_thread(repository.append_candidate_transition, tr)
             created.append(cand)
 
+    # POP calibration feed: freeze rankable (tradeable, non-abstained) decisions
+    # into the warehouse so the traded-expiry POP is graded against realized
+    # outcomes by the calibration harness. Best-effort — warehousing must never
+    # fail a scan.
+    try:
+        from app.analytics.snapshots import snapshot_from_short_duration
+        snaps = [s for c in created if (s := snapshot_from_short_duration(c)) is not None]
+        if snaps:
+            added = await asyncio.to_thread(repository.save_snapshots, snaps)
+            log.info("sd_decisions_warehoused", dte=dte.value, new_snapshots=added)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sd_warehouse_failed", error=str(exc))
+
     created.sort(key=_board_rank_key)
     _record_scan_metrics(dte, created)
     log.info("sd_detection", dte=dte.value, detected=len(created))

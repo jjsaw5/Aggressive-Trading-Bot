@@ -151,6 +151,10 @@ class Scorecard(BaseModel):
     by_direction: list[GroupStat] = Field(default_factory=list)
     by_vol_regime: list[GroupStat] = Field(default_factory=list)
     by_horizon: list[GroupStat] = Field(default_factory=list)  # 0DTE / 1-5DTE / swing
+    # POP calibration PER METHODOLOGY: a change in POP derivation (legacy funnel
+    # analytics vs traded-expiry-IV) must never silently pool — each construct is
+    # bucketed separately so "does 26% resolve ~26%?" is answered per source.
+    pop_buckets_by_source: dict[str, list[Bucket]] = Field(default_factory=dict)
     # --- Shadow instrumentation: the sibling scanner's flow-quality metric ---
     # Recorded observationally (never fed into the score). These fields are the
     # ledger's verdict on whether it EARNS a place in scoring: does it separate
@@ -369,6 +373,24 @@ def build_scorecard(
         )
         for lo, hi in _POP_EDGES
     ]
+    # Per-methodology POP calibration (empty pop_source = legacy funnel analytics).
+    sources = sorted({s.pop_source or "funnel_analytics" for s, _ in pairs
+                      if s.probability_of_profit is not None})
+    pop_buckets_by_source = {
+        src: [
+            b for b in (
+                _bucket(
+                    f"{lo:.0%}-{min(hi, 1.0):.0%}",
+                    [(s, o) for s, o in pairs
+                     if s.probability_of_profit is not None
+                     and (s.pop_source or "funnel_analytics") == src
+                     and lo <= s.probability_of_profit < hi],
+                )
+                for lo, hi in _POP_EDGES
+            ) if b.n > 0
+        ]
+        for src in sources
+    }
     score_buckets = [
         _bucket(
             f"{lo:.2f}-{min(hi, 1.0):.2f}",
@@ -404,6 +426,7 @@ def build_scorecard(
         profit_factor=profit_factor(pnls),
         max_drawdown_usd=max_drawdown(pnls) if pnls else None,
         pop_buckets=[b for b in pop_buckets if b.n > 0],
+        pop_buckets_by_source=pop_buckets_by_source,
         score_buckets=[b for b in score_buckets if b.n > 0],
         by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),

@@ -4,12 +4,24 @@ Pure translation: it reads the prediction and frozen market state already
 attached to a candidate (analytics + the volatility signal) and packs them into
 a stable warehouse record. No I/O, no recomputation — so the snapshot reflects
 exactly what the engine believed at scan time.
+
+Two lineages produce snapshots:
+- the funnel (`snapshot_from_candidate`, TradeCandidate) — legacy analytics POP;
+- the short-duration scanner (`snapshot_from_short_duration`) — POP from the
+  traded-expiry IV. Each stamps its `pop_source` and scoring-model version so the
+  calibration harness grades the constructs separately and the pre-v3 filter
+  applies (see app/analytics/calibration.py).
 """
 
 from __future__ import annotations
 
 from app.domain.candidates import TradeCandidate
 from app.domain.outcomes import DecisionSnapshot, DecisionSource
+
+# POP methodology label for short-duration decisions: Black-Scholes zero-drift
+# N(d2) priced on the IV of the TRADED expiry (post horizon-fix). See
+# detection._candidate_odds for the derivation + card provenance.
+SD_POP_SOURCE = "bs_zero_drift_traded_expiry_iv"
 
 
 def _iv_from_signals(candidate: TradeCandidate) -> tuple[float | None, float | None]:
@@ -89,5 +101,58 @@ def snapshot_from_candidate(
         contracts=plan.contracts,
         expiration=expiration,
         dte_at_entry=dte,
+        trade_plan=plan,
+    )
+
+
+def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
+    """Freeze a short-duration candidate into the decision warehouse.
+
+    Only rankable decisions are warehoused: a tradeable plan must exist and the
+    scorecard must NOT be abstained (an abstained rank is not a decision — its
+    inputs were insufficient to read). POP here is the traded-expiry-IV construct;
+    the snapshot stamps `pop_source` and the scoring-model version so calibration
+    grades it per construct and the pre-v3 hard-filter applies."""
+    from app.config import get_settings
+    from app.quant.analytics import structure_breakevens
+
+    plan = cand.trade_plan
+    if plan is None:
+        return None
+    sc = cand.scorecard
+    if sc is not None and sc.abstained:
+        return None
+
+    expiration = min((leg.expiration for leg in plan.legs), default=None)
+    dte = (expiration - cand.detected_at.date()).days if expiration else None
+    analytics = plan.analytics
+    entry_spot = (analytics.spot_at_analysis if analytics else None) or 0.0
+    entry_net = (
+        plan.exit_plan.entry_net_per_share
+        if plan.exit_plan is not None
+        else round(plan.net_debit / 100.0, 4)
+    )
+    return DecisionSnapshot(
+        decision_id=f"sd:{cand.id}",
+        scan_id=f"sd:{cand.id}",
+        symbol=cand.symbol.upper(),
+        source=DecisionSource.SCAN,
+        direction=cand.direction,
+        strategy=plan.strategy,
+        generated_at=cand.detected_at,
+        composite_score=cand.score,
+        probability_of_profit=cand.probability_of_profit,
+        pop_source=SD_POP_SOURCE if cand.probability_of_profit is not None else "",
+        reward_to_risk=plan.risk.reward_to_risk if plan.risk else None,
+        breakevens=structure_breakevens(plan),
+        is_credit=plan.net_debit < 0,
+        entry_spot=round(entry_spot, 4),
+        entry_net_per_share=entry_net,
+        max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
+        max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,
+        contracts=plan.contracts,
+        expiration=expiration,
+        dte_at_entry=dte,
+        scoring_model_version=get_settings().scoring_model_version,
         trade_plan=plan,
     )

@@ -56,6 +56,10 @@ class DecisionSnapshot(BaseModel):
     # --- Prediction (what we believed would happen) ---
     composite_score: float = Field(ge=0.0, le=1.0)
     probability_of_profit: float | None = None  # risk-neutral POP at plan time
+    # POP methodology label, so calibration is read PER CONSTRUCT and a change in
+    # derivation (e.g. iv30 -> traded-expiry IV) can never silently pool with the
+    # old one. Empty = legacy funnel analytics POP.
+    pop_source: str = ""
     reward_to_risk: float | None = None
     expected_value_usd: float | None = None
     breakevens: list[float] = Field(default_factory=list)

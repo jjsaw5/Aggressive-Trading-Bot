@@ -129,7 +129,15 @@ def score_candidate(
     # is absent the probability-of-profit is uncomputable — that must never read as
     # high conviction (it's the blank-POP case).
     pop_available = comps["volatility"].value is not None
-    conviction_status = "UNCALIBRATED"
+    # Derived from the Layer-2 gate, never asserted: CALIBRATED requires a
+    # validated registry feature + live real-marks calibration (all criteria in
+    # app.shortduration.conviction_gate). The gate is red today and can only flip
+    # on its own evidence.
+    try:
+        from app.shortduration.conviction_gate import get_conviction_gate
+        conviction_status = "CALIBRATED" if get_conviction_gate().green else "UNCALIBRATED"
+    except Exception:  # noqa: BLE001 — gate failure degrades to the honest default
+        conviction_status = "UNCALIBRATED"
     if not pop_available:
         conviction_note = (
             "POP uncomputable (no IV) — tradability rank only; this is a clean "

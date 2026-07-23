@@ -465,3 +465,20 @@ async def input_coverage(dte: str | None = None) -> dict:
         },
         "note": "A degraded field is a FEED outage across the scan, not a symbol problem.",
     }
+
+
+# --- Layer-2 conviction gate (permanently red until evidence flips it) --------
+@router.get("/conviction-gate")
+async def conviction_gate() -> dict:
+    """The Layer-2 gate that decides whether conviction may display as CALIBRATED.
+    Built red: every criterion and its current failure is listed, so the path to
+    green is explicit — and can only be walked by evidence."""
+    from app.shortduration.conviction_gate import refresh_conviction_gate
+
+    gate = refresh_conviction_gate()
+    return {
+        "green": gate.green,
+        "sizing_boost_allowed": gate.sizing_boost_allowed,
+        "criteria": [c.model_dump() for c in gate.criteria],
+        "note": gate.note,
+    }

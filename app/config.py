@@ -157,6 +157,16 @@ class Settings(BaseSettings):
     # gauged (the iv_rank silent-death case this monitor exists to catch).
     input_coverage_abstain_threshold: float = 0.6
     input_coverage_feed_alert_threshold: float = 0.5
+    # Layer-2 conviction gate (spec §6/§11) — built RED, flips only on evidence.
+    # CALIBRATED display requires: a validated registry feature, a real-marks
+    # calibration sample, Brier <= max, positive score->P&L discrimination, and
+    # (per_regime) >=2 populated vol regimes. Any conviction-based sizing must
+    # additionally consult the gate (sizing_requires_green_gate).
+    conviction_require_validated: bool = True
+    calibration_brier_max: float = 0.25
+    calibration_spearman_min: float = 0.0
+    calibration_per_regime: bool = True
+    sizing_requires_green_gate: bool = True
     # Scoring model — weights are configurable + versioned. Every candidate records
     # the model + risk-policy version it was scored under (Phase 2). Weights per
     # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and

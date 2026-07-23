@@ -366,3 +366,24 @@ async def test_run_detection_attaches_scorecard_and_states() -> None:
     assert sum(f.weight for f in top.scorecard.factors) == 100
     # State was driven past DETECTED by the score.
     assert top.state in {CandidateState.EVALUATING, CandidateState.WATCHLIST, CandidateState.ARMED}
+
+
+async def test_scan_joins_iv_history_so_pop_is_computable() -> None:
+    # Regression: the short-duration scan previously fetched only the spot IV level
+    # and never joined the IV-rank history, so iv_rank was always None — which blanked
+    # the volatility factor, capped data quality, and left POP uncomputable. With the
+    # IV-history join wired in (build_iv_context), a scan over providers that supply an
+    # IV history must produce candidates with a computable POP and a scored volatility
+    # factor. (Test providers are pinned to mock, which supplies an IV history.)
+    from app.shortduration.detection import run_detection
+
+    cands = await run_detection(DTECategory.SHORT_DTE, now=_NOW)
+    assert cands
+    scored = [c for c in cands if c.scorecard is not None]
+    assert scored
+    # At least one candidate now has a computable POP (IV rank present).
+    assert any(c.scorecard.pop_available for c in scored)
+    # The volatility factor is no longer blank-flagged as missing IV.
+    top = next(c for c in scored if c.scorecard.pop_available)
+    vol = next(f for f in top.scorecard.factors if f.key == "volatility")
+    assert "no data" not in vol.explanation.lower()

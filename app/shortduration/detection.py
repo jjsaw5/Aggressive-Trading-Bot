@@ -304,10 +304,34 @@ async def _score_symbol(
         )
     except Exception as exc:  # noqa: BLE001 - liquidity scored as unknown on miss
         log.warning("sd_score_chain_failed", symbol=symbol, error=str(exc))
+    current_iv = None
     try:
-        iv = await registry.options_chain_provider().get_iv_context(symbol)
+        current_iv = await registry.options_chain_provider().get_iv_context(symbol)
     except Exception as exc:  # noqa: BLE001
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
+    # The chain provider returns only the spot IV level (iv30); IV RANK/PERCENTILE —
+    # what the volatility factor, data-quality, and POP all need — are computed from a
+    # real IV history (or an HV proxy). The short-duration scan previously skipped this
+    # join, so iv_rank was always None: it blanked the volatility factor, capped data
+    # quality, and made POP uncomputable. Reuse the SAME builder the funnel pipeline
+    # uses so rank is consistent app-wide.
+    iv_hist = None
+    ivp = registry.iv_history_provider()
+    if ivp is not None:
+        try:
+            iv_hist = await ivp.get_iv_history(symbol, lookback_days=365)
+        except Exception as exc:  # noqa: BLE001 - rank degrades to HV proxy / unknown
+            log.warning("sd_score_iv_history_failed", symbol=symbol, error=str(exc))
+    if current_iv is not None or iv_hist is not None or ctx.daily is not None:
+        from app.engine.iv_context import build_iv_context
+        iv = build_iv_context(
+            symbol,
+            current_iv.iv30 if current_iv is not None else None,
+            now,
+            iv_history=iv_hist,
+            price_history=ctx.daily,
+            term_structure_slope=current_iv.term_structure_slope if current_iv is not None else None,
+        )
 
     # Enrich the IV context with a basic put/call skew read from the chain we just
     # fetched (the provider's get_iv_context has no chain to compute it from).

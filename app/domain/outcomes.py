@@ -79,6 +79,13 @@ class DecisionSnapshot(BaseModel):
     expiration: date | None = None
     dte_at_entry: int | None = None
 
+    # Scoring model version this decision was produced under. For short-duration
+    # decisions this is "sd-scoring-YYYY.MM-vN"; empty for funnel-lineage decisions
+    # (a different model). The calibration harness hard-filters short-duration
+    # decisions below the v3 boundary (the IV-rank-restored fix) so degraded scores
+    # can never enter a calibration corpus. See app/analytics/calibration.py.
+    scoring_model_version: str = ""
+
     # Full plan for faithful replay / audit.
     trade_plan: TradePlan
 

@@ -149,13 +149,37 @@ async def build_context(
     return ctx
 
 
+def _traded_expiry_iv(chain, plan, spot: float | None) -> float | None:
+    """The IV of the actual expiry being traded — the near-ATM contract's implied
+    vol at the structure's front expiration. POP must be priced on the horizon the
+    trade fires at (0-5 DTE), NOT 30-day ATM IV: short-dated IV diverges sharply from
+    iv30 (most of all around earnings, exactly when these fire), and using the wrong
+    horizon biases the gate in whichever way the term structure is sloped. Returns
+    None when unavailable — POP then honestly degrades rather than lying with iv30."""
+    if chain is None or plan is None or not plan.legs or not spot or spot <= 0:
+        return None
+    front = min(lg.expiration for lg in plan.legs)
+    at_exp = [c for c in chain.contracts if c.expiration == front and c.implied_volatility]
+    if not at_exp:
+        return None
+    near = min(at_exp, key=lambda c: abs(c.strike - spot))
+    return near.implied_volatility
+
+
 def _candidate_odds(
     det: StrategyDetection, symbol: str, contract: ContractResult, spot: float | None,
-    iv30: float | None, now: datetime,
+    expiry_iv: float | None, now: datetime,
 ) -> tuple[float | None, str]:
     """Market-implied P(profit) + a plain-English "what has to happen" line for a
-    sized contract. Both informational — from the structure's break-even, IV, and
-    days to expiry. Degrades to (None, "") when the structure or inputs are missing."""
+    sized contract. Both informational — from the structure's break-even, the IV of
+    the TRADED expiry, and days to expiry. Degrades to (None, "") when the structure
+    or inputs are missing.
+
+    Provenance (surfaced on the card): POP is Black-Scholes zero-drift risk-neutral
+    (N(d2)); the break-even nets the debit at MID and excludes the entry spread
+    crossed (optimistic by ~half-spread); and it is UNCALIBRATED (not checked against
+    realized win rates). It is a hold-to-expiry construct, so it does not model the
+    early take-profit / stop exits the system actually uses."""
     from app.domain.enums import Direction
     from app.quant.analytics import structure_breakevens
     from app.quant.probability import probability_of_profit, what_has_to_happen
@@ -173,8 +197,8 @@ def _candidate_odds(
     exps = [lg.expiration for lg in plan.legs]
     days = (min(exps) - now.date()).days if exps else None
     pop = None
-    if iv30 and days is not None:
-        pop = probability_of_profit(spot=spot, breakeven=breakeven, iv=iv30, days=float(days), bullish=bullish)
+    if expiry_iv and days is not None:
+        pop = probability_of_profit(spot=spot, breakeven=breakeven, iv=expiry_iv, days=float(days), bullish=bullish)
     what = what_has_to_happen(
         symbol=symbol, spot=spot, breakeven=breakeven, days=days, bullish=bullish,
     )
@@ -384,13 +408,16 @@ async def _score_symbol(
         )
         thesis = build_directional_thesis(ctx, det, news_score=news)
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)
-        iv30 = iv.iv30 if iv is not None else None
         for contract in contracts:
             card = score_candidate(
                 ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
             )
             _apply_cost_drag(contract, chain, now.date())
-            pop, what_has = _candidate_odds(det, symbol, contract, spot, iv30, now)
+            # POP is priced on the IV of the TRADED expiry (not 30-day IV) — the right
+            # horizon for a 0-5 DTE structure. Falls to None (POP uncomputable) when
+            # that IV is unavailable, never silently to iv30.
+            expiry_iv = _traded_expiry_iv(chain, contract.plan, spot)
+            pop, what_has = _candidate_odds(det, symbol, contract, spot, expiry_iv, now)
             scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
     return scored
 

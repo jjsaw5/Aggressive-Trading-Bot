@@ -23,6 +23,12 @@ from app.domain.historic import HistoricOptionBar
 # Feature keys and whether each is numeric (rank-correlated raw) or categorical
 # (target-encoded on train). Kept explicit so a registry can't silently gain a
 # feature that was never validated.
+# NOTE ON `iv_rank` CONSTRUCT: this is the TRAILING percentile of each contract's own
+# recorded IV over its short life (via real_mark_seed._iv_rank_proxy, causal — filtered
+# to bars on/before entry, no look-ahead). It is NOT the live scanner's construct (the
+# underlying's 1-year IV rank from UW). A null on this feature is a verdict on the
+# trailing-contract-IV-percentile proxy, not on the live underlying IV rank. Re-test on
+# the live construct before generalizing the null to it.
 NUMERIC_FEATURES = ("dte", "iv_rank", "iv_level", "entry_spread_pct", "spot_momentum")
 CATEGORICAL_FEATURES = ("direction", "structure")
 # Flow features — the app's actual premise — measured on the option being BOUGHT

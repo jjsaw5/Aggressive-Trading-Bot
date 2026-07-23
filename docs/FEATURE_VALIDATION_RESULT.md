@@ -47,6 +47,17 @@ showed at the aggregate level, now confirmed feature-by-feature.
    still worthwhile as the *mechanism* that would light up if a future feature
    validates — but it will (correctly) stay red on today's data.
 
+## Construct note — `iv_rank` is a proxy, causal but not the live feature
+
+The `iv_rank` feature tested here is the **trailing percentile of each contract's own
+recorded IV over its short life** (`_iv_rank_proxy`). It is **causal** — computed only
+from bars on/before the entry date, no look-ahead (verified). But it is **not** the
+construct the live scanner consumes (the underlying's 1-year IV rank from UW). So the
+null on `iv_rank` is a verdict on the trailing-contract-IV-percentile proxy, not on the
+live underlying IV rank; re-test on the live construct before generalizing. (The other
+features — dte, iv_level, entry_spread_pct, spot_momentum, direction, structure — match
+their live constructs.)
+
 ## Honest limits (why this is "not yet," not "never")
 
 - **Power.** n_oos = 159 with Bonferroni over 7 features is a demanding bar; a

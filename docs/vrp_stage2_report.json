@@ -1,0 +1,367 @@
+{
+  "preregistration": "docs/vrp_stage2_preregistration.md",
+  "seed": 12345,
+  "alpha_bonferroni": 0.008333333333333333,
+  "variants": {
+    "iv_rich:call_credit_spread": {
+      "n": 28,
+      "wins": 11,
+      "losses": 17,
+      "win_rate": 0.3929,
+      "expectancy_k10_usd": -162.46,
+      "expectancy_k05_usd": -148.44,
+      "net_k10_usd": -4548.8,
+      "profit_factor_k10": 0.185,
+      "slippage_fragile": false,
+      "ci_mean_k10": {
+        "n_clusters": 28,
+        "lo": -386.89,
+        "hi": -15.03,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 4,
+          "expectancy_usd": -18.85,
+          "net_usd": -75.4
+        },
+        "2023_24_recovery": {
+          "n": 18,
+          "expectancy_usd": -172.82,
+          "net_usd": -3110.8
+        },
+        "2025_drawdown_chop": {
+          "n": 6,
+          "expectancy_usd": -227.1,
+          "net_usd": -1362.6
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 5018.8,
+        "worst_trade_usd": -1871.6,
+        "cvar_5pct_usd": -1871.6,
+        "worst_loss_months": [
+          [
+            "2024-10",
+            -1985.2
+          ],
+          [
+            "2025-05",
+            -1871.6
+          ],
+          [
+            "2023-10",
+            -1101.6
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": false,
+      "excluded": {
+        "entry_liquidity_guard": 10,
+        "no_aligned_entry_bar": 9,
+        "ic_one_wing": 0
+      },
+      "PASSES_PREREG": false
+    },
+    "iv_rich:iron_condor": {
+      "n": 13,
+      "wins": 3,
+      "losses": 10,
+      "win_rate": 0.2308,
+      "expectancy_k10_usd": -207.35,
+      "expectancy_k05_usd": -180.33,
+      "net_k10_usd": -2695.6,
+      "profit_factor_k10": 0.099,
+      "slippage_fragile": false,
+      "ci_mean_k10": {
+        "n_clusters": 13,
+        "lo": -603.35,
+        "hi": 7.95,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 2,
+          "expectancy_usd": -209.2,
+          "net_usd": -418.4
+        },
+        "2023_24_recovery": {
+          "n": 7,
+          "expectancy_usd": 12.37,
+          "net_usd": 86.6
+        },
+        "2025_drawdown_chop": {
+          "n": 4,
+          "expectancy_usd": -590.95,
+          "net_usd": -2363.8
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 2695.6,
+        "worst_trade_usd": -1684.2,
+        "cvar_5pct_usd": -1684.2,
+        "worst_loss_months": [
+          [
+            "2025-05",
+            -1684.2
+          ],
+          [
+            "2022-04",
+            -418.4
+          ],
+          [
+            "2025-01",
+            -349.4
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": true,
+      "excluded": {
+        "entry_liquidity_guard": 22,
+        "no_aligned_entry_bar": 13,
+        "ic_one_wing": 19
+      },
+      "PASSES_PREREG": false
+    },
+    "iv_rich:put_credit_spread": {
+      "n": 39,
+      "wins": 25,
+      "losses": 14,
+      "win_rate": 0.641,
+      "expectancy_k10_usd": -40.22,
+      "expectancy_k05_usd": -22.16,
+      "net_k10_usd": -1568.4,
+      "profit_factor_k10": 0.559,
+      "slippage_fragile": false,
+      "ci_mean_k10": {
+        "n_clusters": 39,
+        "lo": -128.75,
+        "hi": 36.3,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 3,
+          "expectancy_usd": -341.6,
+          "net_usd": -1024.8
+        },
+        "2023_24_recovery": {
+          "n": 14,
+          "expectancy_usd": 53.54,
+          "net_usd": 749.6
+        },
+        "2025_drawdown_chop": {
+          "n": 22,
+          "expectancy_usd": -58.78,
+          "net_usd": -1293.2
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 1927.6,
+        "worst_trade_usd": -507.6,
+        "cvar_5pct_usd": -507.6,
+        "worst_loss_months": [
+          [
+            "2025-10",
+            -1189.0
+          ],
+          [
+            "2022-04",
+            -1024.8
+          ],
+          [
+            "2025-01",
+            -695.8
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": false,
+      "excluded": {
+        "entry_liquidity_guard": 15,
+        "no_aligned_entry_bar": 5,
+        "ic_one_wing": 0
+      },
+      "PASSES_PREREG": false
+    },
+    "unconditional:call_credit_spread": {
+      "n": 114,
+      "wins": 54,
+      "losses": 60,
+      "win_rate": 0.4737,
+      "expectancy_k10_usd": -130.58,
+      "expectancy_k05_usd": -116.61,
+      "net_k10_usd": -14886.4,
+      "profit_factor_k10": 0.223,
+      "slippage_fragile": false,
+      "ci_mean_k10": {
+        "n_clusters": 114,
+        "lo": -235.68,
+        "hi": -50.71,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 15,
+          "expectancy_usd": -46.27,
+          "net_usd": -694.0
+        },
+        "2023_24_recovery": {
+          "n": 69,
+          "expectancy_usd": -140.38,
+          "net_usd": -9686.4
+        },
+        "2025_drawdown_chop": {
+          "n": 30,
+          "expectancy_usd": -150.2,
+          "net_usd": -4506.0
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 16035.2,
+        "worst_trade_usd": -2721.6,
+        "cvar_5pct_usd": -1396.4,
+        "worst_loss_months": [
+          [
+            "2025-05",
+            -5411.6
+          ],
+          [
+            "2023-10",
+            -3404.2
+          ],
+          [
+            "2024-10",
+            -2840.4
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": false,
+      "excluded": {
+        "no_aligned_entry_bar": 22,
+        "entry_liquidity_guard": 41,
+        "ic_one_wing": 0
+      },
+      "PASSES_PREREG": false
+    },
+    "unconditional:iron_condor": {
+      "n": 59,
+      "wins": 17,
+      "losses": 42,
+      "win_rate": 0.2881,
+      "expectancy_k10_usd": -163.69,
+      "expectancy_k05_usd": -143.45,
+      "net_k10_usd": -9657.8,
+      "profit_factor_k10": 0.191,
+      "slippage_fragile": false,
+      "ci_mean_k10": {
+        "n_clusters": 59,
+        "lo": -329.76,
+        "hi": -40.22,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 5,
+          "expectancy_usd": -190.6,
+          "net_usd": -953.0
+        },
+        "2023_24_recovery": {
+          "n": 39,
+          "expectancy_usd": -84.2,
+          "net_usd": -3283.8
+        },
+        "2025_drawdown_chop": {
+          "n": 15,
+          "expectancy_usd": -361.4,
+          "net_usd": -5421.0
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 10223.4,
+        "worst_trade_usd": -2315.2,
+        "cvar_5pct_usd": -1999.7,
+        "worst_loss_months": [
+          [
+            "2025-05",
+            -4515.0
+          ],
+          [
+            "2025-10",
+            -1445.4
+          ],
+          [
+            "2023-04",
+            -1278.0
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": false,
+      "excluded": {
+        "no_aligned_entry_bar": 36,
+        "entry_liquidity_guard": 71,
+        "ic_one_wing": 57
+      },
+      "PASSES_PREREG": false
+    },
+    "unconditional:put_credit_spread": {
+      "n": 129,
+      "wins": 94,
+      "losses": 35,
+      "win_rate": 0.7287,
+      "expectancy_k10_usd": -2.63,
+      "expectancy_k05_usd": 10.99,
+      "net_k10_usd": -339.4,
+      "profit_factor_k10": 0.959,
+      "slippage_fragile": true,
+      "ci_mean_k10": {
+        "n_clusters": 126,
+        "lo": -56.63,
+        "hi": 39.89,
+        "alpha": 0.00833
+      },
+      "by_era": {
+        "2022_bear": {
+          "n": 14,
+          "expectancy_usd": -171.89,
+          "net_usd": -2406.4
+        },
+        "2023_24_recovery": {
+          "n": 61,
+          "expectancy_usd": 46.83,
+          "net_usd": 2856.4
+        },
+        "2025_drawdown_chop": {
+          "n": 54,
+          "expectancy_usd": -14.62,
+          "net_usd": -789.4
+        }
+      },
+      "tail": {
+        "max_drawdown_usd": 2643.2,
+        "worst_trade_usd": -1347.6,
+        "cvar_5pct_usd": -579.6,
+        "worst_loss_months": [
+          [
+            "2025-10",
+            -2826.8
+          ],
+          [
+            "2022-04",
+            -1427.4
+          ],
+          [
+            "2022-01",
+            -1092.0
+          ]
+        ]
+      },
+      "degenerate_uncalibratable": false,
+      "excluded": {
+        "entry_liquidity_guard": 46,
+        "no_aligned_entry_bar": 18,
+        "ic_one_wing": 0
+      },
+      "PASSES_PREREG": false
+    }
+  }
+}

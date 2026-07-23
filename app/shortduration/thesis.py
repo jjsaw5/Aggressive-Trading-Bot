@@ -13,9 +13,78 @@ from datetime import timedelta
 
 from app.config import get_settings
 from app.domain.enums import Direction, DTECategory, ShortDurationStrategy
-from app.domain.shortduration import DirectionalThesis
+from app.domain.shortduration import DirectionalThesis, SourcedClaim
 from app.engine.price_action import analyze_price_action
 from app.shortduration.strategies.base import SetupContext, StrategyDetection
+
+# The three joined providers. A source with no usable data for a symbol appears in
+# sources_missing — the thesis names its silence instead of papering over it.
+_SOURCES = ("fmp", "unusual_whales", "benzinga")
+
+
+def _sourced_claims(ctx: SetupContext, pa, d: Direction) -> list[SourcedClaim]:
+    """Join FMP (price/trend/earnings), Unusual Whales (flow), and Benzinga (news)
+    into per-claim receipts. Every sentence carries source + field + raw value +
+    timestamp. Observational sources say so — flow explicitly carries the
+    no-validated-edge disclaimer (the registry's verdict travels with the claim)."""
+    claims: list[SourcedClaim] = []
+
+    # --- FMP: daily trend structure + today's move + next earnings ---
+    if pa is not None and pa.details:
+        sma20, sma50 = pa.details.get("sma20"), pa.details.get("sma50")
+        rsi = pa.details.get("rsi14")
+        if sma20 and sma50:
+            trend = "downtrend" if sma20 < sma50 else "uptrend"
+            claims.append(SourcedClaim(
+                text=f"Daily {trend}: SMA20 {sma20:g} vs SMA50 {sma50:g} over the last year of closes.",
+                source="fmp", field="daily.sma20_vs_sma50", value=f"{sma20:g}/{sma50:g}",
+                as_of=ctx.daily.candles[-1].ts if (ctx.daily and ctx.daily.candles) else None,
+            ))
+        if rsi is not None:
+            claims.append(SourcedClaim(
+                text=f"RSI(14) {rsi:.0f} — {'weak' if rsi < 50 else 'firm'} momentum.",
+                source="fmp", field="daily.rsi14", value=f"{rsi:.1f}",
+                as_of=ctx.daily.candles[-1].ts if (ctx.daily and ctx.daily.candles) else None,
+            ))
+    if ctx.change_pct is not None:  # computed from the FMP quote vs prior close
+        claims.append(SourcedClaim(
+            text=f"{ctx.change_pct:+.2f}% today vs prior close.",
+            source="fmp", field="quote.change_pct", value=f"{ctx.change_pct:+.2f}%",
+            as_of=getattr(ctx.quote, "as_of", None) if ctx.quote is not None else None,
+        ))
+    if ctx.next_earnings is not None:
+        claims.append(SourcedClaim(
+            text=f"Next earnings {ctx.next_earnings}.",
+            source="fmp", field="calendar.next_earnings", value=str(ctx.next_earnings),
+        ))
+
+    # --- Unusual Whales: today's flow tape (OBSERVATIONAL — validated null) ---
+    if ctx.flow:
+        prem = [a.premium for a in ctx.flow if a.premium]
+        bull = sum(a.premium or 0 for a in ctx.flow if (a.sentiment or 0) > 0)
+        tot = sum(prem)
+        lean = f"{bull / tot:.0%} bullish by premium" if tot > 0 else "premium unknown"
+        claims.append(SourcedClaim(
+            text=(
+                f"{len(ctx.flow)} unusual-flow prints today, {lean}. Observational only — "
+                "no flow encoding has validated out-of-sample (see the feature registry); "
+                "this describes the tape, it predicts nothing."
+            ),
+            source="unusual_whales", field="flow.today",
+            value=f"n={len(ctx.flow)}, premium=${tot:,.0f}", as_of=ctx.now,
+        ))
+
+    # --- Benzinga: the most recent headline for this symbol ---
+    sym_news = [n for n in (ctx.news or []) if (n.symbol or "").upper() == ctx.symbol.upper()]
+    if sym_news:
+        top = max(sym_news, key=lambda n: n.source_ts or n.received_ts)
+        claims.append(SourcedClaim(
+            text=f'Latest headline: "{top.headline}"',
+            source="benzinga", field="news.headline", value=top.headline,
+            as_of=top.source_ts or top.received_ts,
+        ))
+
+    return claims
 
 # Strategies whose thesis is a multi-week/daily-trend swing — they need room to work.
 _SWING_STRATEGIES = {ShortDurationStrategy.TREND_CONTINUATION}
@@ -169,9 +238,16 @@ def build_directional_thesis(
         bits.append(f"⚠ {w}")
     summary = " ".join(bits)
 
+    # Source joins: every claim with its receipt, and an honest account of which
+    # providers contributed vs were silent for this symbol.
+    claims = _sourced_claims(ctx, pa, d)
+    used = sorted({c.source for c in claims} - {"computed"})
+    missing = [s_ for s_ in _SOURCES if s_ not in used]
+
     return DirectionalThesis(
         direction=d, headline=headline, drivers=drivers, todays_context=todays_context,
         invalidation=invalidation, invalidation_price=invalidation_price,
         distance_to_invalidation_pct=dist_inval, reversal_risk=risk,
         reversal_risk_reasons=risk_reasons, structural_warnings=structural, summary=summary,
+        claims=claims, sources_used=used, sources_missing=missing,
     )

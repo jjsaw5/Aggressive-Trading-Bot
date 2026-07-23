@@ -514,6 +514,14 @@ class ScoreCard(BaseModel):
     conviction_status: str = "UNCALIBRATED"  # UNCALIBRATED | CALIBRATED
     pop_available: bool = True
     conviction_note: str = ""
+    # Input-coverage abstention: when required-input coverage fell below the
+    # configured threshold, the rank ABSTAINS — the number must not be read at all
+    # (as opposed to UNCALIBRATED, where the number is a tradability read with
+    # honest framing). input_coverage is the required-input fraction that was
+    # present; abstain_reason names what was missing.
+    abstained: bool = False
+    abstain_reason: str = ""
+    input_coverage: float | None = None
 
     @property
     def normalized(self) -> float:

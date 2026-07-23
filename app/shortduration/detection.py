@@ -363,6 +363,11 @@ async def _score_symbol(
         from app.quant.iv import put_call_iv_skew
         iv.iv_skew = put_call_iv_skew(chain, chain.underlying_price)
 
+    # Input-coverage monitor: structured per-feed/per-field coverage over exactly
+    # what this scan consumed. Below-threshold coverage makes the rank ABSTAIN.
+    from app.shortduration.input_coverage import assess_symbol_coverage
+    coverage = assess_symbol_coverage(ctx, chain=chain, iv=iv, dte=dte, now=now)
+
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
     # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
     # quote, not the 120s broad-screen budget. Evaluate at the trade-ready
@@ -410,7 +415,8 @@ async def _score_symbol(
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)
         for contract in contracts:
             card = score_candidate(
-                ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
+                ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa,
+                trade_plan=contract.plan, coverage=coverage,
             )
             _apply_cost_drag(contract, chain, now.date())
             # POP is priced on the IV of the TRADED expiry (not 30-day IV) — the right
@@ -419,7 +425,7 @@ async def _score_symbol(
             expiry_iv = _traded_expiry_iv(chain, contract.plan, spot)
             pop, what_has = _candidate_odds(det, symbol, contract, spot, expiry_iv, now)
             scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
-    return scored
+    return scored, coverage
 
 
 async def run_detection(
@@ -450,8 +456,19 @@ async def run_detection(
             limit=settings.tier_concurrency,
         )
 
+    # Scan-level input-coverage aggregation: a field missing across the scan is a
+    # FEED outage — alert on the first scan, not in an audit months later.
+    from app.shortduration.input_coverage import aggregate_scan
+    coverages = [cov for r in scored_rows if r for (_scored, cov) in [r]]
+    if coverages:
+        aggregate_scan(
+            coverages, dte=dte, now=now,
+            alert_threshold=settings.input_coverage_feed_alert_threshold,
+        )
+
     created: list[ShortDurationCandidate] = []
-    for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
+    for (symbol, _ctx, _dets), row in zip(with_dets, scored_rows, strict=False):
+        scored = row[0] if row else None
         if not scored:
             continue
         for det, card, news, contract, gate, fresh, thesis, pop, what_has in scored:
@@ -526,6 +543,13 @@ def _classify_transitions(
                        reason=why, at=now)
         )
         return trail
+    # Input-coverage abstention outranks everything: an abstained rank is not a
+    # rank, so the candidate holds at EVALUATING — no watchlist, no arm — with the
+    # coverage gap recorded. (Abstain, don't guess: the state machine enforces it.)
+    if cand.scorecard is not None and cand.scorecard.abstained:
+        cand.reasons.append(cand.scorecard.abstain_reason)
+        return trail
+
     # Layer-1 arming discipline: the hand-weighted rank is not calibrated conviction,
     # so ARM (the "go" tier) is withheld unless the rank is least misleading — POP must
     # be computable, and 0DTE never asserts conviction unless explicitly enabled. A

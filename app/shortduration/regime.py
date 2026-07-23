@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app.domain.enums import ShortDurationRegime
+from app.domain.internals import MarketInternals
 from app.domain.shortduration import (
     EconomicEvent,
     IntradayLevels,
     RegimeFactor,
     ShortDurationRegimeState,
 )
-from app.domain.internals import MarketInternals
 from app.shortduration.breadth import WatchlistParticipation
 
 _MAJORS = ("SPY", "QQQ", "IWM")

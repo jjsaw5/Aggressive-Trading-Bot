@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     # spread cost-drag so the tightest-to-trade expression of a setup ranks first,
     # rather than a wider one that merely scored a hair higher.
     board_rank_score_bucket: float = 0.05
+    # Input-coverage monitor ("abstain, don't guess" applied to inputs). A symbol
+    # whose required-input coverage falls below the abstain threshold ABSTAINS from
+    # ranking (held at EVALUATING, rendered as abstained) instead of letting missing
+    # feeds default into a plausible-looking composite. A field whose coverage across
+    # a whole scan falls below the alert threshold is a FEED outage: logged loudly +
+    # gauged (the iv_rank silent-death case this monitor exists to catch).
+    input_coverage_abstain_threshold: float = 0.6
+    input_coverage_feed_alert_threshold: float = 0.5
     # Scoring model — weights are configurable + versioned. Every candidate records
     # the model + risk-policy version it was scored under (Phase 2). Weights per
     # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and

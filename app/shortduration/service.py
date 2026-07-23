@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+from app.domain.internals import MarketInternals
 from app.domain.shortduration import (
     EconomicEvent,
     IntradayLevels,
@@ -24,7 +25,6 @@ from app.domain.shortduration import (
 from app.engine.universe import DEFAULT_UNIVERSE
 from app.logging_config import get_logger
 from app.providers import registry
-from app.domain.internals import MarketInternals
 from app.shortduration.breadth import WatchlistParticipation, compute_participation
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.regime import compute_regime
@@ -102,7 +102,7 @@ async def _market_internals(now: datetime):
 
 async def build_market_regime(
     *, now: datetime | None = None, universe: list[str] | None = None
-) -> tuple[ShortDurationRegimeState, dict[str, IntradayLevels], WatchlistParticipation, "MarketInternals | None"]:
+) -> tuple[ShortDurationRegimeState, dict[str, IntradayLevels], WatchlistParticipation, MarketInternals | None]:
     now = now or datetime.now(UTC)
     syms = list(dict.fromkeys(_MAJORS + (universe or DEFAULT_UNIVERSE)))
     results = await bounded_gather([_symbol_levels(s, now) for s in syms], limit=8)

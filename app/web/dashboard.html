@@ -732,7 +732,9 @@
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
         <td><span class="pill">${c.state}</span></td>
-        <td class="num"><strong>${(c.score * 100).toFixed(0)}</strong></td>
+        <td class="num">${c.scorecard && c.scorecard.abstained
+          ? '<span class="neg" title="Insufficient inputs — abstained from ranking">ABST</span>'
+          : `<strong>${(c.score * 100).toFixed(0)}</strong>`}</td>
         <td class="num">${rr}</td>
         <td class="num">${risk}</td>
         <td>${entry}</td>
@@ -830,7 +832,14 @@
           ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
         <div class="proxy-note" style="margin-top:6px">Informational only — this never changes the score or blocks entry.</div></div>`;
       const uncal = !sc || sc.conviction_status !== "CALIBRATED";
-      const convBanner = `<div class="banner ${uncal ? 'regime-stop' : ''}" style="margin-top:8px">
+      // Abstention outranks everything: an abstained rank is not a rank — say so
+      // instead of showing a number ("abstain, don't guess" applied to inputs).
+      const convBanner = sc && sc.abstained
+        ? `<div class="banner regime-stop" style="margin-top:8px">
+            <b>⛔ ABSTAINED — insufficient inputs to rank</b>
+            <span class="muted">· input coverage ${sc.input_coverage == null ? "?" : (sc.input_coverage*100).toFixed(0) + "%"}</span>
+            <div class="muted" style="margin-top:4px">${sc.abstain_reason || ""} The tradability number below must not be read.</div></div>`
+        : `<div class="banner ${uncal ? 'regime-stop' : ''}" style="margin-top:8px">
         <b>${uncal ? '⚠ UNCALIBRATED — tradability rank, not conviction' : 'CALIBRATED conviction'}</b>
         ${sc && sc.pop_available === false ? ' <span class="neg">· POP unknown (no IV)</span>' : ''}
         ${sc && sc.conviction_note ? `<div class="muted" style="margin-top:4px">${sc.conviction_note}</div>` : ''}</div>`;

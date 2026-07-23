@@ -67,6 +67,7 @@ def score_candidate(
     news_score: NewsScore | None = None,
     flow_analysis: FlowAnalysis | None = None,
     trade_plan=None,
+    coverage=None,  # SymbolCoverage | None — input-coverage monitor (abstain, don't guess)
 ) -> ScoreCard:
     d: Direction = detection.direction
     flow = flow_analysis or analyze_flow(ctx.flow, ctx.now, d)
@@ -139,11 +140,33 @@ def score_candidate(
             "Hand-weighted tradability rank, not validated/calibrated conviction "
             "(no feature has cleared the net-of-cost validation gate). Your thesis required."
         )
+    # Input-coverage abstention (auditor round: "abstain, don't guess" applied to
+    # inputs). Below the threshold, missing feeds would otherwise default into the
+    # _MISSING_RAW constant and produce a plausible-looking number — so the rank
+    # ABSTAINS instead: the number must not be read, and the candidate is held back
+    # from watchlist/arm by the state machine.
+    abstained = False
+    abstain_reason = ""
+    input_coverage = coverage.coverage if coverage is not None else None
+    if coverage is not None and coverage.coverage < settings.input_coverage_abstain_threshold:
+        abstained = True
+        abstain_reason = (
+            f"Input coverage {coverage.coverage:.0%} below the "
+            f"{settings.input_coverage_abstain_threshold:.0%} threshold — missing: "
+            f"{', '.join(coverage.missing)}. Abstaining from rank rather than scoring blanks."
+        )
+
     stamp = "UNCALIBRATED" + ("" if pop_available else " · POP unknown")
-    summary = (
-        f"[{stamp}] {cat} tradability {total:.0f}/100 (data {data_quality:.2f}). "
-        f"Led by {top[0].label} & {top[1].label}. Not calibrated conviction."
-    )
+    if abstained:
+        summary = (
+            f"[ABSTAINED] {cat} — insufficient inputs to rank "
+            f"(coverage {input_coverage:.0%}). {abstain_reason}"
+        )
+    else:
+        summary = (
+            f"[{stamp}] {cat} tradability {total:.0f}/100 (data {data_quality:.2f}). "
+            f"Led by {top[0].label} & {top[1].label}. Not calibrated conviction."
+        )
     return ScoreCard(
         dte_category=cat, total=total, overall_confidence=overall, factors=factors,
         components=components, data_quality=round(data_quality, 3), summary=summary,
@@ -152,4 +175,5 @@ def score_candidate(
         weights={k: float(weights.get(k, 0.0)) for k in keys},
         conviction_status=conviction_status, pop_available=pop_available,
         conviction_note=conviction_note,
+        abstained=abstained, abstain_reason=abstain_reason, input_coverage=input_coverage,
     )

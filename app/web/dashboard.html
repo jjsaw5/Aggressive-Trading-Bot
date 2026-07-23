@@ -783,13 +783,14 @@
           <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
           <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
           <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>
-          <div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div>${popTxt}</div>
+          <div>Chance of profit <span class="muted" style="font-size:11px">(implied, UNCALIBRATED)</span></div><div>${popTxt}</div>
           <div>Est. net / share</div><div>${rec.est_fill_net==null?"—":"$"+rec.est_fill_net}</div>
           <div>Cost-drag <span class="muted" style="font-size:11px">(round-trip spread)</span></div><div>${dragTxt}</div>
         </div>
         ${c.what_has_to_happen?`<div class="banner" style="margin-top:8px"><b>What has to happen:</b> ${c.what_has_to_happen}</div>`:""}
         ${legRows?`<table style="margin-top:8px"><thead><tr><th>Leg</th><th>Contract</th><th>Expiry</th><th class="num">Qty</th></tr></thead><tbody>${legRows}</tbody></table>`:`<div class="muted" style="margin-top:6px">${rec.liquidity_note||"No tradeable contract."}</div>`}
-        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. Chance of profit is the market-implied odds from IV — informational, never a gate. No order is placed.</div></div>`;
+        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. No order is placed.
+          <br><b>Chance of profit provenance:</b> Black-Scholes <b>zero-drift</b> risk-neutral lognormal (closed-form N(d₂)) from ATM 30-day IV and the structure break-even. The break-even <b>nets the debit at mid — it excludes the entry spread you cross</b>, so this is optimistic by roughly the half-spread. Arming now depends on whether POP is computable, but the number itself is <b>UNCALIBRATED</b> — it has not been checked against realized win rates on real marks. Treat it as the market's implied odds, not a validated probability.</div></div>`;
       // Structure-aware exit plan (Phase 3) surfaced for the human managing the trade.
       const ep = c.exit_plan;
       const pxOf = v => v == null ? "" : ` <span class="muted">@ ${v}</span>`;

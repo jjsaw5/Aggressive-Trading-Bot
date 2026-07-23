@@ -153,7 +153,16 @@ class Settings(BaseSettings):
     # the model + risk-policy version it was scored under (Phase 2). Weights per
     # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and
     # contract liquidity, less on raw flow. 1-5DTE is unchanged.
-    scoring_model_version: str = "sd-scoring-2026.07-v2"
+    # v3 boundary: the IV-rank history join was restored in the short-duration scan.
+    # Before v3, iv_rank/iv_percentile were always None in this path, so the
+    # volatility factor fell back to the _MISSING_RAW=0.25 constant on EVERY
+    # short-duration candidate — depressing every score by the same amount AND making
+    # volatility non-differentiating (identical contribution for all), so pre-v3
+    # rankings are distorted, not merely shifted. Pre-v3 stored candidates must be
+    # treated as degraded and excluded from any calibration corpus (they cannot be
+    # re-scored — the original market snapshot is gone). The version bump is the
+    # separation boundary the warehouse needs.
+    scoring_model_version: str = "sd-scoring-2026.07-v3"
     risk_policy_version: str = "sd-risk-2026.07-v1"
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {

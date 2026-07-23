@@ -310,6 +310,18 @@ class ShortDurationExitPlan(BaseModel):
     rationale: str = ""
 
 
+class SourcedClaim(BaseModel):
+    """One thesis statement with its receipt: which provider said it, the raw
+    value, and when. The thesis engine never asserts — every sentence is
+    traceable to a feed a human can verify."""
+
+    text: str
+    source: str  # fmp | unusual_whales | benzinga | computed
+    field: str  # e.g. daily.sma20, flow.net_premium, news.headline
+    value: str = ""  # the raw datum behind the sentence
+    as_of: datetime | None = None
+
+
 class DirectionalThesis(BaseModel):
     """A plain-English, deterministic explanation of *why this direction* — assembled
     from the same signals the scanner scores (daily trend structure, today's move,
@@ -330,6 +342,12 @@ class DirectionalThesis(BaseModel):
     # (a swing thesis in a too-short expiry). Not a reversal signal — a wrong-instrument one.
     structural_warnings: list[str] = Field(default_factory=list)
     summary: str = ""  # the full rendered "read before you act" paragraph
+    # Source joins (FMP / Unusual Whales / Benzinga): every claim with its receipt,
+    # plus which sources actually contributed vs were silent. The thesis narrates
+    # and attributes; it never scores, gates, or asserts conviction.
+    claims: list[SourcedClaim] = Field(default_factory=list)
+    sources_used: list[str] = Field(default_factory=list)
+    sources_missing: list[str] = Field(default_factory=list)
 
 
 class ShortDurationCandidate(BaseModel):

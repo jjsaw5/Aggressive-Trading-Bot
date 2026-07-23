@@ -827,6 +827,11 @@
         ${th.todays_context ? `<div style="margin-top:6px">${th.todays_context}</div>` : ""}
         ${(th.drivers||[]).length ? `<ul style="margin:8px 0 0 18px">${th.drivers.map(x=>`<li>${x}</li>`).join("")}</ul>` : ""}
         ${th.invalidation ? `<div class="muted" style="margin-top:6px"><b>Invalidation:</b> ${th.invalidation}${th.distance_to_invalidation_pct!=null?` — <b>${th.distance_to_invalidation_pct}%</b> away`:""}</div>` : ""}
+        ${(th.claims||[]).length ? `<div style="margin-top:8px"><b style="font-size:12px">Sourced claims</b>
+          <table style="margin-top:4px"><tbody>${th.claims.map(cl =>
+            `<tr><td style="white-space:nowrap"><span class="pill" title="${cl.field}${cl.as_of ? " · " + cl.as_of : ""}">${cl.source}</span></td>
+             <td>${cl.text}</td></tr>`).join("")}</tbody></table>
+          ${(th.sources_missing||[]).length ? `<div class="muted" style="font-size:11px;margin-top:2px">silent sources: ${th.sources_missing.join(", ")} — no usable data for this symbol</div>` : ""}</div>` : ""}
         ${(th.structural_warnings||[]).length ? `<div class="banner regime-stop" style="margin-top:8px"><b>⚠ Wrong-instrument warning</b>${th.structural_warnings.map(w=>`<div class="muted" style="margin-top:4px">${w}</div>`).join("")}</div>` : ""}
         <div class="banner ${riskCls}" style="margin-top:8px"><b>Reversal risk: ${th.reversal_risk.toUpperCase()}</b>
           ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>

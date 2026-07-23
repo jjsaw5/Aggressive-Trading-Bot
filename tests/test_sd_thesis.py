@@ -136,3 +136,50 @@ async def test_thesis_attached_to_candidates() -> None:
     assert cands
     assert all(c.thesis is not None and c.thesis.headline for c in cands)
     assert all(c.thesis.reversal_risk in ("low", "elevated", "high") for c in cands)
+
+
+# --- Source joins (FMP / UW / Benzinga): every claim carries its receipt ------
+def test_sourced_claims_join_all_three_providers() -> None:
+    from datetime import date
+
+    from app.domain.options import FlowAlert
+    from app.domain.shortduration import NewsItem
+
+    ctx = _ctx(change_pct=-2.0, daily=_daily(_downtrend_closes()),
+               next_earnings=date(2026, 7, 29))
+    ctx.flow = [
+        FlowAlert(symbol="TSLA", ts=_NOW, premium=500_000.0, sentiment=-0.6),
+        FlowAlert(symbol="TSLA", ts=_NOW, premium=250_000.0, sentiment=0.4),
+    ]
+    ctx.news = [NewsItem(id="n1", symbol="TSLA", headline="TSLA misses on Q2 EPS",
+                         received_ts=_NOW, source_ts=_NOW)]
+    th = build_directional_thesis(ctx, _det())
+    by_source = {}
+    for c in th.claims:
+        by_source.setdefault(c.source, []).append(c)
+    assert set(th.sources_used) == {"fmp", "unusual_whales", "benzinga"}
+    assert th.sources_missing == []
+    # FMP: trend + move + earnings, each with the raw value attached.
+    fields = {c.field for c in by_source["fmp"]}
+    assert {"daily.sma20_vs_sma50", "quote.change_pct", "calendar.next_earnings"} <= fields
+    # UW flow claim is observational and says so — the registry verdict travels with it.
+    flow_claim = by_source["unusual_whales"][0]
+    assert "predicts nothing" in flow_claim.text and "n=2" in flow_claim.value
+    # Benzinga claim quotes the actual headline with its timestamp.
+    news_claim = by_source["benzinga"][0]
+    assert "TSLA misses" in news_claim.text and news_claim.as_of is not None
+
+
+def test_silent_sources_are_named_not_papered_over() -> None:
+    # Daily history only (FMP) — UW and Benzinga contributed nothing and the
+    # thesis must say so rather than fabricate claims.
+    th = build_directional_thesis(_ctx(daily=_daily(_downtrend_closes())), _det())
+    assert th.sources_used == ["fmp"]
+    assert set(th.sources_missing) == {"unusual_whales", "benzinga"}
+    assert all(c.source != "unusual_whales" for c in th.claims)
+
+
+def test_no_data_yields_no_claims_and_all_sources_missing() -> None:
+    th = build_directional_thesis(_ctx(), _det())
+    assert th.claims == [] or all(c.source == "computed" for c in th.claims)
+    assert set(th.sources_missing) == {"fmp", "unusual_whales", "benzinga"}

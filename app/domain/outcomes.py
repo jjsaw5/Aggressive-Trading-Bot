@@ -56,6 +56,10 @@ class DecisionSnapshot(BaseModel):
     # --- Prediction (what we believed would happen) ---
     composite_score: float = Field(ge=0.0, le=1.0)
     probability_of_profit: float | None = None  # risk-neutral POP at plan time
+    # POP methodology label, so calibration is read PER CONSTRUCT and a change in
+    # derivation (e.g. iv30 -> traded-expiry IV) can never silently pool with the
+    # old one. Empty = legacy funnel analytics POP.
+    pop_source: str = ""
     reward_to_risk: float | None = None
     expected_value_usd: float | None = None
     breakevens: list[float] = Field(default_factory=list)
@@ -78,6 +82,13 @@ class DecisionSnapshot(BaseModel):
     contracts: int = Field(ge=1)
     expiration: date | None = None
     dte_at_entry: int | None = None
+
+    # Scoring model version this decision was produced under. For short-duration
+    # decisions this is "sd-scoring-YYYY.MM-vN"; empty for funnel-lineage decisions
+    # (a different model). The calibration harness hard-filters short-duration
+    # decisions below the v3 boundary (the IV-rank-restored fix) so degraded scores
+    # can never enter a calibration corpus. See app/analytics/calibration.py.
+    scoring_model_version: str = ""
 
     # Full plan for faithful replay / audit.
     trade_plan: TradePlan

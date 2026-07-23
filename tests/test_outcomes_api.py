@@ -28,7 +28,7 @@ def test_snapshot_and_outcome_roundtrip() -> None:
     loaded = repository.get_snapshot("scanRT:AAA")
     assert loaded is not None and loaded.symbol == "AAA"
 
-    pending = repository.list_snapshots(status="pending")
+    pending = repository.list_snapshots(2000, status="pending")
     assert any(s.decision_id == "scanRT:AAA" for s in pending)
 
     from app.analytics.outcomes import resolve_underlying
@@ -40,7 +40,7 @@ def test_snapshot_and_outcome_roundtrip() -> None:
 
     # Snapshot is promoted to resolved.
     assert not any(
-        s.decision_id == "scanRT:AAA" for s in repository.list_snapshots(status="pending")
+        s.decision_id == "scanRT:AAA" for s in repository.list_snapshots(2000, status="pending")
     )
     got = repository.get_outcomes_for("scanRT:AAA")
     assert len(got) == 1 and got[0].result.value == "win"

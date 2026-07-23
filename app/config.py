@@ -136,11 +136,51 @@ class Settings(BaseSettings):
     # Score thresholds (normalized [0,1]) that classify a fresh detection's state.
     short_duration_watchlist_score: float = 0.5
     short_duration_arm_score: float = 0.7
+    # Layer-1 arming discipline (Conviction-Scanner spec §1/§11). A hand-weighted
+    # tradability rank is NOT calibrated conviction, so arming — the "go" tier — is
+    # gated on the conditions under which the rank is least misleading:
+    #   * ARM only when probability-of-profit is computable (IV present). A blank POP
+    #     must never surface as "armed/clear" (the TSLA-put-spread failure mode).
+    #   * 0DTE never asserts conviction (ZERO_DTE_CONVICTION=false): gamma/theta make
+    #     the hand-weighted rank least trustworthy exactly where it's most tempting.
+    # A blocked candidate is held at WATCHLIST with the reason recorded, never armed.
+    zero_dte_conviction: bool = False
+    # Board rank (Layer-1 cost-drag): within this normalized-score band, order by real
+    # spread cost-drag so the tightest-to-trade expression of a setup ranks first,
+    # rather than a wider one that merely scored a hair higher.
+    board_rank_score_bucket: float = 0.05
+    # Input-coverage monitor ("abstain, don't guess" applied to inputs). A symbol
+    # whose required-input coverage falls below the abstain threshold ABSTAINS from
+    # ranking (held at EVALUATING, rendered as abstained) instead of letting missing
+    # feeds default into a plausible-looking composite. A field whose coverage across
+    # a whole scan falls below the alert threshold is a FEED outage: logged loudly +
+    # gauged (the iv_rank silent-death case this monitor exists to catch).
+    input_coverage_abstain_threshold: float = 0.6
+    input_coverage_feed_alert_threshold: float = 0.5
+    # Layer-2 conviction gate (spec §6/§11) — built RED, flips only on evidence.
+    # CALIBRATED display requires: a validated registry feature, a real-marks
+    # calibration sample, Brier <= max, positive score->P&L discrimination, and
+    # (per_regime) >=2 populated vol regimes. Any conviction-based sizing must
+    # additionally consult the gate (sizing_requires_green_gate).
+    conviction_require_validated: bool = True
+    calibration_brier_max: float = 0.25
+    calibration_spearman_min: float = 0.0
+    calibration_per_regime: bool = True
+    sizing_requires_green_gate: bool = True
     # Scoring model — weights are configurable + versioned. Every candidate records
     # the model + risk-policy version it was scored under (Phase 2). Weights per
     # model MUST sum to 100. 0DTE v2 rebalance: more weight on price structure and
     # contract liquidity, less on raw flow. 1-5DTE is unchanged.
-    scoring_model_version: str = "sd-scoring-2026.07-v2"
+    # v3 boundary: the IV-rank history join was restored in the short-duration scan.
+    # Before v3, iv_rank/iv_percentile were always None in this path, so the
+    # volatility factor fell back to the _MISSING_RAW=0.25 constant on EVERY
+    # short-duration candidate — depressing every score by the same amount AND making
+    # volatility non-differentiating (identical contribution for all), so pre-v3
+    # rankings are distorted, not merely shifted. Pre-v3 stored candidates must be
+    # treated as degraded and excluded from any calibration corpus (they cannot be
+    # re-scored — the original market snapshot is gone). The version bump is the
+    # separation boundary the warehouse needs.
+    scoring_model_version: str = "sd-scoring-2026.07-v3"
     risk_policy_version: str = "sd-risk-2026.07-v1"
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {

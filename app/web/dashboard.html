@@ -685,8 +685,21 @@
       </div>`;
     }
 
+    // A defined-risk cost & probability calculator, not a picker: no signal here has
+    // shown net-of-cost edge out-of-sample (docs/FLOW_FEATURE_VALIDATION_RESULT.md).
+    // Shown on every short-duration tab so the framing is never lost.
+    function sdTruthBanner() {
+      return `<div class="banner regime-warn" style="margin-bottom:12px">
+        <b>What this is:</b> a defined-risk <b>tradability + cost/odds</b> calculator — not a trade signal.
+        <div class="muted" style="margin-top:4px">Across a full-cycle real-mark backtest, a pre-registered flow
+        experiment, and out-of-sample feature validation (pricing <i>and</i> flow), <b>no feature has shown
+        net-of-cost edge</b> — every layer reduces to directional beta + spread tax. These ranks show you the
+        odds (POP), the spread tax (cost-drag), the regime and what has to happen. <b>The thesis is yours.</b></div></div>`;
+    }
+
     const SD_BUCKET_LABEL = {
-      0: "🟢 Ready to trade", 1: "🟡 Armed — entry blocked", 2: "⚪ Watchlist",
+      0: "🟢 Tradable structure — gates clear (not a validated pick)",
+      1: "🟡 Structure ready — entry blocked", 2: "⚪ Watchlist",
       3: "🔵 In flight", 4: "▫️ Evaluating", 5: "🔴 Rejected / closed",
     };
     function sdBucket(c) {
@@ -719,7 +732,9 @@
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
         <td><span class="pill">${c.state}</span></td>
-        <td class="num"><strong>${(c.score * 100).toFixed(0)}</strong></td>
+        <td class="num">${c.scorecard && c.scorecard.abstained
+          ? '<span class="neg" title="Insufficient inputs — abstained from ranking">ABST</span>'
+          : `<strong>${(c.score * 100).toFixed(0)}</strong>`}</td>
         <td class="num">${rr}</td>
         <td class="num">${risk}</td>
         <td>${entry}</td>
@@ -760,18 +775,24 @@
       // Market-implied odds: a low, capped-payoff bet reads honestly here.
       const popCls = c.probability_of_profit == null ? "" : c.probability_of_profit < 0.4 ? "neg" : c.probability_of_profit < 0.55 ? "warn" : "pos";
       const popTxt = c.probability_of_profit == null ? "—" : `<span class="${popCls}">${(c.probability_of_profit*100).toFixed(0)}%</span>`;
+      // Cost-drag: round-trip spread tax as a % of defined max-loss. <15% cheap, ≥30% expensive.
+      const drag = rec.cost_drag_ratio;
+      const dragCls = drag == null ? "" : drag < 0.15 ? "pos" : drag < 0.30 ? "warn" : "neg";
+      const dragTxt = drag == null ? "—" : `<span class="${dragCls}">${(drag*100).toFixed(0)}%</span>${rec.cost_drag_note?` <span class="muted" style="font-size:11px">${rec.cost_drag_note}</span>`:""}`;
       const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
         <div class="kv">
           <div>Structure</div><div>${rec.description||"—"}</div>
           <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
           <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
           <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>
-          <div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div>${popTxt}</div>
+          <div>Chance of profit <span class="muted" style="font-size:11px">(implied, UNCALIBRATED)</span></div><div>${popTxt}</div>
           <div>Est. net / share</div><div>${rec.est_fill_net==null?"—":"$"+rec.est_fill_net}</div>
+          <div>Cost-drag <span class="muted" style="font-size:11px">(round-trip spread)</span></div><div>${dragTxt}</div>
         </div>
         ${c.what_has_to_happen?`<div class="banner" style="margin-top:8px"><b>What has to happen:</b> ${c.what_has_to_happen}</div>`:""}
         ${legRows?`<table style="margin-top:8px"><thead><tr><th>Leg</th><th>Contract</th><th>Expiry</th><th class="num">Qty</th></tr></thead><tbody>${legRows}</tbody></table>`:`<div class="muted" style="margin-top:6px">${rec.liquidity_note||"No tradeable contract."}</div>`}
-        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. Chance of profit is the market-implied odds from IV — informational, never a gate. No order is placed.</div></div>`;
+        <div class="proxy-note" style="margin-top:6px">Defined-risk only, sized to the per-trade cap. No order is placed.
+          <br><b>Chance of profit provenance:</b> Black-Scholes <b>zero-drift</b> risk-neutral lognormal (closed-form N(d₂)) from the <b>IV of the traded expiry</b> and the structure break-even. Three caveats: (1) the break-even <b>nets the debit at mid — it excludes the entry spread you cross</b>, so it's optimistic by ~half the spread; (2) it's a <b>hold-to-expiry</b> probability of finishing past break-even, so it does not model the early ±50% take-profit/stop exits the system actually uses; (3) it's a risk-neutral pricing quantity and <b>UNCALIBRATED</b> — not checked against realized win rates. Arming depends on POP being computable, but treat the number as the market's implied odds, not a validated forecast.</div></div>`;
       // Structure-aware exit plan (Phase 3) surfaced for the human managing the trade.
       const ep = c.exit_plan;
       const pxOf = v => v == null ? "" : ` <span class="muted">@ ${v}</span>`;
@@ -810,14 +831,26 @@
         <div class="banner ${riskCls}" style="margin-top:8px"><b>Reversal risk: ${th.reversal_risk.toUpperCase()}</b>
           ${(th.reversal_risk_reasons||[]).length ? `<div class="muted" style="margin-top:4px">${th.reversal_risk_reasons.join(" ")}</div>` : ' <span class="muted">— none flagged</span>'}</div>
         <div class="proxy-note" style="margin-top:6px">Informational only — this never changes the score or blocks entry.</div></div>`;
+      const uncal = !sc || sc.conviction_status !== "CALIBRATED";
+      // Abstention outranks everything: an abstained rank is not a rank — say so
+      // instead of showing a number ("abstain, don't guess" applied to inputs).
+      const convBanner = sc && sc.abstained
+        ? `<div class="banner regime-stop" style="margin-top:8px">
+            <b>⛔ ABSTAINED — insufficient inputs to rank</b>
+            <span class="muted">· input coverage ${sc.input_coverage == null ? "?" : (sc.input_coverage*100).toFixed(0) + "%"}</span>
+            <div class="muted" style="margin-top:4px">${sc.abstain_reason || ""} The tradability number below must not be read.</div></div>`
+        : `<div class="banner ${uncal ? 'regime-stop' : ''}" style="margin-top:8px">
+        <b>${uncal ? '⚠ UNCALIBRATED — tradability rank, not conviction' : 'CALIBRATED conviction'}</b>
+        ${sc && sc.pop_available === false ? ' <span class="neg">· POP unknown (no IV)</span>' : ''}
+        ${sc && sc.conviction_note ? `<div class="muted" style="margin-top:4px">${sc.conviction_note}</div>` : ''}</div>`;
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
-        <div class="sub">State <span class="pill">${c.state}</span> · score <strong>${(c.score*100).toFixed(0)}</strong>/100
+        <div class="sub">State <span class="pill">${c.state}</span> · <span class="muted">tradability</span> <strong>${(c.score*100).toFixed(0)}</strong>/100
           · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
           ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}
           ${c.scoring_model_version ? '· model <code>'+c.scoring_model_version+'</code>' : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
-        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + thesisCard + gate + contract + exitPlan + signalMeta;
+        <div><b>Invalidation:</b> ${c.invalidation||"—"}</div></div>` + convBanner + thesisCard + gate + contract + exitPlan + signalMeta;
       let factors = `<div class="muted">No scorecard.</div>`;
       if (sc) {
         const rows = (sc.factors||[]).map(f => `<tr><td>${f.label}</td>
@@ -847,7 +880,7 @@
         return `<div class="empty">No setups detected. Run a scan.</div>`;
       const COLS = 11;
       const head = `<thead><tr><th>#</th><th>Sym</th><th>DTE</th><th>Dir</th><th>Strategy</th>
-        <th>State</th><th class="num">Score</th><th class="num">R:R</th><th class="num">Risk</th>
+        <th>State</th><th class="num">Tradability</th><th class="num">R:R</th><th class="num">Risk</th>
         <th>Entry</th><th></th></tr></thead>`;
       // Sort by actionability (mirrors the backend) so grouping is correct even
       // for the combined 0DTE+1-5DTE view, which concatenates two ranked lists.
@@ -891,7 +924,7 @@
         <td class="num">${l.relative_volume == null ? "—" : l.relative_volume + "x"}</td></tr>`).join("");
       const newsRows = (news || []).map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
         <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
-      return toolbar + regimeBanner(r.regime) + `
+      return toolbar + sdTruthBanner() + regimeBanner(r.regime) + `
         <div class="card" style="margin-bottom:14px"><h3>Candidate board (0DTE)</h3>${sdCandTable(cands)}</div>
         <div class="autogrid">
         <div class="card"><h3>Market internals <span class="proxy-note">(breadth = universe proxy)</span></h3>
@@ -915,7 +948,7 @@
         <span class="muted">Trend + catalyst continuation. Setups only — contract selection is Phase 4.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
-      return toolbar + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
+      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
         <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
         <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
         <tbody>${evRows || `<tr><td colspan="3" class="muted">none</td></tr>`}</tbody></table></div>`;
@@ -926,7 +959,8 @@
         api("GET", "/short-duration/0dte/candidates?limit=100"),
         api("GET", "/short-duration/1-5dte/candidates?limit=100"),
       ]);
-      return `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
+      return sdTruthBanner()
+        + `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
         + sdCandTable([...zero, ...short]);
     }
 

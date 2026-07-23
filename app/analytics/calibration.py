@@ -17,10 +17,46 @@ All pure functions over lists; no I/O.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 from app.analytics.metrics import expectancy, max_drawdown, profit_factor, spearman
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot, OutcomeResult
+from app.logging_config import get_logger
+
+log = get_logger(__name__)
+
+# Short-duration decisions below this scoring-model version are DEGRADED: before v3,
+# the scan never joined the IV-rank history, so the volatility factor fell back to a
+# constant on every candidate (see config.scoring_model_version). They cannot be
+# re-scored (the market snapshot is gone), so they are HARD-FILTERED out of any
+# calibration corpus rather than trusted. Funnel-lineage decisions (empty or non-"sd-"
+# version) are a different model and are not subject to this boundary.
+_MIN_SD_CALIBRATION_VERSION = 3
+_SD_VERSION_RE = re.compile(r"^sd-scoring-.*-v(\d+)$")
+
+
+def _is_degraded_short_duration(version: str) -> bool:
+    m = _SD_VERSION_RE.match(version or "")
+    return m is not None and int(m.group(1)) < _MIN_SD_CALIBRATION_VERSION
+
+
+def eligible_for_calibration(
+    snapshots: list[DecisionSnapshot],
+) -> tuple[list[DecisionSnapshot], int]:
+    """Drop degraded pre-v3 short-duration decisions from a calibration corpus and
+    return (kept, n_excluded). Encoded, not documented: a caller cannot accidentally
+    calibrate on contaminated scores. The exclusion count is logged."""
+    kept, excluded = [], 0
+    for s in snapshots:
+        if _is_degraded_short_duration(s.scoring_model_version):
+            excluded += 1
+        else:
+            kept.append(s)
+    if excluded:
+        log.warning("calibration_excluded_pre_v3", n_excluded=excluded, n_kept=len(kept))
+    return kept, excluded
 
 # Outcome fidelity for de-duplication: a closed paper trade (realized fill) and a
 # live option-mark P&L are real dollars; the underlying-vs-breakeven proxy is a
@@ -96,6 +132,7 @@ class Scorecard(BaseModel):
     n_decisions: int
     n_resolved: int
     n_decisive: int  # wins + losses (excludes scratch/unknown)
+    n_excluded_pre_v3: int = 0  # degraded pre-v3 short-duration decisions hard-filtered
     win_rate: float | None = None
     direction_accuracy: float | None = None
     avg_predicted_pop: float | None = None
@@ -114,6 +151,10 @@ class Scorecard(BaseModel):
     by_direction: list[GroupStat] = Field(default_factory=list)
     by_vol_regime: list[GroupStat] = Field(default_factory=list)
     by_horizon: list[GroupStat] = Field(default_factory=list)  # 0DTE / 1-5DTE / swing
+    # POP calibration PER METHODOLOGY: a change in POP derivation (legacy funnel
+    # analytics vs traded-expiry-IV) must never silently pool — each construct is
+    # bucketed separately so "does 26% resolve ~26%?" is answered per source.
+    pop_buckets_by_source: dict[str, list[Bucket]] = Field(default_factory=dict)
     # --- Shadow instrumentation: the sibling scanner's flow-quality metric ---
     # Recorded observationally (never fed into the score). These fields are the
     # ledger's verdict on whether it EARNS a place in scoring: does it separate
@@ -257,6 +298,8 @@ def _flow_quality_verdict(
 def build_scorecard(
     snapshots: list[DecisionSnapshot], outcomes: list[DecisionOutcome]
 ) -> Scorecard:
+    # Hard boundary: degraded pre-v3 short-duration decisions never enter the corpus.
+    snapshots, n_excluded_pre_v3 = eligible_for_calibration(snapshots)
     by_id = {s.decision_id: s for s in snapshots}
     chosen = select_scoring_outcomes(outcomes)
     pairs = [(by_id[i], o) for i, o in chosen.items() if i in by_id]
@@ -330,6 +373,24 @@ def build_scorecard(
         )
         for lo, hi in _POP_EDGES
     ]
+    # Per-methodology POP calibration (empty pop_source = legacy funnel analytics).
+    sources = sorted({s.pop_source or "funnel_analytics" for s, _ in pairs
+                      if s.probability_of_profit is not None})
+    pop_buckets_by_source = {
+        src: [
+            b for b in (
+                _bucket(
+                    f"{lo:.0%}-{min(hi, 1.0):.0%}",
+                    [(s, o) for s, o in pairs
+                     if s.probability_of_profit is not None
+                     and (s.pop_source or "funnel_analytics") == src
+                     and lo <= s.probability_of_profit < hi],
+                )
+                for lo, hi in _POP_EDGES
+            ) if b.n > 0
+        ]
+        for src in sources
+    }
     score_buckets = [
         _bucket(
             f"{lo:.2f}-{min(hi, 1.0):.2f}",
@@ -338,10 +399,18 @@ def build_scorecard(
         for lo, hi in _SCORE_EDGES
     ]
 
+    warnings = _degeneracy_warnings(decisive)
+    if n_excluded_pre_v3:
+        warnings.append(
+            f"{n_excluded_pre_v3} pre-v3 short-duration decision(s) excluded as degraded "
+            "(IV-rank bug); calibration is over eligible decisions only."
+        )
+
     return Scorecard(
         n_decisions=len(snapshots),
         n_resolved=len(pairs),
         n_decisive=len(decisive),
+        n_excluded_pre_v3=n_excluded_pre_v3,
         win_rate=realized,
         direction_accuracy=_rate(dir_correct, len(dir_calls)),
         avg_predicted_pop=avg_pop,
@@ -357,6 +426,7 @@ def build_scorecard(
         profit_factor=profit_factor(pnls),
         max_drawdown_usd=max_drawdown(pnls) if pnls else None,
         pop_buckets=[b for b in pop_buckets if b.n > 0],
+        pop_buckets_by_source=pop_buckets_by_source,
         score_buckets=[b for b in score_buckets if b.n > 0],
         by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),
@@ -370,7 +440,7 @@ def build_scorecard(
         flow_quality_lift=flow_lift,
         flow_quality_verdict=flow_verdict,
         validation_grade=grade,
-        warnings=_degeneracy_warnings(decisive),
+        warnings=warnings,
         note=(
             "P&L metrics are net of costs and come only from option-mark / "
             "paper-trade outcomes; the underlying-vs-breakeven proxy carries no "

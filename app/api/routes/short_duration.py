@@ -438,3 +438,47 @@ async def configuration() -> ConfigResponse:
         },
         note="Research/paper only. Live trading is disabled for this module.",
     )
+
+
+# --- Input coverage (abstain, don't guess) -----------------------------------
+@router.get("/input-coverage")
+async def input_coverage(dte: str | None = None) -> dict:
+    """Latest scan's per-feed/per-field input coverage per DTE track — the monitor
+    that catches a silently dead feed (the iv_rank case) on the first scan. Fields
+    under the alert threshold are listed in `degraded`."""
+    from app.shortduration.input_coverage import last_scan_coverage
+
+    scans = last_scan_coverage(dte)
+    return {
+        "abstain_threshold": settings.input_coverage_abstain_threshold,
+        "feed_alert_threshold": settings.input_coverage_feed_alert_threshold,
+        "scans": {
+            k: {
+                "at": str(v.at), "n_symbols": v.n_symbols, "degraded": v.degraded,
+                "fields": [f.model_dump() for f in v.fields],
+                "symbols": [
+                    {"symbol": s.symbol, "coverage": s.coverage, "missing": s.missing}
+                    for s in v.symbols
+                ],
+            }
+            for k, v in scans.items()
+        },
+        "note": "A degraded field is a FEED outage across the scan, not a symbol problem.",
+    }
+
+
+# --- Layer-2 conviction gate (permanently red until evidence flips it) --------
+@router.get("/conviction-gate")
+async def conviction_gate() -> dict:
+    """The Layer-2 gate that decides whether conviction may display as CALIBRATED.
+    Built red: every criterion and its current failure is listed, so the path to
+    green is explicit — and can only be walked by evidence."""
+    from app.shortduration.conviction_gate import refresh_conviction_gate
+
+    gate = refresh_conviction_gate()
+    return {
+        "green": gate.green,
+        "sizing_boost_allowed": gate.sizing_boost_allowed,
+        "criteria": [c.model_dump() for c in gate.criteria],
+        "note": gate.note,
+    }

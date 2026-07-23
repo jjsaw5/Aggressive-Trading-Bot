@@ -48,6 +48,30 @@ def _marks_outcome(did: str, pnl: float, day: int) -> DecisionOutcome:
     )
 
 
+def test_pre_v3_short_duration_decisions_are_hard_filtered() -> None:
+    # The IV-rank bug degraded every pre-v3 short-duration score, so those decisions
+    # must never enter a calibration corpus. v3+ and funnel-lineage (empty version)
+    # decisions are kept; pre-v3 short-duration ones are dropped and counted.
+    from app.analytics.calibration import eligible_for_calibration
+
+    v2 = _snap("v2a", iv_rank=0.3)
+    v2.scoring_model_version = "sd-scoring-2026.07-v2"
+    v3 = _snap("v3a", iv_rank=0.3)
+    v3.scoring_model_version = "sd-scoring-2026.07-v3"
+    funnel = _snap("fun", iv_rank=0.3)  # empty version = funnel lineage, different model
+    kept, n_excluded = eligible_for_calibration([v2, v3, funnel])
+    assert n_excluded == 1
+    assert {s.decision_id for s in kept} == {"v3a", "fun"}
+
+    # build_scorecard applies the filter and surfaces the exclusion count + a warning.
+    outs = [_marks_outcome("v3a", 100, 1), _marks_outcome("fun", -60, 2),
+            _marks_outcome("v2a", 100, 3)]
+    card = build_scorecard([v2, v3, funnel], outs)
+    assert card.n_excluded_pre_v3 == 1
+    assert card.n_resolved == 2  # only v3a + fun graded; v2a dropped before pairing
+    assert any("pre-v3" in w for w in card.warnings)
+
+
 def test_scorecard_grades_real_marks_and_reports_pnl_and_drawdown() -> None:
     # A mixed, multi-regime book: enough losses + >1 regime -> no degeneracy flag.
     # winners span two regimes (d1 extreme, d3 fair); 2 losses -> no degeneracy flag.

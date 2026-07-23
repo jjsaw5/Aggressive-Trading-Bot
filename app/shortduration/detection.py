@@ -149,13 +149,37 @@ async def build_context(
     return ctx
 
 
+def _traded_expiry_iv(chain, plan, spot: float | None) -> float | None:
+    """The IV of the actual expiry being traded — the near-ATM contract's implied
+    vol at the structure's front expiration. POP must be priced on the horizon the
+    trade fires at (0-5 DTE), NOT 30-day ATM IV: short-dated IV diverges sharply from
+    iv30 (most of all around earnings, exactly when these fire), and using the wrong
+    horizon biases the gate in whichever way the term structure is sloped. Returns
+    None when unavailable — POP then honestly degrades rather than lying with iv30."""
+    if chain is None or plan is None or not plan.legs or not spot or spot <= 0:
+        return None
+    front = min(lg.expiration for lg in plan.legs)
+    at_exp = [c for c in chain.contracts if c.expiration == front and c.implied_volatility]
+    if not at_exp:
+        return None
+    near = min(at_exp, key=lambda c: abs(c.strike - spot))
+    return near.implied_volatility
+
+
 def _candidate_odds(
     det: StrategyDetection, symbol: str, contract: ContractResult, spot: float | None,
-    iv30: float | None, now: datetime,
+    expiry_iv: float | None, now: datetime,
 ) -> tuple[float | None, str]:
     """Market-implied P(profit) + a plain-English "what has to happen" line for a
-    sized contract. Both informational — from the structure's break-even, IV, and
-    days to expiry. Degrades to (None, "") when the structure or inputs are missing."""
+    sized contract. Both informational — from the structure's break-even, the IV of
+    the TRADED expiry, and days to expiry. Degrades to (None, "") when the structure
+    or inputs are missing.
+
+    Provenance (surfaced on the card): POP is Black-Scholes zero-drift risk-neutral
+    (N(d2)); the break-even nets the debit at MID and excludes the entry spread
+    crossed (optimistic by ~half-spread); and it is UNCALIBRATED (not checked against
+    realized win rates). It is a hold-to-expiry construct, so it does not model the
+    early take-profit / stop exits the system actually uses."""
     from app.domain.enums import Direction
     from app.quant.analytics import structure_breakevens
     from app.quant.probability import probability_of_profit, what_has_to_happen
@@ -173,12 +197,46 @@ def _candidate_odds(
     exps = [lg.expiration for lg in plan.legs]
     days = (min(exps) - now.date()).days if exps else None
     pop = None
-    if iv30 and days is not None:
-        pop = probability_of_profit(spot=spot, breakeven=breakeven, iv=iv30, days=float(days), bullish=bullish)
+    if expiry_iv and days is not None:
+        pop = probability_of_profit(spot=spot, breakeven=breakeven, iv=expiry_iv, days=float(days), bullish=bullish)
     what = what_has_to_happen(
         symbol=symbol, spot=spot, breakeven=breakeven, days=days, bullish=bullish,
     )
     return pop, what
+
+
+def _apply_cost_drag(contract: ContractResult, chain, as_of: date) -> None:
+    """Attach the structure's round-trip spread cost-drag to the recommendation
+    (Layer-1 cost-drag rank). Cost-drag = the bid/ask spread you forfeit getting in
+    AND out at the quote, as a fraction of the structure's own defined max-loss. It's
+    the tax that makes a wider expression rank below a tighter one at similar merit.
+    Best-effort: leaves the field None when the chain lacks two-sided quotes."""
+    plan = contract.plan
+    if plan is None or chain is None or not plan.legs:
+        return
+    by_key = {
+        (round(c.strike, 4), c.option_type, c.expiration): c for c in chain.contracts
+    }
+    one_way_per_share = 0.0
+    covered = 0
+    for lg in plan.legs:
+        c = by_key.get((round(lg.strike, 4), lg.option_type, lg.expiration))
+        if c is None or c.bid is None or c.ask is None or c.ask <= c.bid:
+            continue
+        one_way_per_share += (c.ask - c.bid) / 2.0
+        covered += 1
+    if covered < len(plan.legs) or one_way_per_share <= 0:
+        return  # can't price every leg's spread → don't fabricate a drag number
+    round_trip_usd = one_way_per_share * 2.0 * 100.0 * plan.contracts
+    max_loss = plan.risk.max_loss_usd if plan.risk else None
+    if not max_loss or max_loss <= 0:
+        return
+    ratio = round(round_trip_usd / max_loss, 4)
+    contract.recommendation.cost_drag_ratio = ratio
+    contract.recommendation.cost_drag_note = (
+        f"Round-trip spread tax ≈ ${round_trip_usd:.0f} = {ratio * 100:.0f}% of "
+        f"${max_loss:.0f} max risk."
+    )
 
 
 def _candidate_from(
@@ -270,16 +328,45 @@ async def _score_symbol(
         )
     except Exception as exc:  # noqa: BLE001 - liquidity scored as unknown on miss
         log.warning("sd_score_chain_failed", symbol=symbol, error=str(exc))
+    current_iv = None
     try:
-        iv = await registry.options_chain_provider().get_iv_context(symbol)
+        current_iv = await registry.options_chain_provider().get_iv_context(symbol)
     except Exception as exc:  # noqa: BLE001
         log.warning("sd_score_iv_failed", symbol=symbol, error=str(exc))
+    # The chain provider returns only the spot IV level (iv30); IV RANK/PERCENTILE —
+    # what the volatility factor, data-quality, and POP all need — are computed from a
+    # real IV history (or an HV proxy). The short-duration scan previously skipped this
+    # join, so iv_rank was always None: it blanked the volatility factor, capped data
+    # quality, and made POP uncomputable. Reuse the SAME builder the funnel pipeline
+    # uses so rank is consistent app-wide.
+    iv_hist = None
+    ivp = registry.iv_history_provider()
+    if ivp is not None:
+        try:
+            iv_hist = await ivp.get_iv_history(symbol, lookback_days=365)
+        except Exception as exc:  # noqa: BLE001 - rank degrades to HV proxy / unknown
+            log.warning("sd_score_iv_history_failed", symbol=symbol, error=str(exc))
+    if current_iv is not None or iv_hist is not None or ctx.daily is not None:
+        from app.engine.iv_context import build_iv_context
+        iv = build_iv_context(
+            symbol,
+            current_iv.iv30 if current_iv is not None else None,
+            now,
+            iv_history=iv_hist,
+            price_history=ctx.daily,
+            term_structure_slope=current_iv.term_structure_slope if current_iv is not None else None,
+        )
 
     # Enrich the IV context with a basic put/call skew read from the chain we just
     # fetched (the provider's get_iv_context has no chain to compute it from).
     if iv is not None and chain is not None and chain.underlying_price:
         from app.quant.iv import put_call_iv_skew
         iv.iv_skew = put_call_iv_skew(chain, chain.underlying_price)
+
+    # Input-coverage monitor: structured per-feed/per-field coverage over exactly
+    # what this scan consumed. Below-threshold coverage makes the rank ABSTAIN.
+    from app.shortduration.input_coverage import assess_symbol_coverage
+    coverage = assess_symbol_coverage(ctx, chain=chain, iv=iv, dte=dte, now=now)
 
     rel_vol = ctx.levels.relative_volume if ctx.levels else None
     # State/track-aware freshness: a trade-ready 0DTE name needs a seconds-fresh
@@ -326,14 +413,19 @@ async def _score_symbol(
         )
         thesis = build_directional_thesis(ctx, det, news_score=news)
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)
-        iv30 = iv.iv30 if iv is not None else None
         for contract in contracts:
             card = score_candidate(
-                ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa, trade_plan=contract.plan
+                ctx, det, chain=chain, iv=iv, news_score=news, flow_analysis=fa,
+                trade_plan=contract.plan, coverage=coverage,
             )
-            pop, what_has = _candidate_odds(det, symbol, contract, spot, iv30, now)
+            _apply_cost_drag(contract, chain, now.date())
+            # POP is priced on the IV of the TRADED expiry (not 30-day IV) — the right
+            # horizon for a 0-5 DTE structure. Falls to None (POP uncomputable) when
+            # that IV is unavailable, never silently to iv30.
+            expiry_iv = _traded_expiry_iv(chain, contract.plan, spot)
+            pop, what_has = _candidate_odds(det, symbol, contract, spot, expiry_iv, now)
             scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
-    return scored
+    return scored, coverage
 
 
 async def run_detection(
@@ -364,8 +456,19 @@ async def run_detection(
             limit=settings.tier_concurrency,
         )
 
+    # Scan-level input-coverage aggregation: a field missing across the scan is a
+    # FEED outage — alert on the first scan, not in an audit months later.
+    from app.shortduration.input_coverage import aggregate_scan
+    coverages = [cov for r in scored_rows if r for (_scored, cov) in [r]]
+    if coverages:
+        aggregate_scan(
+            coverages, dte=dte, now=now,
+            alert_threshold=settings.input_coverage_feed_alert_threshold,
+        )
+
     created: list[ShortDurationCandidate] = []
-    for (symbol, _ctx, _dets), scored in zip(with_dets, scored_rows, strict=False):
+    for (symbol, _ctx, _dets), row in zip(with_dets, scored_rows, strict=False):
+        scored = row[0] if row else None
         if not scored:
             continue
         for det, card, news, contract, gate, fresh, thesis, pop, what_has in scored:
@@ -379,10 +482,35 @@ async def run_detection(
                 await asyncio.to_thread(repository.append_candidate_transition, tr)
             created.append(cand)
 
-    created.sort(key=lambda c: c.score, reverse=True)
+    # POP calibration feed: freeze rankable (tradeable, non-abstained) decisions
+    # into the warehouse so the traded-expiry POP is graded against realized
+    # outcomes by the calibration harness. Best-effort — warehousing must never
+    # fail a scan.
+    try:
+        from app.analytics.snapshots import snapshot_from_short_duration
+        snaps = [s for c in created if (s := snapshot_from_short_duration(c)) is not None]
+        if snaps:
+            added = await asyncio.to_thread(repository.save_snapshots, snaps)
+            log.info("sd_decisions_warehoused", dte=dte.value, new_snapshots=added)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sd_warehouse_failed", error=str(exc))
+
+    created.sort(key=_board_rank_key)
     _record_scan_metrics(dte, created)
     log.info("sd_detection", dte=dte.value, detected=len(created))
     return created
+
+
+def _board_rank_key(c: ShortDurationCandidate) -> tuple:
+    """Layer-1 board order: by score bucket first (highest merit on top), then by
+    real spread cost-drag within the bucket so the tightest-to-trade expression of a
+    near-equal setup ranks above a wider one that merely scored a hair higher. Missing
+    cost-drag sorts last within its bucket (unknown tax is not treated as cheap)."""
+    bucket = settings.board_rank_score_bucket or 0.05
+    score_bucket = round(c.score / bucket)  # coarse merit band
+    drag = c.contract.cost_drag_ratio if c.contract else None
+    drag_key = drag if drag is not None else float("inf")
+    return (-score_bucket, drag_key, -c.score)
 
 
 def _record_scan_metrics(dte: DTECategory, created: list[ShortDurationCandidate]) -> None:
@@ -428,13 +556,40 @@ def _classify_transitions(
                        reason=why, at=now)
         )
         return trail
+    # Input-coverage abstention outranks everything: an abstained rank is not a
+    # rank, so the candidate holds at EVALUATING — no watchlist, no arm — with the
+    # coverage gap recorded. (Abstain, don't guess: the state machine enforces it.)
+    if cand.scorecard is not None and cand.scorecard.abstained:
+        cand.reasons.append(cand.scorecard.abstain_reason)
+        return trail
+
+    # Layer-1 arming discipline: the hand-weighted rank is not calibrated conviction,
+    # so ARM (the "go" tier) is withheld unless the rank is least misleading — POP must
+    # be computable, and 0DTE never asserts conviction unless explicitly enabled. A
+    # blocked-but-arm-worthy candidate is held at WATCHLIST with the reason recorded.
+    sc = cand.scorecard
+    pop_ok = bool(sc.pop_available) if sc is not None else False
+    zero_dte = det.dte_category == DTECategory.ZERO_DTE
+    arm_blocked_reason = ""
+    if not pop_ok:
+        arm_blocked_reason = "POP uncomputable (no IV) — held at watchlist, not armed."
+    elif zero_dte and not settings.zero_dte_conviction:
+        arm_blocked_reason = "0DTE asserts no calibrated conviction — held at watchlist, not armed."
+    allow_arm = not arm_blocked_reason
     target = classify_initial_state(
         cand.score, watchlist_at=settings.short_duration_watchlist_score,
-        arm_at=settings.short_duration_arm_score,
+        arm_at=settings.short_duration_arm_score, allow_arm=allow_arm,
     )
+    if not allow_arm and cand.score >= settings.short_duration_arm_score:
+        # The score cleared the arm bar but arming was withheld — make that visible
+        # on the candidate, not just in the transition audit trail.
+        cand.reasons.append(f"Arm withheld: {arm_blocked_reason}")
     if target != CandidateState.EVALUATING:
+        reason = f"Score {cand.score:.2f} crossed the {target.value} threshold."
+        if not allow_arm and cand.score >= settings.short_duration_arm_score:
+            reason = f"Score {cand.score:.2f} is arm-worthy but {arm_blocked_reason}"
         trail.append(
             transition(cand, target, trigger="score_threshold", actor="system",
-                       reason=f"Score {cand.score:.2f} crossed the {target.value} threshold.", at=now)
+                       reason=reason, at=now)
         )
     return trail

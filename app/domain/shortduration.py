@@ -258,6 +258,11 @@ class ContractRecommendation(BaseModel):
     breakevens: list[float] = Field(default_factory=list)
     est_fill_net: float | None = None
     liquidity_note: str = ""
+    # Cost-drag (Layer-1): the structure's round-trip bid/ask spread tax as a
+    # fraction of its own defined max-loss. This is the tax you pay just to get in
+    # and out at the quoted spread — the tightest-drag expression ranks first.
+    cost_drag_ratio: float | None = None
+    cost_drag_note: str = ""
 
 
 class ShortDurationExitTarget(BaseModel):
@@ -500,6 +505,23 @@ class ScoreCard(BaseModel):
     model_version: str = ""
     risk_policy_version: str = ""
     weights: dict[str, float] = Field(default_factory=dict)
+    # Conviction trust (Conviction-Scanner spec §6, honest degrade). Until a live
+    # calibration gate is established and green, `total` is a hand-weighted
+    # TRADABILITY rank, NOT calibrated conviction — surfaced as such rather than
+    # displayed as earned confidence. `pop_available` is False when the
+    # probability-of-profit could not be computed (e.g. missing IV) — the exact
+    # blank-POP case that must not read as high conviction.
+    conviction_status: str = "UNCALIBRATED"  # UNCALIBRATED | CALIBRATED
+    pop_available: bool = True
+    conviction_note: str = ""
+    # Input-coverage abstention: when required-input coverage fell below the
+    # configured threshold, the rank ABSTAINS — the number must not be read at all
+    # (as opposed to UNCALIBRATED, where the number is a tradability read with
+    # honest framing). input_coverage is the required-input fraction that was
+    # present; abstain_reason names what was missing.
+    abstained: bool = False
+    abstain_reason: str = ""
+    input_coverage: float | None = None
 
     @property
     def normalized(self) -> float:

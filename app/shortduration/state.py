@@ -66,10 +66,17 @@ def transition(
     )
 
 
-def classify_initial_state(score: float, *, watchlist_at: float, arm_at: float) -> S:
-    """Map a fresh detection's score to its starting state past EVALUATING."""
+def classify_initial_state(
+    score: float, *, watchlist_at: float, arm_at: float, allow_arm: bool = True
+) -> S:
+    """Map a fresh detection's score to its starting state past EVALUATING.
+
+    `allow_arm=False` (Layer-1 arming discipline) caps an arm-worthy score at
+    WATCHLIST — the hand-weighted rank is trusted enough to watch, not to arm,
+    when probability-of-profit is uncomputable or conviction is disallowed for the
+    track (e.g. 0DTE). The score still has to clear the watchlist bar to surface."""
     if score >= arm_at:
-        return S.ARMED
+        return S.ARMED if allow_arm else S.WATCHLIST
     if score >= watchlist_at:
         return S.WATCHLIST
     return S.EVALUATING

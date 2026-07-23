@@ -1,0 +1,57 @@
+{
+  "hypothesis": "volatility_risk_premium",
+  "recorded_at": "2026-07-23",
+  "spec": "vrp_experiment_spec.md v2",
+  "preregistrations": [
+    "docs/vrp_preregistration.md",
+    "docs/vrp_stage2_preregistration.md"
+  ],
+  "stage1_premium_existence": {
+    "verdict": "premium_exists_regime_reversing",
+    "construct": "per_contract_atm_iv (tenor-matched, moneyness <= 3%) minus forward close-to-close RV",
+    "horizons": {
+      "30d": {
+        "pooled_vol_pts": 1.71,
+        "ci95_cluster": [0.65, 2.68],
+        "era_equal_weight_vol_pts": 1.66,
+        "bear_2022_vol_pts": 0.94,
+        "gate": "FAIL material margin (2.0)"
+      },
+      "45d": {
+        "pooled_vol_pts": 2.34,
+        "ci95_cluster": [1.4, 3.19],
+        "era_equal_weight_vol_pts": 1.09,
+        "bear_2022_vol_pts": -2.28,
+        "gate": "PASS (obs-weighted pooling; calm-dominated — see addendum)"
+      }
+    },
+    "mechanism": "term structure INVERTED in 2022 bear (45d 1.7 pts below 30d); sign flip structural",
+    "eras_tested": ["2022_bear(5 correlated names, fragile)", "2023_24_recovery", "2025_drawdown_chop"],
+    "eras_excluded_for_coverage": ["2021_meltup", "2026_ytd"],
+    "left_tail": "p01 -19 to -33 vol pts; worst obs -54; insurance-shaped"
+  },
+  "stage2_harvestability": {
+    "verdict": "fail_to_reject_H0_not_harvestable_at_retail_spreads",
+    "best_variant": {
+      "name": "unconditional:put_credit_spread",
+      "n": 129,
+      "win_rate": 0.73,
+      "expectancy_k05_usd": 10.99,
+      "expectancy_k10_usd": -2.63,
+      "slippage_fragile": true,
+      "bear_2022_expectancy_usd": -171.89,
+      "implied_round_trip_cost_usd": 13.62
+    },
+    "significantly_harmful_variants": ["unconditional:call_credit_spread", "unconditional:iron_condor"],
+    "loss_clustering": "worst months shared across variants (2022-04, 2024-10, 2025-05, 2025-10)",
+    "criteria_passed": 0,
+    "criteria_total": 5
+  },
+  "conclusion": "The premium exists (Stage 1) and retail multi-leg execution cost consumes it (Stage 2): ~$13.6/trade round-trip cost vs ~$11/trade mid-priced edge on the canonical structure, with the 2022 bear uncompensated. Revisit only by attacking execution cost (wider structures, fewer legs, more liquid underlyings, better fills) — not entry signals.",
+  "prior_evidence_confirmed": "forward-ledger miniature Stage 2 (10-0 at mid -> 0-10 at k=1.0), replicated at n=129",
+  "do_not": [
+    "read as validating the 0DTE/1-5DTE product (wrong horizon)",
+    "re-run with fresh thresholds absent a pre-registered execution-cost change",
+    "filter 2022 by regime label (look-ahead)"
+  ]
+}

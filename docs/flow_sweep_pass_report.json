@@ -1,0 +1,98 @@
+{
+  "preregistration": "docs/flow_sweep_preregistration.md",
+  "seed": 12345,
+  "n_vectors": 1257,
+  "alpha_bonferroni": 0.01,
+  "encodings": {
+    "flow_sweep": {
+      "n_oos": 1006,
+      "forward_rho": -0.0093,
+      "cluster_ci": {
+        "n_clusters": 366,
+        "lo": -0.1097,
+        "hi": 0.0856,
+        "alpha": 0.01
+      },
+      "reverse_rho": 0.0973,
+      "per_regime_rho": {
+        "low": -0.0018,
+        "high": 0.0011,
+        "mid": -0.0561
+      },
+      "regime_sign_flip": true,
+      "verdict": "REJECTED"
+    },
+    "flow_sweep_x_at_ask": {
+      "n_oos": 1006,
+      "forward_rho": -0.0116,
+      "cluster_ci": {
+        "n_clusters": 366,
+        "lo": -0.1119,
+        "hi": 0.0835,
+        "alpha": 0.01
+      },
+      "reverse_rho": 0.0949,
+      "per_regime_rho": {
+        "low": 0.0022,
+        "high": -0.0073,
+        "mid": -0.0599
+      },
+      "regime_sign_flip": true,
+      "verdict": "REJECTED"
+    },
+    "flow_sweep_oi": {
+      "n_oos": 1006,
+      "forward_rho": 0.05,
+      "cluster_ci": {
+        "n_clusters": 366,
+        "lo": -0.0497,
+        "hi": 0.1495,
+        "alpha": 0.01
+      },
+      "reverse_rho": 0.0662,
+      "per_regime_rho": {
+        "low": 0.0807,
+        "high": 0.0552,
+        "mid": -0.1611
+      },
+      "regime_sign_flip": true,
+      "verdict": "REJECTED"
+    },
+    "flow_sweep_burst": {
+      "n_oos": 968,
+      "forward_rho": -0.0795,
+      "cluster_ci": {
+        "n_clusters": 359,
+        "lo": -0.1659,
+        "hi": 0.0137,
+        "alpha": 0.01
+      },
+      "reverse_rho": -0.0747,
+      "per_regime_rho": {
+        "low": -0.1144,
+        "high": -0.0795,
+        "mid": 0.2283
+      },
+      "regime_sign_flip": true,
+      "verdict": "REJECTED"
+    },
+    "flow_sweep_persist": {
+      "n_oos": 1006,
+      "forward_rho": 0.0549,
+      "cluster_ci": {
+        "n_clusters": 366,
+        "lo": -0.0404,
+        "hi": 0.1439,
+        "alpha": 0.01
+      },
+      "reverse_rho": 0.0788,
+      "per_regime_rho": {
+        "low": 0.0728,
+        "high": 0.0498,
+        "mid": 0.0051
+      },
+      "regime_sign_flip": false,
+      "verdict": "REJECTED"
+    }
+  }
+}

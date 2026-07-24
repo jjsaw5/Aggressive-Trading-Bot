@@ -62,6 +62,7 @@ def eligible_for_calibration(
 # live option-mark P&L are real dollars; the underlying-vs-breakeven proxy is a
 # directional read with no P&L. Higher wins when a decision has several outcomes.
 _FIDELITY = {
+    "live_close": 3,  # a real fill the human actually got — ground truth
     "paper_trade": 3,
     "option_marks": 2,
     "option_marks_bs_fallback": 2,
@@ -149,6 +150,8 @@ class Scorecard(BaseModel):
     score_buckets: list[Bucket] = Field(default_factory=list)
     by_strategy: list[GroupStat] = Field(default_factory=list)
     by_direction: list[GroupStat] = Field(default_factory=list)
+    # Live vs scan vs paper: the human's real trades tracked as their own cohort.
+    by_decision_source: list[GroupStat] = Field(default_factory=list)
     by_vol_regime: list[GroupStat] = Field(default_factory=list)
     by_horizon: list[GroupStat] = Field(default_factory=list)  # 0DTE / 1-5DTE / swing
     # POP calibration PER METHODOLOGY: a change in POP derivation (legacy funnel
@@ -391,10 +394,15 @@ def build_scorecard(
         ]
         for src in sources
     }
+    # LIVE decisions carry no engine score (composite_score is a placeholder), so
+    # they are excluded from the score buckets — they are graded under their own
+    # source group instead.
+    from app.domain.outcomes import DecisionSource
+    scored_pairs = [(s, o) for s, o in pairs if s.source != DecisionSource.LIVE]
     score_buckets = [
         _bucket(
             f"{lo:.2f}-{min(hi, 1.0):.2f}",
-            [(s, o) for s, o in pairs if lo <= s.composite_score < hi],
+            [(s, o) for s, o in scored_pairs if lo <= s.composite_score < hi],
         )
         for lo, hi in _SCORE_EDGES
     ]
@@ -430,6 +438,7 @@ def build_scorecard(
         score_buckets=[b for b in score_buckets if b.n > 0],
         by_strategy=_grouped(pairs, lambda s: s.strategy.display_name),
         by_direction=_grouped(pairs, lambda s: s.direction.value),
+        by_decision_source=_grouped(pairs, lambda s: s.source.value),
         by_vol_regime=_grouped(regime_pairs, lambda s: _vol_regime(s.iv_rank)),
         by_horizon=_grouped(pairs, lambda s: _horizon(s.dte_at_entry)),
         by_flow_quality_band=_grouped(

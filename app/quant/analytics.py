@@ -61,7 +61,18 @@ def structure_breakevens(plan: TradePlan) -> list[float]:
     Needs no spot or vol (a breakeven is a structural property of the legs), so
     it can be computed for any held position — including imported ones without
     plan-time analytics. `breakevens_and_pop` builds on this for the pop math.
+
+    Total over malformed plans: when the strategy label doesn't match the legs
+    (a bad stored record), the honest answer is "no breakeven computable" — []
+    — never an exception that can take a whole positions board down.
     """
+    try:
+        return _structure_breakevens(plan)
+    except (ValueError, IndexError):  # label/legs mismatch on a stored record
+        return []
+
+
+def _structure_breakevens(plan: TradePlan) -> list[float]:
     net = _net_per_share(plan)  # debit>0, credit<0
     s = plan.strategy
 

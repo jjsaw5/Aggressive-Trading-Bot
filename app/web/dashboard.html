@@ -530,7 +530,7 @@
       const leg = (n, req) => `<div style="margin-top:4px"><b>Leg ${n}${req ? "" : " (optional)"}</b>
         &nbsp;Strike <input id="al${n}-strike" type="number" step="0.5" style="width:80px" />
         &nbsp;<select id="al${n}-type"><option value="call">Call</option><option value="put">Put</option></select>
-        &nbsp;<select id="al${n}-side"><option value="long">Long (bought)</option><option value="short">Short (sold)</option></select>
+        &nbsp;<select id="al${n}-side"><option value="long"${n === 1 ? " selected" : ""}>Long (bought)</option><option value="short"${n === 2 ? " selected" : ""}>Short (sold)</option></select>
         &nbsp;Qty <input id="al${n}-qty" type="number" step="1" value="1" style="width:56px" />
         &nbsp;Entry $/sh <input id="al${n}-px" type="number" step="0.01" style="width:80px" title="Optional if you entered a net cost above" />
         &nbsp;Exp <input id="al${n}-exp" type="date" /></div>`;

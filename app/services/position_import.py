@@ -55,7 +55,16 @@ def _infer(legs: list[ImportedLeg]) -> tuple[StrategyType, Direction]:
         shorts = [p for p in puts if not p.is_long]
         if longs and shorts and longs[0].strike > shorts[0].strike:
             return StrategyType.BEAR_PUT_SPREAD, Direction.BEARISH
-    return StrategyType.LONG_CALL, Direction.NEUTRAL  # fallback
+    # Abstain, don't guess: an unrecognized combo used to be silently labeled
+    # LONG_CALL — which later crashed the positions board when the breakeven
+    # math found no call leg. Refuse with a corrective message instead.
+    sides = "/".join(("long" if lg.is_long else "short") + lg.option_type.value[0] for lg in legs)
+    raise ValueError(
+        f"Unsupported structure ({sides}). Supported: a single long call/put, or a "
+        "2-leg vertical with one leg BOUGHT and one SOLD (bull call spread: long the "
+        "lower call; bear put spread: long the higher put). If both legs show as "
+        "'long', mark the second leg as Sold."
+    )
 
 
 def build_tracked_trade(

@@ -50,11 +50,19 @@ def _infer(legs: list[ImportedLeg]) -> tuple[StrategyType, Direction]:
         shorts = [c for c in calls if not c.is_long]
         if longs and shorts and longs[0].strike < shorts[0].strike:
             return StrategyType.BULL_CALL_SPREAD, Direction.BULLISH
+        if longs and shorts and longs[0].strike > shorts[0].strike:
+            return StrategyType.BEAR_CALL_SPREAD, Direction.BEARISH
     if len(puts) == 2:
         longs = [p for p in puts if p.is_long]
         shorts = [p for p in puts if not p.is_long]
         if longs and shorts and longs[0].strike > shorts[0].strike:
             return StrategyType.BEAR_PUT_SPREAD, Direction.BEARISH
+        if longs and shorts and longs[0].strike < shorts[0].strike:
+            return StrategyType.BULL_PUT_SPREAD, Direction.BULLISH
+    if len(calls) == 1 and len(puts) == 1 and all(lg.is_long for lg in legs):
+        both = (StrategyType.LONG_STRADDLE if calls[0].strike == puts[0].strike
+                else StrategyType.LONG_STRANGLE)
+        return both, Direction.NEUTRAL
     # Abstain, don't guess: an unrecognized combo used to be silently labeled
     # LONG_CALL — which later crashed the positions board when the breakeven
     # math found no call leg. Refuse with a corrective message instead.

@@ -435,16 +435,31 @@ def _warehouse_live(trade: PaperTrade) -> None:
 
 @router.post("/quick-add")
 async def quick_add_position(req: QuickAddRequest) -> dict:
-    """One-line position entry: 'TSLA 370/365p 7/24 @2.45 x1'. First strike =
-    the leg you bought, second = the leg you sold; net + is a debit, − a credit;
-    M/D dates roll forward to the next occurrence. Tracked and warehoused like
-    any other live position."""
-    from app.services.position_import import build_tracked_trade, parse_trade_line
+    """Quick position entry, two formats auto-detected:
+    - one line: 'TSLA 370/365p 7/24 @2.45 x1' (first strike bought, second sold;
+      net + debit, − credit; M/D rolls forward);
+    - a PASTED broker position screen (Robinhood): the Options leg lines plus the
+      'Average cost' line — which is the ONLY price used as entry (per-leg dollar
+      amounts on that screen are current marks, never the entry). 'Quantity' and
+      'Date opened' are honored when present."""
+    from app.services.position_import import (
+        build_tracked_trade,
+        looks_like_broker_paste,
+        parse_broker_paste,
+        parse_trade_line,
+    )
 
     try:
-        symbol, legs, net, _qty = parse_trade_line(req.line)
+        opened_at = req.opened_at
+        if looks_like_broker_paste(req.line):
+            symbol, legs, net, _qty, opened_date = parse_broker_paste(req.line)
+            if opened_at is None and opened_date is not None:
+                opened_at = datetime(opened_date.year, opened_date.month,
+                                     opened_date.day, 15, 0, tzinfo=UTC)
+        else:
+            symbol, legs, net, _qty = parse_trade_line(req.line)
         trade = build_tracked_trade(
-            symbol, legs, opened_at=req.opened_at, source="manual", net_per_share=net
+            symbol, legs, opened_at=opened_at, source="manual", net_per_share=net
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc

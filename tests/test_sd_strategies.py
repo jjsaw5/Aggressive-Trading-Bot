@@ -290,6 +290,10 @@ async def test_run_detection_persists_and_ranks() -> None:
     scored_states = {CandidateState.EVALUATING, CandidateState.WATCHLIST,
                      CandidateState.ARMED, CandidateState.REJECTED}
     assert all(c.state in scored_states for c in cands)
-    assert cands == sorted(cands, key=lambda c: c.score, reverse=True)
+    # Board order is the Layer-1 rank: score bucket first, then real spread
+    # cost-drag within the bucket — NOT strict raw-score order.
+    from app.shortduration.detection import _board_rank_key
+    keys = [_board_rank_key(c) for c in cands]
+    assert keys == sorted(keys)
     if cands:
         assert cands[0].strategy is not None and cands[0].reasons

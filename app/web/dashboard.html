@@ -535,13 +535,16 @@
         &nbsp;Entry $/sh <input id="al${n}-px" type="number" step="0.01" style="width:80px" title="Optional if you entered a net cost above" />
         &nbsp;Exp <input id="al${n}-exp" type="date" /></div>`;
       return `<div class="card" id="posForm"${state.addPosOpen ? "" : " hidden"} style="margin-bottom:10px"><h3>Add a position you hold</h3>
-        <div class="banner" style="margin-bottom:8px"><b>Quick add</b> — one line:
-          <input id="ap-quick" type="text" placeholder="TSLA 370/365p 7/24 @2.45 x1" style="width:280px;font-family:monospace" />
-          <button data-act="pos-quick">Add</button>
+        <div class="banner" style="margin-bottom:8px"><b>Quick add</b> — type one line, or paste your broker's position screen:
+          <div style="margin-top:4px"><textarea id="ap-quick" rows="4" placeholder="TSLA 370/365p 7/24 @2.45 x1&#10;&#10;— or paste the position screen: the Options leg lines + 'Average cost' (+ Quantity, Date opened)"
+            style="width:420px;font-family:monospace;font-size:12px;vertical-align:top"></textarea>
+          <button data-act="pos-quick" style="vertical-align:top">Add</button></div>
           <div class="muted" style="margin-top:4px;font-size:11px">
-            <code>SYMBOL strike[/strike2](c|p) date net [xQty]</code> — first strike = the leg you <b>bought</b>,
-            second = <b>sold</b>; net <b>+</b> = debit paid, <b>−</b> = credit received; <code>7/24</code> rolls to the
-            next occurrence. Examples: <code>AAPL 230c 8/15 3.10</code> · <code>SPY 645/640c 12/19 @-1.55 x2</code></div>
+            <b>One line:</b> <code>SYMBOL strike[/strike2](c|p) date net [xQty]</code> — first strike = <b>bought</b>,
+            second = <b>sold</b>; net <b>+</b> = debit, <b>−</b> = credit. E.g. <code>AAPL 230c 8/15 3.10</code>
+            <br><b>Paste:</b> select-copy the broker position page — needs the leg lines
+            (<code>JPM $355 Call · 7/24 · 2 Sells</code>) and <code>Average cost $0.25</code>.
+            Per-leg prices there are <b>current marks, not your entry</b> — only Average cost is used.</div>
           <div id="ap-quick-msg" class="muted" style="margin-top:4px"></div></div>
         <details><summary class="muted" style="cursor:pointer">Full form (per-leg control)</summary>
         <div>Symbol <input id="ap-symbol" type="text" placeholder="TSLA" style="width:90px;text-transform:uppercase" />

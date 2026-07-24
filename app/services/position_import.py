@@ -238,3 +238,97 @@ def parse_trade_line(line: str, *, today: date | None = None) -> tuple[str, list
     if len(legs) == 1 and net < 0:
         raise ValueError("A single long option can't have a negative (credit) net.")
     return sym, legs, net, qty
+
+
+# --- Broker-paste entry (Robinhood position screen) ---------------------------
+# Select-copy the position screen and paste it as-is. What we read:
+#   leg lines:      "JPM $355 Call" ... "7/24 · 2 Sells"   (Buys = long, Sells = short)
+#   entry net:      "Average cost $0.25"  <- the ONLY price used as entry
+#   contracts:      "Quantity +2" (sign carries debit/credit when cost has none)
+#   opened:         "Date opened 7/23"    (rolls BACKWARD — opens are in the past)
+# Per-leg dollar amounts on those screens are CURRENT marks, never the entry —
+# they are deliberately ignored.
+_PASTE_LEG_RE = re.compile(
+    r"(?P<sym>[A-Z]{1,6})\s+\$(?P<strike>\d+(?:\.\d+)?)\s+(?P<type>Call|Put)\b"
+    r"[\s\S]{0,40}?(?P<date>\d{1,2}/\d{1,2}(?:/\d{2,4})?)"
+    r"[^\n]{0,30}?(?P<qty>\d+)\s+(?P<side>Buys?|Sells?)\b",
+    re.IGNORECASE,
+)
+_PASTE_COST_RE = re.compile(r"Average\s+(?:cost|credit)\s*\(?(?P<neg>[-−(])?\$(?P<amt>\d+(?:\.\d+)?)", re.IGNORECASE)
+_PASTE_QTY_RE = re.compile(r"Quantity\s*(?P<sign>[+\-−])?\s*(?P<n>\d+)", re.IGNORECASE)
+_PASTE_OPENED_RE = re.compile(r"Date\s+opened\s*(?P<d>\d{1,2}/\d{1,2}(?:/\d{2,4})?)", re.IGNORECASE)
+
+
+def looks_like_broker_paste(text: str) -> bool:
+    return bool(_PASTE_LEG_RE.search(text or ""))
+
+
+def _parse_past_date(raw: str, today: date) -> date:
+    parts = [int(p) for p in raw.split("/")]
+    if len(parts) == 3:
+        yr = parts[2] + 2000 if parts[2] < 100 else parts[2]
+        return date(yr, parts[0], parts[1])
+    m, d = parts
+    opened = date(today.year, m, d)
+    return opened if opened <= today else date(today.year - 1, m, d)
+
+
+def parse_broker_paste(
+    text: str, *, today: date | None = None
+) -> tuple[str, list[ImportedLeg], float, int, date | None]:
+    """Parse a pasted broker position screen into (symbol, legs, net_per_share,
+    contracts, opened_date). Raises ValueError with a usable message."""
+    today = today or datetime.now(UTC).date()
+    matches = list(_PASTE_LEG_RE.finditer(text or ""))
+    if not matches:
+        raise ValueError(
+            "Couldn't find option legs in the paste. Copy the position screen "
+            "including the Options section (e.g. 'JPM $355 Call / 7/24 · 2 Sells') "
+            "and the 'Average cost' line."
+        )
+    if len(matches) > 2:
+        raise ValueError("More than two legs found — quick entry supports a single "
+                         "option or a 2-leg vertical. Use the full form.")
+    syms = {m.group("sym").upper() for m in matches}
+    if len(syms) != 1:
+        raise ValueError(f"Legs are on different symbols ({', '.join(sorted(syms))}).")
+    sym = syms.pop()
+
+    cost = _PASTE_COST_RE.search(text)
+    if not cost:
+        raise ValueError(
+            "Couldn't find the entry cost. Include the 'Average cost $X.XX' line — "
+            "the per-leg prices on that screen are CURRENT marks, not your entry."
+        )
+    net = float(cost.group("amt"))
+    if cost.group("neg"):
+        net = -net
+
+    qty_m = _PASTE_QTY_RE.search(text)
+    leg_qtys = [int(m.group("qty")) for m in matches]
+    qty = int(qty_m.group("n")) if qty_m else min(leg_qtys)
+    if qty < 1:
+        raise ValueError("Quantity must be at least 1.")
+    # A negative Quantity means the structure was SOLD: the cost shown is a credit.
+    if qty_m and qty_m.group("sign") in ("-", "−") and net > 0:
+        net = -net
+
+    legs: list[ImportedLeg] = []
+    for m in matches:
+        exp = _parse_line_date(m.group("date"), today)  # expiries roll FORWARD
+        is_long = m.group("side").lower().startswith("buy")
+        legs.append(ImportedLeg(
+            strike=float(m.group("strike")),
+            option_type=OptionType.CALL if m.group("type").lower() == "call" else OptionType.PUT,
+            is_long=is_long, quantity=qty, entry_price_per_share=0.0, expiration=exp,
+        ))
+    if len(legs) == 1 and not legs[0].is_long:
+        raise ValueError("A lone short option is undefined-risk — not supported. "
+                         "If this is one wing of a spread, include both legs.")
+    if len(legs) == 2 and legs[0].is_long == legs[1].is_long:
+        raise ValueError("Both legs parsed as the same side — a vertical needs one "
+                         "Buys leg and one Sells leg. Check the paste includes both lines.")
+
+    opened_m = _PASTE_OPENED_RE.search(text)
+    opened = _parse_past_date(opened_m.group("d"), today) if opened_m else None
+    return sym, legs, net, qty, opened

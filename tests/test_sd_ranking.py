@@ -12,12 +12,12 @@ _NOW = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
 
 
 def _cand(**kw) -> ShortDurationCandidate:
-    base = dict(
-        id=kw.pop("id", "x"), symbol=kw.pop("symbol", "SPY"),
-        dte_category=kw.pop("dte", DTECategory.ZERO_DTE),
-        detected_at=kw.pop("detected_at", _NOW),
-        state=kw.pop("state", CandidateState.EVALUATING),
-    )
+    base = {
+        "id": kw.pop("id", "x"), "symbol": kw.pop("symbol", "SPY"),
+        "dte_category": kw.pop("dte", DTECategory.ZERO_DTE),
+        "detected_at": kw.pop("detected_at", _NOW),
+        "state": kw.pop("state", CandidateState.EVALUATING),
+    }
     base.update(kw)
     return ShortDurationCandidate(**base)
 

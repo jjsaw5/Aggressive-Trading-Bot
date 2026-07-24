@@ -258,10 +258,12 @@ def test_short_duration_scan_and_state_machine() -> None:
 
     cands = c.get("/short-duration/0dte/candidates").json()
     assert cands
-    cid = cands[0]["id"]
+    # The shared suite DB may carry candidates other tests already advanced
+    # (e.g. paper-opened) — grade a freshly scored one, not blindly index 0.
+    cand = next(x for x in cands if x["state"] in {"evaluating", "watchlist", "armed"})
+    cid = cand["id"]
     # Candidates are scored + classified past DETECTED, and carry a scorecard.
-    assert cands[0]["state"] in {"evaluating", "watchlist", "armed"}
-    assert cands[0]["scorecard"] is not None
+    assert cand["scorecard"] is not None
 
     armed = c.post(f"/short-duration/candidates/{cid}/arm").json()
     assert armed["candidate"]["state"] == "armed"

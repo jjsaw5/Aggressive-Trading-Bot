@@ -591,3 +591,142 @@ async def positions_history(limit: int = 200, source: str | None = None) -> list
         closed = [t for t in closed if t.scan_id == source]
     closed.sort(key=lambda t: t.closed_at or t.opened_at, reverse=True)
     return [_closed_view(t) for t in closed]
+
+
+# --- Trading-history analytics (calendar + performance page) ------------------
+_LIVE_SOURCES = {"manual", "rh_sync"}
+
+
+class HistoryTradeView(BaseModel):
+    id: str
+    symbol: str
+    strategy: str
+    contracts: int
+    entry_net: float
+    exit_net: float | None = None
+    realized_pnl_usd: float | None = None
+    pnl_pct: float | None = None
+    opened_at: str
+    closed_at: str | None = None
+    closed_date: str | None = None  # YYYY-MM-DD, the calendar key
+    days_held: int | None = None
+    exit_reason: str | None = None
+    exit_note: str = ""
+    source: str = ""
+
+
+class HistoryStats(BaseModel):
+    n: int = 0
+    wins: int = 0
+    losses: int = 0
+    scratches: int = 0
+    win_rate: float | None = None
+    net_pnl_usd: float = 0.0
+    expectancy_usd: float | None = None
+    profit_factor: float | None = None
+    avg_win_usd: float | None = None
+    avg_loss_usd: float | None = None
+    max_drawdown_usd: float | None = None
+    best_day: list | None = None  # [date, pnl]
+    worst_day: list | None = None
+    avg_days_held: float | None = None
+    equity_curve: list[list] = Field(default_factory=list)  # [[date, cum_pnl], ...]
+    by_month: list[list] = Field(default_factory=list)  # [[YYYY-MM, net, n], ...]
+    by_symbol: list[list] = Field(default_factory=list)  # [[sym, n, net, win_rate], ...]
+    by_strategy: list[list] = Field(default_factory=list)
+    by_exit_reason: list[list] = Field(default_factory=list)
+
+
+class HistoryAnalytics(BaseModel):
+    source_filter: str
+    trades: list[HistoryTradeView] = Field(default_factory=list)
+    stats: HistoryStats = Field(default_factory=HistoryStats)
+    note: str = ("Realized P&L from closed tracked positions only (your actual "
+                 "fills for live trades). Open positions are not included.")
+
+
+def _grouped_pnl(rows: list[HistoryTradeView], key_fn) -> list[list]:
+    groups: dict[str, list[float]] = {}
+    for r in rows:
+        groups.setdefault(key_fn(r), []).append(r.realized_pnl_usd or 0.0)
+    out = []
+    for k, pnls in groups.items():
+        wins = sum(1 for p in pnls if p > 0)
+        decisive = sum(1 for p in pnls if p != 0)
+        out.append([k, len(pnls), round(sum(pnls), 2),
+                    round(wins / decisive, 4) if decisive else None])
+    out.sort(key=lambda g: g[2])
+    return out
+
+
+@router.get("/history/analytics", response_model=HistoryAnalytics)
+async def history_analytics(source: str = "live") -> HistoryAnalytics:
+    """Closed-trade history + performance stats for the calendar page.
+    source: 'live' (manual + broker-synced — your real trades), 'paper', 'all'."""
+    from app.analytics.metrics import expectancy, max_drawdown, profit_factor
+
+    trades = await run_in_threadpool(repository.list_paper_trades, 2000)
+    closed = [t for t in trades if t.status == PaperTradeStatus.CLOSED]
+    if source == "live":
+        closed = [t for t in closed if t.scan_id in _LIVE_SOURCES]
+    elif source == "paper":
+        closed = [t for t in closed if t.scan_id not in _LIVE_SOURCES]
+    closed.sort(key=lambda t: t.closed_at or t.opened_at)
+
+    rows: list[HistoryTradeView] = []
+    for t in closed:
+        pnl = t.realized_pnl_usd
+        basis = abs(t.entry_fill) * 100 * t.trade_plan.contracts if t.trade_plan else None
+        held = None
+        if t.closed_at is not None:
+            held = max(0, (t.closed_at.date() - t.opened_at.date()).days)
+        rows.append(HistoryTradeView(
+            id=t.id, symbol=t.symbol,
+            strategy=t.trade_plan.strategy.display_name if t.trade_plan else "?",
+            contracts=t.trade_plan.contracts if t.trade_plan else 1,
+            entry_net=t.entry_fill, exit_net=t.exit_fill, realized_pnl_usd=pnl,
+            pnl_pct=round(pnl / basis, 4) if (pnl is not None and basis) else None,
+            opened_at=t.opened_at.isoformat(),
+            closed_at=t.closed_at.isoformat() if t.closed_at else None,
+            closed_date=str(t.closed_at.date()) if t.closed_at else None,
+            days_held=held, exit_reason=t.exit_reason.value if t.exit_reason else None,
+            exit_note=t.exit_note or "", source=t.scan_id or "",
+        ))
+
+    pnls = [r.realized_pnl_usd or 0.0 for r in rows]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    by_day: dict[str, float] = {}
+    for r in rows:
+        if r.closed_date:
+            by_day[r.closed_date] = round(by_day.get(r.closed_date, 0.0) + (r.realized_pnl_usd or 0.0), 2)
+    curve, cum = [], 0.0
+    for d in sorted(by_day):
+        cum = round(cum + by_day[d], 2)
+        curve.append([d, cum])
+    by_month: dict[str, list[float]] = {}
+    for r in rows:
+        if r.closed_date:
+            by_month.setdefault(r.closed_date[:7], []).append(r.realized_pnl_usd or 0.0)
+    held_vals = [r.days_held for r in rows if r.days_held is not None]
+    day_items = sorted(by_day.items(), key=lambda kv: kv[1])
+
+    stats = HistoryStats(
+        n=len(rows), wins=len(wins), losses=len(losses),
+        scratches=len(pnls) - len(wins) - len(losses),
+        win_rate=round(len(wins) / (len(wins) + len(losses)), 4) if (wins or losses) else None,
+        net_pnl_usd=round(sum(pnls), 2),
+        expectancy_usd=expectancy(pnls), profit_factor=profit_factor(pnls),
+        avg_win_usd=round(sum(wins) / len(wins), 2) if wins else None,
+        avg_loss_usd=round(sum(losses) / len(losses), 2) if losses else None,
+        max_drawdown_usd=max_drawdown(pnls) if pnls else None,
+        best_day=list(day_items[-1]) if day_items else None,
+        worst_day=list(day_items[0]) if day_items else None,
+        avg_days_held=round(sum(held_vals) / len(held_vals), 1) if held_vals else None,
+        equity_curve=curve,
+        by_month=[[m, round(sum(v), 2), len(v)] for m, v in sorted(by_month.items())],
+        by_symbol=_grouped_pnl(rows, lambda r: r.symbol),
+        by_strategy=_grouped_pnl(rows, lambda r: r.strategy),
+        by_exit_reason=_grouped_pnl(rows, lambda r: r.exit_reason or "unmarked"),
+    )
+    return HistoryAnalytics(source_filter=source, trades=rows, stats=stats)

@@ -10,6 +10,7 @@ other tracked position so Tier 4 marks it from the live chain each pass.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -162,3 +163,69 @@ async def sync_broker_positions() -> tuple[int, str]:
         await asyncio.to_thread(repository.save_paper_trade, trade)
         n += 1
     return n, f"Synced {n} position(s) from the broker."
+
+
+# --- One-line quick entry -----------------------------------------------------
+# "TSLA 370/365p 7/24 @2.45 x2"  -> put debit spread: long 370p, short 365p,
+#                                   net 2.45/share debit, 2 contracts, exp Jul 24.
+# "AAPL 230c 8/15 3.10"          -> long call (qty defaults to 1, @ optional).
+# "SPY 645/640c 12/19 @-1.55"    -> long 645c / short 640c for a 1.55 CREDIT.
+# Rules: FIRST strike is the leg you BOUGHT, second the leg you SOLD; the net's
+# sign carries debit (+) vs credit (−); M/D dates roll to the next occurrence.
+_LINE_RE = re.compile(
+    r"""^\s*
+    (?P<sym>[A-Za-z]{1,6})\s+
+    (?P<k1>\d+(?:\.\d+)?)(?P<t1>[cCpP])?
+    (?:\s*/\s*(?P<k2>\d+(?:\.\d+)?))?(?P<t2>[cCpP])?\s+
+    (?P<date>\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+
+    @?\s*(?P<net>-?\d+(?:\.\d+)?)
+    (?:\s*[xX]\s*(?P<qty>\d+))?
+    \s*$""",
+    re.VERBOSE,
+)
+
+
+def _parse_line_date(raw: str, today: date) -> date:
+    if "-" in raw:
+        return date.fromisoformat(raw)
+    parts = [int(p) for p in raw.split("/")]
+    if len(parts) == 3:
+        yr = parts[2] + 2000 if parts[2] < 100 else parts[2]
+        return date(yr, parts[0], parts[1])
+    m, d = parts
+    exp = date(today.year, m, d)
+    return exp if exp >= today else date(today.year + 1, m, d)
+
+
+def parse_trade_line(line: str, *, today: date | None = None) -> tuple[str, list[ImportedLeg], float, int]:
+    """Parse the one-line format into (symbol, legs, net_per_share, contracts).
+    Raises ValueError with a human-usable message on anything it can't read."""
+    today = today or datetime.now(UTC).date()
+    m = _LINE_RE.match(line or "")
+    if not m:
+        raise ValueError(
+            "Couldn't read that. Format: SYMBOL strike[/strike2](c|p) date net [xQty] — "
+            "e.g. 'TSLA 370/365p 7/24 @2.45 x1' (first strike = bought, second = sold; "
+            "net + = debit, − = credit)."
+        )
+    sym = m.group("sym").upper()
+    t1, t2 = m.group("t1"), m.group("t2")
+    tletter = (t2 or t1 or "").lower()
+    if tletter not in ("c", "p"):
+        raise ValueError("Mark the option type with c or p after the strike(s), e.g. 370/365p.")
+    otype = OptionType.CALL if tletter == "c" else OptionType.PUT
+    if t1 and t2 and t1.lower() != t2.lower():
+        raise ValueError("Mixed call/put verticals aren't supported in quick entry — use the full form.")
+    exp = _parse_line_date(m.group("date"), today)
+    net = float(m.group("net"))
+    qty = int(m.group("qty") or 1)
+    if qty < 1:
+        raise ValueError("Quantity must be at least 1.")
+    legs = [ImportedLeg(strike=float(m.group("k1")), option_type=otype, is_long=True,
+                        quantity=qty, entry_price_per_share=0.0, expiration=exp)]
+    if m.group("k2"):
+        legs.append(ImportedLeg(strike=float(m.group("k2")), option_type=otype, is_long=False,
+                                quantity=qty, entry_price_per_share=0.0, expiration=exp))
+    if len(legs) == 1 and net < 0:
+        raise ValueError("A single long option can't have a negative (credit) net.")
+    return sym, legs, net, qty

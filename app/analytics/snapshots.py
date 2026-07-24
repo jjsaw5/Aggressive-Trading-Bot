@@ -105,6 +105,45 @@ def snapshot_from_candidate(
     )
 
 
+def snapshot_from_live_trade(trade) -> DecisionSnapshot | None:
+    """Freeze a REAL (imported/synced) position into the decision warehouse so the
+    calibration scorecard can grade live trades alongside scan/paper decisions.
+
+    A live import carries no engine prediction: composite_score is 0.0 as a
+    required-field placeholder and the calibration harness EXCLUDES live-source
+    decisions from the score buckets (there is no engine score to grade) — live
+    trades contribute realized win-rate / P&L under their own source group."""
+    plan = trade.trade_plan
+    if plan is None:
+        return None
+    from app.quant.analytics import structure_breakevens
+
+    expiration = min((leg.expiration for leg in plan.legs), default=None)
+    dte = (expiration - trade.opened_at.date()).days if expiration else None
+    return DecisionSnapshot(
+        decision_id=f"live:{trade.id}",
+        scan_id=f"live:{trade.id}",
+        symbol=trade.symbol.upper(),
+        source=DecisionSource.LIVE,
+        direction=plan.direction,
+        strategy=plan.strategy,
+        generated_at=trade.opened_at,
+        composite_score=0.0,  # no engine prediction — excluded from score buckets
+        probability_of_profit=None,
+        reward_to_risk=plan.risk.reward_to_risk if plan.risk else None,
+        breakevens=structure_breakevens(plan),
+        is_credit=plan.net_debit < 0,
+        entry_spot=0.0,  # not recorded at import time; outcome carries the exit truth
+        entry_net_per_share=round(plan.net_debit / 100.0, 4),
+        max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
+        max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,
+        contracts=plan.contracts,
+        expiration=expiration,
+        dte_at_entry=dte,
+        trade_plan=plan,
+    )
+
+
 def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
     """Freeze a short-duration candidate into the decision warehouse.
 

@@ -33,6 +33,7 @@ class DecisionSource(str, Enum):
     SCAN = "scan"  # an actionable research candidate
     PAPER = "paper"  # a simulated position was opened
     PROPOSAL = "proposal"  # a human-approval order ticket was created
+    LIVE = "live"  # a real position the human entered/synced — ground truth with real fills
 
 
 class OutcomeResult(str, Enum):

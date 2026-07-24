@@ -392,6 +392,55 @@ async def sync_positions() -> SyncResult:
     return SyncResult(synced=n, message=msg)
 
 
+class QuickAddRequest(BaseModel):
+    line: str  # e.g. "TSLA 370/365p 7/24 @2.45 x1"
+    opened_at: datetime | None = None
+
+
+def _warehouse_live(trade: PaperTrade) -> None:
+    """Freeze a live import into the decision warehouse so the calibration
+    scorecard grades real trades. Best-effort — a warehouse hiccup must never
+    block an import."""
+    try:
+        from app.analytics.snapshots import snapshot_from_live_trade
+        snap = snapshot_from_live_trade(trade)
+        if snap is not None:
+            repository.save_snapshots([snap])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("live_warehouse_failed", trade_id=trade.id, error=str(exc))
+
+
+@router.post("/quick-add")
+async def quick_add_position(req: QuickAddRequest) -> dict:
+    """One-line position entry: 'TSLA 370/365p 7/24 @2.45 x1'. First strike =
+    the leg you bought, second = the leg you sold; net + is a debit, − a credit;
+    M/D dates roll forward to the next occurrence. Tracked and warehoused like
+    any other live position."""
+    from app.services.position_import import build_tracked_trade, parse_trade_line
+
+    try:
+        symbol, legs, net, _qty = parse_trade_line(req.line)
+        trade = build_tracked_trade(
+            symbol, legs, opened_at=req.opened_at, source="manual", net_per_share=net
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await run_in_threadpool(repository.save_paper_trade, trade)
+    await run_in_threadpool(_warehouse_live, trade)
+    legs_desc = " / ".join(
+        f"{'long' if lg.action in _BUY else 'short'} {lg.strike:g}{lg.option_type.value[0].upper()}"
+        for lg in trade.trade_plan.legs
+    )
+    return {
+        "id": trade.id, "symbol": trade.symbol,
+        "strategy": trade.trade_plan.strategy.display_name,
+        "parsed": f"{legs_desc} exp {trade.trade_plan.legs[0].expiration} "
+                  f"net {trade.trade_plan.net_debit / 100:+.2f}/sh x{trade.trade_plan.contracts}",
+        "max_loss_usd": trade.trade_plan.risk.max_loss_usd,
+        "message": f"Added {trade.trade_plan.strategy.display_name} on {trade.symbol}. Now monitored.",
+    }
+
+
 @router.post("/import")
 async def import_position(req: ImportPositionRequest) -> dict:
     """Manually add an open position (no broker connection). It becomes a tracked
@@ -416,6 +465,7 @@ async def import_position(req: ImportPositionRequest) -> dict:
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, f"Invalid position: {exc}") from exc
     await run_in_threadpool(repository.save_paper_trade, trade)
+    await run_in_threadpool(_warehouse_live, trade)
     return {
         "id": trade.id, "symbol": trade.symbol,
         "strategy": trade.trade_plan.strategy.display_name,
@@ -446,7 +496,41 @@ async def close_position(trade_id: str, req: ClosePositionRequest) -> ClosedPosi
         (req.exit_price_per_share - t.entry_fill) * t.trade_plan.contracts * 100, 2
     )
     await run_in_threadpool(repository.save_paper_trade, t)
+    # Grade the close: a real fill is ground truth. Ensure the decision snapshot
+    # exists (positions imported before warehousing existed get one lazily), then
+    # record the outcome so the calibration scorecard tracks live-trade success.
+    await run_in_threadpool(_record_live_close, t, now)
     return _closed_view(t)
+
+
+def _record_live_close(t: PaperTrade, closed_at: datetime) -> None:
+    """Write the live_close DecisionOutcome for a closed real position.
+    Best-effort — grading must never block a close."""
+    try:
+        from app.analytics.snapshots import snapshot_from_live_trade
+        from app.domain.outcomes import DecisionOutcome, OutcomeResult
+
+        decision_id = f"live:{t.id}"
+        if repository.get_snapshot(decision_id) is None:
+            snap = snapshot_from_live_trade(t)
+            if snap is None:
+                return
+            repository.save_snapshots([snap])
+        pnl = t.realized_pnl_usd or 0.0
+        result = (
+            OutcomeResult.WIN if pnl > 0
+            else OutcomeResult.LOSS if pnl < 0
+            else OutcomeResult.SCRATCH
+        )
+        elapsed = max(0, (closed_at.date() - t.opened_at.date()).days)
+        repository.save_outcome(DecisionOutcome(
+            decision_id=decision_id, symbol=t.symbol, horizon_label="trade_close",
+            resolved_at=closed_at, elapsed_days=elapsed, result=result,
+            realized_pnl_usd=pnl, outcome_source="live_close",
+            note=t.exit_note or "",
+        ))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("live_close_grade_failed", trade_id=t.id, error=str(exc))
 
 
 @router.delete("/{trade_id}")

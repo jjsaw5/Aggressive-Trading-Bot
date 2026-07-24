@@ -185,13 +185,23 @@ class FMPProvider(
 
     # --- Calendar ---
     async def get_earnings(self, symbol: str) -> EarningsEvent | None:
+        """The symbol's next UNREPORTED earnings date, or None.
+
+        Uses the per-symbol /stable/earnings endpoint. The previous
+        /stable/earnings-calendar endpoint IGNORED its ?symbol parameter and
+        returned the market-wide calendar — so the first row dated >= today (a
+        random other company) became every symbol's "next earnings". Two defenses
+        now, independent of the endpoint behaving:
+        - rows are filtered to the requested symbol client-side;
+        - rows with epsActual set are skipped (already reported — a filled actual
+          on today's date must not resurrect a past event as upcoming)."""
         today = datetime.now(UTC).date()
-        data = await self._http.get_json(
-            "/stable/earnings-calendar",
-            {"symbol": symbol.upper(), "from": today.isoformat()},
-        )
+        data = await self._http.get_json("/stable/earnings", {"symbol": symbol.upper()})
         rows = data if isinstance(data, list) else []
+        upcoming: list[tuple[date, dict]] = []
         for r in rows:
+            if str(r.get("symbol", "")).upper() != symbol.upper():
+                continue  # never trust an endpoint to honor its own filter again
             d = r.get("date")
             if not d:
                 continue
@@ -199,14 +209,17 @@ class FMPProvider(
                 report = date.fromisoformat(str(d)[:10])
             except ValueError:
                 continue
-            if report >= today:
-                return EarningsEvent(
-                    symbol=symbol.upper(),
-                    report_date=report,
-                    time_of_day=r.get("time"),
-                    source="fmp",
-                )
-        return None
+            if report >= today and r.get("epsActual") is None:
+                upcoming.append((report, r))
+        if not upcoming:
+            return None
+        report, row = min(upcoming, key=lambda t: t[0])
+        return EarningsEvent(
+            symbol=symbol.upper(),
+            report_date=report,
+            time_of_day=row.get("time"),
+            source="fmp",
+        )
 
     async def get_catalysts(self, symbol: str, horizon_days: int = 21) -> list[CatalystEvent]:
         earn = await self.get_earnings(symbol)

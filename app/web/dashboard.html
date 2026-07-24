@@ -959,7 +959,7 @@
       const events = await api("GET", "/short-duration/events");
       const toolbar = `<div style="margin-bottom:10px">
         <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE scan</button>
-        <span class="muted">Trend + catalyst continuation. Setups only — contract selection is Phase 4.</span></div>`;
+        <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Research only — no orders.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
       return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>

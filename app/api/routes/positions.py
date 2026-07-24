@@ -216,6 +216,14 @@ def _build_view(
     breakevens = list(plan.analytics.breakevens) if plan.analytics else []
     if not breakevens:
         breakevens = structure_breakevens(plan)
+    if not breakevens and plan.legs:
+        # Every supported structure has a computable breakeven; none means this
+        # stored record is malformed (its strategy label doesn't match its legs).
+        warnings.append(
+            "This record looks malformed — its strategy label doesn't match its legs, "
+            "so breakeven/POP can't be computed. Delete it and re-add (the quick-add "
+            "line is the easiest way)."
+        )
 
     # Market-implied odds + the concrete "what has to happen" line — from the live
     # spot, the nearest break-even, the marked IV, and days to expiry.
@@ -369,10 +377,25 @@ async def list_positions() -> list[PositionView]:
     earnings = await _earnings_by_symbol([t.symbol for t in open_trades])
     theses = await _theses_by_trade(open_trades)
 
-    rows = [
-        _build_view(t, by_id.get(t.id), earnings.get(t.symbol), theses.get(t.id))
-        for t in open_trades
-    ]
+    # Per-row isolation: one malformed stored record must degrade to a visible
+    # warning row the user can delete — never 500 the whole board.
+    rows = []
+    for t in open_trades:
+        try:
+            rows.append(_build_view(t, by_id.get(t.id), earnings.get(t.symbol), theses.get(t.id)))
+        except Exception as exc:  # noqa: BLE001 — isolate the poison row
+            log.warning("position_view_failed", trade_id=t.id, symbol=t.symbol, error=str(exc))
+            rows.append(PositionView(
+                id=t.id, source=t.scan_id or "", symbol=t.symbol,
+                strategy=t.trade_plan.strategy.display_name if t.trade_plan else "unknown",
+                contracts=t.trade_plan.contracts if t.trade_plan else 1,
+                entry_net=t.entry_fill, action="unmarked",
+                warnings=[
+                    "This record is malformed (its strategy label doesn't match its legs) "
+                    "and can't be fully displayed. Delete it and re-add — the quick-add "
+                    "line is the easiest way."
+                ],
+            ))
     # Surface risk first: stops/take-profits/expiries above holds.
     order = {"stop": 0, "take_profit": 1, "time_stop": 2, "unmarked": 3, "hold": 4}
     rows.sort(key=lambda x: (order.get(x.action, 5), -(x.pnl_usd or 0)))

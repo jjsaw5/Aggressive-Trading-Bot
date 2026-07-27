@@ -9,12 +9,52 @@ still go through the existing ExecutionGuard.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from app.domain.enums import CandidateState as S
+from app.domain.enums import DTECategory
 from app.domain.shortduration import CandidateTransition, ShortDurationCandidate
 
 _TERMINAL = {S.CLOSED, S.REJECTED, S.EXPIRED}
+_ET = ZoneInfo("America/New_York")
+# Pre-flight states the staleness sweep may expire. In-flight states (proposed
+# through managing) are someone's live decision — the position monitor owns
+# those; terminal states are already dead.
+_SWEEPABLE = {S.DETECTED, S.EVALUATING, S.WATCHLIST, S.ARMED, S.TRIGGERED}
+
+
+def staleness_reason(
+    c: ShortDurationCandidate, *, now: datetime | None = None
+) -> str | None:
+    """Why this candidate's setup is dead, or None while it is still current.
+
+    A candidate must never render as actionable once (a) any recommended
+    contract's expiration has passed, or (b) for 0DTE, its detection day (ET) is
+    over — a 0DTE setup is same-day by definition, and its entry levels (opening
+    range, VWAP) mean nothing the next morning."""
+    if c.state not in _SWEEPABLE:
+        return None
+    now = now or datetime.now(UTC)
+    today_et = now.astimezone(_ET).date()
+
+    exps: list[date] = []
+    if c.trade_plan is not None:
+        exps.extend(lg.expiration for lg in c.trade_plan.legs)
+    elif c.contract is not None:
+        for lg in c.contract.legs:
+            try:
+                exps.append(date.fromisoformat(str(lg.get("expiration"))))
+            except (TypeError, ValueError):
+                continue
+    if exps and min(exps) < today_et:
+        return f"contract expired {min(exps).isoformat()}"
+
+    if c.dte_category == DTECategory.ZERO_DTE and c.detected_at is not None:
+        detected_day = c.detected_at.astimezone(_ET).date()
+        if detected_day < today_et:
+            return f"0DTE setup day {detected_day.isoformat()} is over"
+    return None
 
 # Legal forward transitions. REJECTED/EXPIRED are reachable from any non-terminal
 # state (added below).

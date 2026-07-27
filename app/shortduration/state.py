@@ -18,10 +18,13 @@ from app.domain.shortduration import CandidateTransition, ShortDurationCandidate
 
 _TERMINAL = {S.CLOSED, S.REJECTED, S.EXPIRED}
 _ET = ZoneInfo("America/New_York")
-# Pre-flight states the staleness sweep may expire. In-flight states (proposed
-# through managing) are someone's live decision — the position monitor owns
-# those; terminal states are already dead.
+# Pre-flight states the staleness sweep may expire. OPEN/MANAGING are a live
+# paper position — the position monitor settles those at expiry; terminal
+# states are already dead. PROPOSED/APPROVED are human-touched, so they are
+# swept ONLY by the contract-expired rule (an expired contract is physically
+# unexecutable), never by the softer 0DTE-day rule.
 _SWEEPABLE = {S.DETECTED, S.EVALUATING, S.WATCHLIST, S.ARMED, S.TRIGGERED}
+_SWEEPABLE_ON_EXPIRY = _SWEEPABLE | {S.PROPOSED, S.APPROVED}
 
 
 def staleness_reason(
@@ -33,7 +36,7 @@ def staleness_reason(
     contract's expiration has passed, or (b) for 0DTE, its detection day (ET) is
     over — a 0DTE setup is same-day by definition, and its entry levels (opening
     range, VWAP) mean nothing the next morning."""
-    if c.state not in _SWEEPABLE:
+    if c.state not in _SWEEPABLE_ON_EXPIRY:
         return None
     now = now or datetime.now(UTC)
     today_et = now.astimezone(_ET).date()
@@ -50,6 +53,8 @@ def staleness_reason(
     if exps and min(exps) < today_et:
         return f"contract expired {min(exps).isoformat()}"
 
+    if c.state not in _SWEEPABLE:
+        return None
     if c.dte_category == DTECategory.ZERO_DTE and c.detected_at is not None:
         detected_day = c.detected_at.astimezone(_ET).date()
         if detected_day < today_et:

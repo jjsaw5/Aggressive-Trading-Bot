@@ -22,7 +22,13 @@ from app.domain.enums import CandidateState, ExitReason, PaperTradeStatus
 from app.domain.shortduration import ShortDurationCandidate, ShortDurationTrade
 from app.logging_config import get_logger
 from app.providers import registry
-from app.services.paper_engine import check_exit, close_paper_trade, open_paper_trade, update_mark
+from app.services.paper_engine import (
+    SlippageModel,
+    check_exit,
+    close_paper_trade,
+    open_paper_trade,
+    update_mark,
+)
 from app.shortduration.state import advance, transition
 from app.tiers.tier4_positions import mark_net_per_share, structure_spread
 
@@ -189,9 +195,38 @@ async def monitor_short_duration_positions(*, now: datetime | None = None) -> li
     for sd in open_trades:
         pt = await asyncio.to_thread(repository.get_paper_trade, sd.paper_trade_id)
         if pt is None or pt.status != PaperTradeStatus.OPEN:
+            # The wrapped paper trade is gone (record purged) or was closed
+            # outside this monitor — mirror that onto the SD row instead of
+            # leaving an orphan OPEN on the board forever.
+            sd.status = "closed"
+            sd.closed_at = pt.closed_at if pt is not None else now
+            sd.exit_net = pt.exit_fill if pt is not None else None
+            sd.realized_pnl_usd = pt.realized_pnl_usd if pt is not None else None
+            sd.exit_reason = (pt.exit_reason.value if pt is not None and pt.exit_reason
+                              else "orphaned")
+            sd.unrealized_pnl_usd = None
+            await asyncio.to_thread(repository.save_short_duration_trade, sd)
+            cand = await asyncio.to_thread(repository.get_short_duration_candidate, sd.candidate_id)
+            if cand is not None and cand.state in {CandidateState.OPEN, CandidateState.MANAGING}:
+                tr = transition(cand, CandidateState.CLOSED, trigger="exit:orphaned",
+                                actor="system",
+                                reason="Underlying paper trade closed or purged.", at=now)
+                await asyncio.to_thread(repository.append_candidate_transition, tr)
+                await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+            updated.append(sd)
             continue
         plan = pt.trade_plan
         exps = sorted({lg.expiration for lg in plan.legs})
+
+        # A structure held past expiration can never be marked from the live
+        # chain (the expiry no longer exists there) — settle it at the intrinsic
+        # value of the underlying's expiry-day close instead of leaving it OPEN
+        # forever on the board.
+        if exps and max(exps) < now.astimezone(_ET).date():
+            settled = await _settle_expired(sd, pt, plan, exps[-1])
+            if settled is not None:
+                updated.append(settled)
+            continue
         try:
             chain = await chain_provider.get_option_chain_for_expirations(sd.symbol, exps)
         except Exception as exc:  # noqa: BLE001 - can't mark this pass; leave open
@@ -236,6 +271,63 @@ async def monitor_short_duration_positions(*, now: datetime | None = None) -> li
 
     log.info("sd_monitor", open=len(open_trades), acted=sum(1 for t in updated if t.status == "closed"))
     return updated
+
+
+async def _settle_expired(
+    sd: ShortDurationTrade, pt, plan, expiry,
+) -> ShortDurationTrade | None:
+    """Close a paper position held past expiration at intrinsic value computed
+    from the underlying's close on expiry day. Timestamped AT expiry (4pm ET),
+    so the history calendar books it on the day it actually died. Returns the
+    updated trade, or None when the expiry-day close is unavailable (position
+    stays open; a later monitor pass retries)."""
+    from datetime import time as dt_time
+
+    md = registry.market_data_provider()
+    lookback = (datetime.now(UTC).date() - expiry).days + 10
+    try:
+        hist = await md.get_price_history(sd.symbol, lookback_days=max(lookback, 15))
+    except Exception as exc:  # noqa: BLE001 — can't settle this pass
+        log.warning("sd_settle_history_failed", symbol=sd.symbol, error=str(exc))
+        return None
+    close = next((c.close for c in reversed(hist.candles)
+                  if c.ts.astimezone(_ET).date() <= expiry), None)
+    if close is None:
+        log.warning("sd_settle_no_close", symbol=sd.symbol, expiry=str(expiry))
+        return None
+
+    net = 0.0
+    for lg in plan.legs:
+        intrinsic = (max(0.0, close - lg.strike) if lg.option_type.value == "call"
+                     else max(0.0, lg.strike - close))
+        net += intrinsic if lg.action.value == "buy_to_open" else -intrinsic
+    net = round(net, 4)
+
+    at = datetime.combine(expiry, dt_time(20, 0), tzinfo=UTC)  # 4pm ET (EDT)
+    pt = update_mark(pt, net)
+    # Settlement is exact intrinsic — there is no market left to cross, so no
+    # slippage floor applies (unlike a traded exit).
+    no_slip = SlippageModel(spread_fraction=0.0, min_slippage_per_share=0.0)
+    pt = close_paper_trade(pt, exit_mid=net, reason=ExitReason.EXPIRY,
+                           exit_spread=0.0, slippage=no_slip, now=at)
+    await asyncio.to_thread(repository.save_paper_trade, pt)
+    sd.status = "closed"
+    sd.current_net = net
+    sd.exit_net = pt.exit_fill
+    sd.realized_pnl_usd = pt.realized_pnl_usd
+    sd.unrealized_pnl_usd = None
+    sd.exit_reason = ExitReason.EXPIRY.value
+    sd.closed_at = at
+    await asyncio.to_thread(repository.save_short_duration_trade, sd)
+    cand = await asyncio.to_thread(repository.get_short_duration_candidate, sd.candidate_id)
+    if cand is not None and cand.state in {CandidateState.OPEN, CandidateState.MANAGING}:
+        tr = transition(cand, CandidateState.CLOSED, trigger="exit:expiry", actor="system",
+                        reason=f"Settled at expiry ({expiry}) intrinsic {net:+.2f}.", at=at)
+        await asyncio.to_thread(repository.append_candidate_transition, tr)
+        await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+    log.info("sd_settled_at_expiry", symbol=sd.symbol, expiry=str(expiry),
+             settle_net=net, pnl=pt.realized_pnl_usd)
+    return sd
 
 
 def daily_risk_state(now: datetime | None = None):

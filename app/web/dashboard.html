@@ -758,6 +758,21 @@
       if (["rejected", "expired", "closed"].includes(c.state)) return 5;
       return 4;
     }
+    // Swing-horizon disclosure for a candidate. Prefers the server-stamped
+    // horizon_note; falls back to deriving it from the leg expiry for candidates
+    // stored before the stamp existed (a 1-5dte row with a weeks-out contract
+    // must never show an 8/21 date unexplained).
+    function horizonInfo(c) {
+      const rec = c.contract || {};
+      if (rec.horizon_note) return { dte: rec.horizon_dte, note: rec.horizon_note };
+      if (c.dte_category !== "1-5dte" || !(rec.legs || []).length) return null;
+      const exp = rec.legs[0].expiration;
+      if (!exp) return null;
+      const days = Math.round((new Date(exp + "T20:00:00Z") - Date.now()) / 86400000);
+      if (days <= 7) return null;
+      return { dte: days, note: `Swing horizon: daily-trend thesis expressed at ~${days} DTE — deliberately longer than the scanner's 1–5 DTE (a trend needs weeks to resolve).` };
+    }
+
     function sdRow(c, rank) {
       const rr = c.reward_to_risk == null ? "—" : c.reward_to_risk.toFixed(2);
       const risk = c.max_risk_usd == null ? "—" : "$" + Math.round(c.max_risk_usd);
@@ -774,8 +789,9 @@
         : rrisk === "high" ? ' <span class="neg" title="High reversal risk — see thesis">⚠</span>'
         : rrisk === "elevated" ? ' <span class="warn" title="Elevated reversal risk — see thesis">⚠</span>' : "";
       const rec0 = c.contract || {};
-      const swingPill = rec0.horizon_note
-        ? ` <span class="pill warn" title="${rec0.horizon_note.replace(/"/g, "&quot;")}">SWING · ${rec0.horizon_dte}d</span>`
+      const hz = horizonInfo(c);
+      const swingPill = hz
+        ? ` <span class="pill warn" title="${hz.note.replace(/"/g, "&quot;")}">SWING · ${hz.dte}d</span>`
         : "";
       return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
@@ -834,7 +850,7 @@
       const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
         <div class="kv">
           <div>Structure</div><div>${rec.description||"—"}</div>
-          ${rec.horizon_note?`<div>Horizon</div><div><span class="pill warn">SWING · ${rec.horizon_dte} DTE</span> <span class="muted" style="font-size:12px">${rec.horizon_note}</span></div>`:""}
+          ${(()=>{const hz=horizonInfo(c);return hz?`<div>Horizon</div><div><span class="pill warn">SWING · ${hz.dte} DTE</span> <span class="muted" style="font-size:12px">${hz.note}</span></div>`:"";})()}
           <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
           <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
           <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>

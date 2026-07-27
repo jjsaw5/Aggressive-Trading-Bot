@@ -263,6 +263,11 @@ class ContractRecommendation(BaseModel):
     # and out at the quoted spread — the tightest-drag expression ranks first.
     cost_drag_ratio: float | None = None
     cost_drag_note: str = ""
+    # Horizon-matching disclosure: when a daily-trend (swing) thesis is expressed
+    # at a weeks-out expiry instead of the scanner's nominal 0-5DTE window, say so
+    # explicitly — an 8/21 contract on the "1-5DTE" board must never be a surprise.
+    horizon_dte: int | None = None
+    horizon_note: str = ""
 
 
 class ShortDurationExitTarget(BaseModel):

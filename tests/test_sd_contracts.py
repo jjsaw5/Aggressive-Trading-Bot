@@ -90,6 +90,10 @@ def test_swing_selects_weeks_out_expiry() -> None:
         for leg in r.recommendation.legs:
             dte = (date.fromisoformat(leg["expiration"]) - date(2026, 7, 17)).days
             assert 20 <= dte <= 45, f"swing leg at {dte} DTE is outside the weeks-out window"
+        # The stretch is DISCLOSED: an 8/21 contract on the 1-5DTE board must
+        # carry an explicit horizon note, never appear silently.
+        assert r.recommendation.horizon_dte == 30
+        assert "Swing horizon" in r.recommendation.horizon_note
 
 
 def test_non_swing_stays_near_term_on_same_chain() -> None:
@@ -107,6 +111,9 @@ def test_non_swing_stays_near_term_on_same_chain() -> None:
         for leg in r.recommendation.legs:
             dte = (date.fromisoformat(leg["expiration"]) - date(2026, 7, 17)).days
             assert 1 <= dte <= 5, f"non-swing leg at {dte} DTE escaped the near-term window"
+        # A true 1-5 DTE pick carries no horizon disclosure.
+        assert r.recommendation.horizon_dte is None
+        assert r.recommendation.horizon_note == ""
 
 
 def test_rejects_when_no_liquid_contract() -> None:

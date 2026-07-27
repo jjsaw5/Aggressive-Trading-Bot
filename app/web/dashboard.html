@@ -164,6 +164,7 @@
       const r = await fetch(url, {
         method: m, headers: body ? { "content-type": "application/json" } : {},
         body: body ? JSON.stringify(body) : undefined,
+        cache: "no-store",  // marks must always be fetched fresh, never a browser cache hit
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status + " " + url);
       return r.json();
@@ -206,7 +207,18 @@
     }
     function manageOpsRefresh() {
       if (opsTimer) { clearInterval(opsTimer); opsTimer = null; }
-      if (isLive()) opsTimer = setInterval(() => { if (isLive() && !refreshPaused()) render(); }, 5000);
+      if (isLive()) opsTimer = setInterval(() => {
+        if (!isLive()) return;
+        // Never silently stall: when the tick is skipped to protect in-progress
+        // data entry, SAY SO on the board instead of letting it look frozen.
+        const st = $("#refreshState");
+        if (refreshPaused()) {
+          if (st) st.textContent = "⏸ auto-refresh paused while you edit — click elsewhere or hit Refresh";
+          return;
+        }
+        if (st) st.textContent = "";
+        render();
+      }, 5000);
     }
 
     async function loadConfig() {
@@ -583,9 +595,10 @@
     async function renderPositions() {
       const ps = await api("GET", "/positions");
       const toolbar = `<div style="margin-bottom:10px">
-        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <span class="badge" style="color:#3fb950">● marks as of ${new Date().toLocaleTimeString()}</span>
         <button data-act="pos-add-show">+ Add position</button>
         <button class="ghost" data-act="pos-refresh">Refresh</button>
+        <span id="refreshState" class="warn" style="font-size:12px"></span>
         <span class="muted">Click a row for its exit plan, close ticket, and to mark it closed.</span></div>`;
       const rows = ps.map(p => `<tr class="pos-clickable" data-pid="${p.id}">
         <td><strong>${p.symbol}</strong>${p.source === "manual" ? ' <span class="badge" title="manually entered">m</span>' : ""}</td>
@@ -760,10 +773,14 @@
       const rrBadge = hasStruct ? ' <span class="neg" title="Wrong-instrument warning — see thesis">⚠</span>'
         : rrisk === "high" ? ' <span class="neg" title="High reversal risk — see thesis">⚠</span>'
         : rrisk === "elevated" ? ' <span class="warn" title="Elevated reversal risk — see thesis">⚠</span>' : "";
+      const rec0 = c.contract || {};
+      const swingPill = rec0.horizon_note
+        ? ` <span class="pill warn" title="${rec0.horizon_note.replace(/"/g, "&quot;")}">SWING · ${rec0.horizon_dte}d</span>`
+        : "";
       return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
         <td><strong>${c.symbol}</strong></td>
-        <td><span class="pill">${c.dte_category}</span></td>
+        <td><span class="pill">${c.dte_category}</span>${swingPill}</td>
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
         <td><span class="pill">${c.state}</span></td>
@@ -817,6 +834,7 @@
       const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
         <div class="kv">
           <div>Structure</div><div>${rec.description||"—"}</div>
+          ${rec.horizon_note?`<div>Horizon</div><div><span class="pill warn">SWING · ${rec.horizon_dte} DTE</span> <span class="muted" style="font-size:12px">${rec.horizon_note}</span></div>`:""}
           <div>Max loss / profit</div><div>${c.max_risk_usd==null?"—":"$"+c.max_risk_usd} / ${rec.max_profit_usd==null?"uncapped":"$"+rec.max_profit_usd}</div>
           <div>Reward : risk</div><div>${c.reward_to_risk==null?"—":c.reward_to_risk+" : 1"}</div>
           <div>Breakeven</div><div>${(rec.breakevens||[]).length?rec.breakevens.join(" / "):"—"}</div>
@@ -985,7 +1003,7 @@
       const events = await api("GET", "/short-duration/events");
       const toolbar = `<div style="margin-bottom:10px">
         <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE scan</button>
-        <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Research only — no orders.</span></div>`;
+        <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Trend-continuation setups are horizon-matched to a weeks-out expiry (marked SWING) — the thesis needs longer than 5 days to resolve. Research only — no orders.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
       return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
@@ -1409,7 +1427,11 @@
         else if (state.tab === "ops") $("#view").innerHTML = await renderOps();
         else if (state.tab === "history") $("#view").innerHTML = await renderHistory();
         else $("#view").innerHTML = await renderPaper();
-      } catch (e) { showErr(e); }
+      } catch (e) {
+        // Keep the last-loaded view rather than blanking it, but be explicit that
+        // what's on screen is old — a quiet failure must not masquerade as fresh.
+        showErr(new Error((e.message || e) + " — the board below is showing the LAST LOADED data. Click Refresh to retry."));
+      }
     }
 
     function switchSection(section) {
@@ -1478,7 +1500,10 @@
             state.realmark = await api("GET", `/backtest/real-mark?mode=${mode}&regime=${regime}`);
             render();
           } else if (act === "pos-refresh") {
-            render();
+            // Visible feedback: the button acknowledges the click even while the
+            // marks request is in flight (it can take a few seconds cold).
+            actBtn.disabled = true; actBtn.textContent = "Refreshing…";
+            await render();
           } else if (act === "pos-add-show") {
             // Open + PAUSE the 5s auto-refresh so it can't wipe your entry.
             state.addPosOpen = true; manageOpsRefresh();

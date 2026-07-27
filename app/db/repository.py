@@ -376,6 +376,23 @@ def list_short_duration_candidates(
         stmt = stmt.order_by(ShortDurationCandidateRow.detected_at.desc()).limit(fetch)
         rows = session.execute(stmt).scalars().all()
         cands = [ShortDurationCandidate.model_validate(r.payload) for r in rows]
+
+    # Lazy staleness sweep: a candidate whose contract has expired — or whose
+    # 0DTE setup day has passed — must never be served as actionable. Nothing
+    # else ever retires these rows, so Friday's 0DTE watchlist would otherwise
+    # render "live" on Monday, frozen quote-age badge and all. Persist the
+    # EXPIRED transition (with the reason in the audit trail) so it sticks.
+    from app.domain.enums import CandidateState
+    from app.shortduration.state import staleness_reason, transition
+
+    for c in cands:
+        why = staleness_reason(c)
+        if why is None:
+            continue
+        tr = transition(c, CandidateState.EXPIRED, trigger="staleness_sweep", reason=why)
+        save_short_duration_candidate(c)
+        append_candidate_transition(tr)
+
     if ranked:
         cands = rank_candidates(cands)
     return cands[:limit]

@@ -90,7 +90,9 @@ class ContractResult:
         return self.plan is not None
 
 
-def _recommendation(plan: TradePlan, note: str) -> ContractRecommendation:
+def _recommendation(
+    plan: TradePlan, note: str, *, swing: bool = False, as_of: date | None = None,
+) -> ContractRecommendation:
     legs = [
         {
             "action": lg.action.value, "option_type": lg.option_type.value,
@@ -99,6 +101,16 @@ def _recommendation(plan: TradePlan, note: str) -> ContractRecommendation:
         }
         for lg in plan.legs
     ]
+    horizon_dte = None
+    horizon_note = ""
+    if swing and as_of is not None and plan.legs:
+        horizon_dte = (plan.legs[0].expiration - as_of).days
+        horizon_note = (
+            f"Swing horizon: daily-trend thesis expressed at {horizon_dte} DTE "
+            f"({settings.swing_min_dte}–{settings.swing_max_dte}d window), "
+            "deliberately longer than the scanner's 1–5 DTE — a trend needs "
+            "weeks to resolve; a short-dated contract would expire before it can."
+        )
     return ContractRecommendation(
         description=f"{plan.strategy.display_name} x{plan.contracts}",
         legs=legs,
@@ -107,6 +119,8 @@ def _recommendation(plan: TradePlan, note: str) -> ContractRecommendation:
         breakevens=structure_breakevens(plan),
         est_fill_net=round(plan.net_debit / 100.0, 4),
         liquidity_note=note,
+        horizon_dte=horizon_dte,
+        horizon_note=horizon_note,
     )
 
 
@@ -136,7 +150,8 @@ def _long_expression(
     if plan is None:
         return None
     plan.exit_plan = for_trade_plan(plan)
-    return ContractResult(plan, _recommendation(plan, "Near-ATM single leg (max loss = debit)."), [])
+    return ContractResult(plan, _recommendation(
+        plan, "Near-ATM single leg (max loss = debit).", swing=swing, as_of=as_of), [])
 
 
 def _spread_expression(
@@ -155,7 +170,8 @@ def _spread_expression(
     if plan is None:
         return None
     plan.exit_plan = for_trade_plan(plan)
-    return ContractResult(plan, _recommendation(plan, "Defined-risk debit vertical."), [])
+    return ContractResult(plan, _recommendation(
+        plan, "Defined-risk debit vertical.", swing=swing, as_of=as_of), [])
 
 
 def select_short_duration_contracts(

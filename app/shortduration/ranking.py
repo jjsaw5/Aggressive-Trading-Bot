@@ -69,6 +69,74 @@ def _rank_key(c: ShortDurationCandidate) -> tuple:
     return (bucket(c), -(c.score or 0.0), -(c.reward_to_risk or 0.0), -ts)
 
 
+# How many setups the engine commits to per board per scan. Small on purpose: a
+# pick list long enough to include everything is not a prediction.
+ENGINE_PICK_LIMIT = 3
+
+# Blocks that are about WHEN, not about whether the setup is any good.
+_TIMING_ONLY_BLOCKS = {"time_of_day_blocked", "RejectReason.TIME_OF_DAY_BLOCKED"}
+
+
+def mark_engine_picks(
+    ranked: list[ShortDurationCandidate], *, limit: int = ENGINE_PICK_LIMIT
+) -> list[ShortDurationCandidate]:
+    """Go on record with the setups the engine would actually take.
+
+    Takes an ALREADY board-ranked list and flags the top few that are genuinely
+    actionable — a sized defined-risk structure exists and the entry gates are
+    clear. Everything else stays context. Returns the flagged candidates so the
+    caller can persist them.
+
+    This is a recorded prediction, not advice: conviction is UNCALIBRATED (see
+    the conviction gate). Its whole purpose is to be graded later — without a
+    committed pick list there is nothing to score the engine against."""
+    eligible = [
+        c for c in ranked
+        if bucket(c) != TERMINAL
+        and c.contract is not None
+        and c.contract.legs
+        and _pickable_gates(c)
+    ]
+    # One pick per underlying: the same symbol usually offers both a long leg and
+    # a vertical, and spending two of three slots on one name is a weaker
+    # commitment than naming three different setups.
+    picked: list[ShortDurationCandidate] = []
+    seen: set[str] = set()
+    for c in eligible:
+        if len(picked) >= limit:
+            break
+        if c.symbol in seen:
+            continue
+        seen.add(c.symbol)
+        rank = len(picked) + 1
+        c.engine_pick = True
+        c.pick_rank = rank
+        gate = "" if c.entry_allowed else " Entry is gated until the session opens."
+        c.pick_reason = (
+            f"Engine pick #{rank} on the {c.dte_category.value} board: top-ranked setup "
+            f"with a sized defined-risk structure and no risk-gate block.{gate} "
+            "UNCALIBRATED — recorded so it can be graded, not a recommendation."
+        )
+        picked.append(c)
+    return picked
+
+
+
+def _pickable_gates(c: ShortDurationCandidate) -> bool:
+    """Timing gates don't disqualify a pick; risk gates do.
+
+    "Market is closed" says nothing about whether the engine likes the setup —
+    blocking on it would leave the pick list empty exactly when you're planning
+    the next session. A portfolio/daily-loss block is different: the app's own
+    risk rules refusing the trade means it would not take it."""
+    if c.entry_allowed:
+        return True
+    reasons = {str(r) for r in (c.reject_reasons or [])}
+    if not reasons:
+        return True  # gated with no stated reason — don't infer a risk veto
+    return reasons <= _TIMING_ONLY_BLOCKS
+
+
 def dedupe_latest(cands: list[ShortDurationCandidate]) -> list[ShortDurationCandidate]:
     """Collapse repeated scans of the same setup to the freshest candidate.
 

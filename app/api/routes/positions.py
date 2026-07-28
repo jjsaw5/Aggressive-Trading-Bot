@@ -89,6 +89,11 @@ class PositionView(BaseModel):
     invalidation_side: str = ""  # above | below | ""
     dte_regime: str = ""  # gamma | theta | swing — which exit discipline applies
     regime_note: str = ""
+    # The engine's on-the-record read, frozen at entry. UNCALIBRATED — surfaced
+    # so its agreement/disagreement can be graded later, not as a recommendation.
+    engine_direction: str = ""
+    engine_agrees: bool | None = None
+    engine_rationale: str = ""
     # Market-implied odds + a plain-English "what has to happen" line (informational).
     probability_of_profit: float | None = None
     what_has_to_happen: str = ""
@@ -333,6 +338,9 @@ def _build_view(
                            else "below" if plan.direction == Direction.BULLISH else ""),
         dte_regime=plan.risk.dte_regime,
         regime_note=plan.risk.invalidation_note,
+        engine_direction=plan.engine_view.engine_direction if plan.engine_view else "",
+        engine_agrees=plan.engine_view.agrees_with_position if plan.engine_view else None,
+        engine_rationale=plan.engine_view.rationale if plan.engine_view else "",
     )
 
 
@@ -482,6 +490,42 @@ class QuickAddRequest(BaseModel):
     invalidation: float | None = None
 
 
+async def _stamp_engine_view(trade: PaperTrade, *, fill_invalidation: bool) -> None:
+    """Freeze the engine's read onto a newly-opened position, and — when the
+    trader gave no level of their own — adopt the structural one it suggests.
+
+    Best-effort: an entry must never fail because a data feed hiccuped. When
+    `fill_invalidation` is True the suggested level is recorded as the working
+    invalidation so no position starts life manageable only by P&L."""
+    from app.analytics.engine_view import build_engine_view
+    from app.domain.trades import EngineViewStamp
+
+    plan = trade.trade_plan
+    if plan is None:
+        return
+    try:
+        view = await build_engine_view(trade.symbol, plan.direction)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine_view_stamp_failed", trade_id=trade.id, error=str(exc))
+        return
+    if view is None:
+        return
+    plan.engine_view = EngineViewStamp(
+        as_of=view.as_of, engine_direction=view.engine_direction,
+        agrees_with_position=view.agrees_with_position, price=view.price,
+        sma20=view.sma20, sma50=view.sma50, rsi=view.rsi, rationale=view.rationale,
+        invalidation_price=view.invalidation_price,
+        invalidation_source=view.invalidation_source,
+        invalidation_already_breached=view.invalidation_already_breached,
+    )
+    if fill_invalidation and view.invalidation_price is not None:
+        plan.risk.invalidation_price = view.invalidation_price
+        plan.risk.invalidation_note = (
+            f"{view.invalidation_note} (suggested by the engine from daily closes — "
+            "edit it if your own level differs)"
+        )
+
+
 def _warehouse_live(trade: PaperTrade) -> None:
     """Freeze a live import into the decision warehouse so the calibration
     scorecard grades real trades. Best-effort — a warehouse hiccup must never
@@ -529,6 +573,7 @@ async def quick_add_position(req: QuickAddRequest) -> dict:
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    await _stamp_engine_view(trade, fill_invalidation=invalidation is None)
     await run_in_threadpool(repository.save_paper_trade, trade)
     await run_in_threadpool(_warehouse_live, trade)
     legs_desc = " / ".join(
@@ -569,6 +614,7 @@ async def import_position(req: ImportPositionRequest) -> dict:
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, f"Invalid position: {exc}") from exc
+    await _stamp_engine_view(trade, fill_invalidation=req.invalidation is None)
     await run_in_threadpool(repository.save_paper_trade, trade)
     await run_in_threadpool(_warehouse_live, trade)
     return {
@@ -636,6 +682,41 @@ def _record_live_close(t: PaperTrade, closed_at: datetime) -> None:
         ))
     except Exception as exc:  # noqa: BLE001
         log.warning("live_close_grade_failed", trade_id=t.id, error=str(exc))
+
+
+@router.post("/refresh-engine-view")
+async def refresh_engine_view(fill_missing_invalidation: bool = True) -> dict:
+    """Stamp the engine's current read onto every OPEN position that lacks one.
+
+    For a book imported from a broker there is no entry-time record of what the
+    engine thought — this backfills it (as of now, not as of entry, and labeled
+    that way) and adopts the suggested structural level wherever none was set."""
+    trades = await run_in_threadpool(repository.list_paper_trades, 2000)
+    open_trades = [t for t in trades
+                   if t.status == PaperTradeStatus.OPEN and t.trade_plan is not None]
+    stamped, levels = [], []
+    for t in open_trades:
+        if t.trade_plan.engine_view is not None:
+            continue
+        had_level = t.trade_plan.risk.invalidation_price is not None
+        await _stamp_engine_view(
+            t, fill_invalidation=fill_missing_invalidation and not had_level
+        )
+        if t.trade_plan.engine_view is None:
+            continue
+        await run_in_threadpool(repository.save_paper_trade, t)
+        stamped.append(t.symbol)
+        if not had_level and t.trade_plan.risk.invalidation_price is not None:
+            levels.append(f"{t.symbol} @ {t.trade_plan.risk.invalidation_price:g}")
+    return {
+        "stamped": stamped,
+        "invalidation_levels_set": levels,
+        "message": (f"Stamped {len(stamped)} position(s)"
+                    + (f"; set {len(levels)} invalidation level(s)." if levels else ".")
+                    if stamped else "Every open position already carries an engine view."),
+        "note": ("Backfilled views are stamped as of NOW, not as of entry — they can't "
+                 "be graded as entry-time predictions."),
+    }
 
 
 @router.post("/{trade_id}/invalidation")

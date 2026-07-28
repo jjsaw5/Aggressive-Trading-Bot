@@ -496,6 +496,16 @@ async def run_detection(
         log.warning("sd_warehouse_failed", error=str(exc))
 
     created.sort(key=_board_rank_key)
+    # Commit to a pick list and persist it, so the engine is on the record for
+    # this scan rather than only ever ranking. Best-effort — a scan must not
+    # fail because a pick couldn't be saved.
+    try:
+        from app.shortduration.ranking import mark_engine_picks
+
+        for cand in mark_engine_picks(created):
+            await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine_picks_failed", dte=dte.value, error=str(exc))
     _record_scan_metrics(dte, created)
     log.info("sd_detection", dte=dte.value, detected=len(created))
     return created

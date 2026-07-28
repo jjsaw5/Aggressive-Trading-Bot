@@ -64,6 +64,12 @@ def eligible_for_calibration(
 _FIDELITY = {
     "live_close": 3,  # a real fill the human actually got — ground truth
     "paper_trade": 3,
+    # Settlement at expiry is EXACT, not a proxy: a defined-risk structure has no
+    # extrinsic value left, so the underlying's close determines the payoff with
+    # nothing modelled. High fidelity as a MEASUREMENT — but it grades a
+    # hold-to-expiry POLICY the app does not run (its exit plan takes profit and
+    # stops out earlier), which is flagged separately in the scorecard warnings.
+    "expiry_settlement": 3,
     "option_marks": 2,
     "option_marks_bs_fallback": 2,
     "underlying_vs_breakeven": 1,
@@ -333,13 +339,23 @@ def build_scorecard(
         [s.flow_quality_proprietary for s, _ in flow_priced],
         [o.realized_pnl_usd for _, o in flow_priced],
     )
+    # Headline discrimination: does the composite score rank real P&L? Measured
+    # over EVERY priced outcome — restricting it to flow-carrying decisions (as
+    # the lift comparison must) left the gate unable to measure discrimination at
+    # all whenever flow was absent.
     score_pnl_sp = spearman(
+        [s.composite_score for s, _ in priced],
+        [o.realized_pnl_usd for _, o in priced],
+    )
+    # Lift must compare like with like, so the baseline for it is re-measured on
+    # the flow subsample only.
+    score_sp_on_flow = spearman(
         [s.composite_score for s, _ in flow_priced],
         [o.realized_pnl_usd for _, o in flow_priced],
     )
     flow_lift = (
-        round(flow_pnl_sp - score_pnl_sp, 4)
-        if (flow_pnl_sp is not None and score_pnl_sp is not None)
+        round(flow_pnl_sp - score_sp_on_flow, 4)
+        if (flow_pnl_sp is not None and score_sp_on_flow is not None)
         else None
     )
     flow_band_pairs = [(s, o) for s, o in pairs if s.flow_quality_proprietary is not None]
@@ -408,6 +424,18 @@ def build_scorecard(
     ]
 
     warnings = _degeneracy_warnings(decisive)
+    # Policy disclosure: expiry settlement measures the RIGHT thing for POP (a
+    # hold-to-expiry probability) but the WRONG thing for "what would the managed
+    # strategy have returned" — no profit target or stop is applied.
+    n_expiry = sum(1 for _s, o in decisive if o.outcome_source == "expiry_settlement")
+    if n_expiry and n_expiry >= len(decisive) * 0.25:
+        warnings.append(
+            f"{n_expiry} of {len(decisive)} decisive outcome(s) are HOLD-TO-EXPIRY "
+            "settlements. That is the correct grade for probability-of-profit (a "
+            "hold-to-expiry claim) but NOT what the managed exit plan would have "
+            "returned — targets and stops would have exited earlier. Read P&L-based "
+            "discrimination here as policy-specific."
+        )
     if n_excluded_pre_v3:
         warnings.append(
             f"{n_excluded_pre_v3} pre-v3 short-duration decision(s) excluded as degraded "

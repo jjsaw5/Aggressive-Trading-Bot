@@ -44,6 +44,13 @@ class RiskPlan(BaseModel):
     stop_loss_pct: float  # e.g. 0.5 = cut at -50% of debit
     time_stop_dte: int | None = None  # close if DTE falls below this
     invalidation_note: str = ""
+    # The UNDERLYING level that kills the reason for holding — not a P&L number.
+    # Side is inferred from the plan's direction (bearish: breached at/above;
+    # bullish: breached at/below), so one number is enough to record a thesis.
+    invalidation_price: float | None = None
+    # Which decay regime the exit parameters above were set for, recorded at
+    # entry: a 1-DTE structure and a 40-DTE one need different management.
+    dte_regime: str = ""  # gamma | theta | swing
 
 
 class SpreadAnalytics(BaseModel):

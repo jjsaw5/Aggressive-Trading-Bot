@@ -79,6 +79,16 @@ class PositionView(BaseModel):
     breakeven_distance_pct: float | None = None  # signed move to nearest breakeven
     earnings_date: str | None = None
     earnings_before_expiry: bool = False
+    # Thesis tracking: the recorded invalidation level and whether it still holds.
+    # "none" when no level was recorded — the honest state for an untagged position.
+    invalidation_price: float | None = None
+    thesis_status: str = "none"  # none | intact | invalidated
+    invalidation_distance_pct: float | None = None  # signed; + = room before invalidation
+    # Which side of the level kills the thesis, from the structure's direction —
+    # stated by the server so the UI never has to infer it. "" = non-directional.
+    invalidation_side: str = ""  # above | below | ""
+    dte_regime: str = ""  # gamma | theta | swing — which exit discipline applies
+    regime_note: str = ""
     # Market-implied odds + a plain-English "what has to happen" line (informational).
     probability_of_profit: float | None = None
     what_has_to_happen: str = ""
@@ -120,6 +130,13 @@ class ImportPositionRequest(BaseModel):
     # positive (you paid), a credit is negative (you received). When set, per-leg
     # prices are ignored — no reverse-engineering leg fills from a net.
     net_debit_per_share: float | None = None
+    # Underlying level that invalidates the thesis (see RiskPlan).
+    invalidation: float | None = None
+
+
+class SetInvalidationRequest(BaseModel):
+    # None clears the level. Side is inferred from the position's direction.
+    invalidation: float | None = None
 
 
 class ClosePositionRequest(BaseModel):
@@ -158,6 +175,30 @@ def _closed_view(t: PaperTrade) -> ClosedPositionView:
         exit_reason=t.exit_reason.value if t.exit_reason else None, exit_note=t.exit_note,
         opened_at=t.opened_at, closed_at=t.closed_at, hold_days=hold, source=t.scan_id,
     )
+
+
+def _thesis_status(plan, spot: float | None) -> tuple[str, float | None]:
+    """Is the recorded reason for holding still alive?
+
+    Returns (status, distance_to_level_as_fraction_of_spot):
+      none         — no level recorded, or non-directional (no side to infer)
+      unevaluated  — level recorded but there's no live mark to check it against
+      intact / invalidated
+    "unevaluated" is deliberately distinct from "none": a recorded thesis we
+    can't currently check is not the same as no thesis at all. Distance is
+    signed — positive = room left before invalidation."""
+    level = plan.risk.invalidation_price
+    if level is None:
+        return "none", None
+    if plan.direction not in (Direction.BEARISH, Direction.BULLISH):
+        return "none", None
+    if not spot:
+        return "unevaluated", None
+    if plan.direction == Direction.BEARISH:
+        breached, room = spot >= level, (level - spot) / spot
+    else:
+        breached, room = spot <= level, (spot - level) / spot
+    return ("invalidated" if breached else "intact"), round(room, 4)
 
 
 def _build_view(
@@ -244,6 +285,17 @@ def _build_view(
     if thesis is not None and thesis.reversal_risk in ("elevated", "high"):
         warnings.append(f"Reversal risk {thesis.reversal_risk.upper()} — see thesis.")
 
+    # Thesis status: is the REASON for holding still alive? A P&L stop can't tell
+    # "wrong" from "early"; the invalidation level can. Leads the warnings when
+    # breached — it outranks any drawdown number.
+    thesis_status, invalidation_distance_pct = _thesis_status(plan, spot)
+    if thesis_status == "invalidated":
+        warnings.insert(0, (
+            f"THESIS INVALIDATED — the underlying is "
+            f"{'at/above' if bullish is False else 'at/below'} your "
+            f"{plan.risk.invalidation_price:g} level. The reason you own this is gone."
+        ))
+
     return PositionView(
         id=t.id,
         source=t.scan_id,
@@ -274,6 +326,13 @@ def _build_view(
         probability_of_profit=pop,
         what_has_to_happen=what_has,
         thesis=thesis,
+        invalidation_price=plan.risk.invalidation_price,
+        thesis_status=thesis_status,
+        invalidation_distance_pct=invalidation_distance_pct,
+        invalidation_side=("above" if plan.direction == Direction.BEARISH
+                           else "below" if plan.direction == Direction.BULLISH else ""),
+        dte_regime=plan.risk.dte_regime,
+        regime_note=plan.risk.invalidation_note,
     )
 
 
@@ -416,8 +475,11 @@ async def sync_positions() -> SyncResult:
 
 
 class QuickAddRequest(BaseModel):
-    line: str  # e.g. "TSLA 370/365p 7/24 @2.45 x1"
+    line: str  # e.g. "TSLA 370/365p 7/24 @2.45 x1 inv 380"
     opened_at: datetime | None = None
+    # Underlying level that kills the reason for holding. May instead be given
+    # inline in `line` as "inv 380"; this field wins if both are present.
+    invalidation: float | None = None
 
 
 def _warehouse_live(trade: PaperTrade) -> None:
@@ -444,6 +506,7 @@ async def quick_add_position(req: QuickAddRequest) -> dict:
       'Date opened' are honored when present."""
     from app.services.position_import import (
         build_tracked_trade,
+        extract_invalidation,
         looks_like_broker_paste,
         parse_broker_paste,
         parse_trade_line,
@@ -451,15 +514,18 @@ async def quick_add_position(req: QuickAddRequest) -> dict:
 
     try:
         opened_at = req.opened_at
-        if looks_like_broker_paste(req.line):
-            symbol, legs, net, _qty, opened_date = parse_broker_paste(req.line)
+        line, inline_invalidation = extract_invalidation(req.line)
+        invalidation = req.invalidation if req.invalidation is not None else inline_invalidation
+        if looks_like_broker_paste(line):
+            symbol, legs, net, _qty, opened_date = parse_broker_paste(line)
             if opened_at is None and opened_date is not None:
                 opened_at = datetime(opened_date.year, opened_date.month,
                                      opened_date.day, 15, 0, tzinfo=UTC)
         else:
-            symbol, legs, net, _qty = parse_trade_line(req.line)
+            symbol, legs, net, _qty = parse_trade_line(line)
         trade = build_tracked_trade(
-            symbol, legs, opened_at=opened_at, source="manual", net_per_share=net
+            symbol, legs, opened_at=opened_at, source="manual", net_per_share=net,
+            invalidation=invalidation,
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -498,7 +564,8 @@ async def import_position(req: ImportPositionRequest) -> dict:
                 entry_price_per_share=px or 0.0, expiration=lg.expiration,
             ))
         trade = build_tracked_trade(
-            req.symbol, legs, opened_at=req.opened_at, source="manual", net_per_share=net
+            req.symbol, legs, opened_at=req.opened_at, source="manual", net_per_share=net,
+            invalidation=req.invalidation,
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, f"Invalid position: {exc}") from exc
@@ -569,6 +636,42 @@ def _record_live_close(t: PaperTrade, closed_at: datetime) -> None:
         ))
     except Exception as exc:  # noqa: BLE001
         log.warning("live_close_grade_failed", trade_id=t.id, error=str(exc))
+
+
+@router.post("/{trade_id}/invalidation")
+async def set_invalidation(trade_id: str, req: SetInvalidationRequest) -> dict:
+    """Record (or clear) the underlying level that kills the reason for holding.
+
+    Exists so a position entered without a thesis — every broker-synced one —
+    can be tagged after the fact instead of being managed on P&L alone."""
+    t = await run_in_threadpool(repository.get_paper_trade, trade_id)
+    if t is None or t.trade_plan is None:
+        raise HTTPException(404, "Position not found.")
+    if t.status != PaperTradeStatus.OPEN:
+        raise HTTPException(400, "That position is already closed.")
+    if t.trade_plan.direction == Direction.NEUTRAL and req.invalidation is not None:
+        raise HTTPException(
+            400,
+            "This structure is non-directional, so an invalidation side can't be "
+            "inferred. Track it on the time stop instead.",
+        )
+    risk = t.trade_plan.risk
+    risk.invalidation_price = req.invalidation
+    if req.invalidation is None:
+        risk.invalidation_note = "No thesis recorded — managed on stops and time only."
+    else:
+        side = "at or above" if t.trade_plan.direction == Direction.BEARISH else "at or below"
+        risk.invalidation_note = (
+            f"Thesis invalidated if the underlying trades {side} {req.invalidation:g}."
+        )
+    await run_in_threadpool(repository.save_paper_trade, t)
+    return {
+        "id": t.id, "symbol": t.symbol,
+        "invalidation_price": risk.invalidation_price,
+        "message": (f"{t.symbol}: thesis invalidated {risk.invalidation_note.split('if ')[-1]}"
+                    if req.invalidation is not None
+                    else f"{t.symbol}: invalidation level cleared."),
+    }
 
 
 @router.delete("/{trade_id}")

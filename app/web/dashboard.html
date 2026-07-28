@@ -112,6 +112,11 @@
     .cal .day.sel { outline: 2px solid var(--accent); outline-offset: -1px; }
     .cal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .cal-head .mname { font-size: 15px; font-weight: 600; min-width: 140px; text-align: center; }
+    /* Rank-movement badges (vs the previous board state) */
+    .mv { font-size: 11px; font-variant-numeric: tabular-nums; margin-left: 4px; white-space: nowrap; }
+    .mv-new { color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+    .mv-up { color: var(--green); }
+    .mv-down { color: var(--red); }
   </style>
 </head>
 <body>
@@ -250,7 +255,37 @@
 
     function directionPill(d) { return `<span class="pill">${d}</span>`; }
 
-    function candidateRow(c) {
+    // --- Rank movement vs the previous board state --------------------------
+    // Baseline lives in localStorage per board and only shifts when the visible
+    // ordering actually changes (a new scan), so the 5s auto-refresh doesn't
+    // instantly erase the badges. First-ever render shows nothing.
+    function rankMovement(board, keys) {
+      let store = {};
+      try { store = JSON.parse(localStorage.getItem("rankhist:" + board) || "{}"); } catch (e) {}
+      const cur = store.current || [];
+      const same = cur.length === keys.length && cur.every((k, i) => k === keys[i]);
+      if (!same) {
+        store = { previous: cur.length ? cur : (store.previous || []), current: keys };
+        try { localStorage.setItem("rankhist:" + board, JSON.stringify(store)); } catch (e) {}
+      }
+      const prev = store.previous || [];
+      const out = {};
+      keys.forEach((k, i) => {
+        if (!prev.length) { out[k] = null; return; }
+        const pi = prev.indexOf(k);
+        out[k] = pi === -1 ? { isNew: true } : pi !== i ? { delta: pi - i } : null;
+      });
+      return out;
+    }
+    function mvBadge(m) {
+      if (!m) return "";
+      if (m.isNew) return ` <span class="mv mv-new" title="First appearance on this board">NEW</span>`;
+      return m.delta > 0
+        ? ` <span class="mv mv-up" title="Up ${m.delta} vs previous board">▲${m.delta}</span>`
+        : ` <span class="mv mv-down" title="Down ${-m.delta} vs previous board">▼${-m.delta}</span>`;
+    }
+
+    function candidateRow(c, mv) {
       const p = c.trade_plan, a = p && p.analytics;
       const risk = p ? `$${fmt(p.risk.max_loss_usd, 0)}` : "—";
       const rr = p ? pct(p.risk.account_risk_pct) : "";
@@ -259,7 +294,7 @@
       const strat = p ? p.strategy : (c.reject_reasons || []).join(", ") || "—";
       return `<tr class="clickable ${c.status === "rejected" ? "rejected" : ""}" data-sym="${c.symbol}">
         <td class="num">${fmt(c.composite_score)}</td>
-        <td><strong>${c.symbol}</strong></td>
+        <td><strong>${c.symbol}</strong>${mvBadge(mv)}</td>
         <td>${directionPill(c.direction)}</td>
         <td>${strat}</td>
         <td class="num">${risk} <span class="muted">${rr}</span></td>
@@ -325,8 +360,9 @@
     function renderCandidates() {
       if (!state.candidates.length)
         return `<div class="empty">No candidates. Run a scan.</div>`;
+      const moves = rankMovement("core", state.candidates.map(c => c.symbol));
       const rows = state.candidates.map(c =>
-        candidateRow(c) + `<tr class="detail" hidden id="d-${c.symbol}"></tr>`).join("");
+        candidateRow(c, moves[c.symbol]) + `<tr class="detail" hidden id="d-${c.symbol}"></tr>`).join("");
       return `<table><thead><tr>
         <th class="num">Score</th><th>Sym</th><th>Dir</th><th>Structure / reject</th>
         <th class="num">Risk</th><th class="num">POP</th><th class="num">Breakeven</th>
@@ -773,7 +809,14 @@
       return { dte: days, note: `Swing horizon: daily-trend thesis expressed at ~${days} DTE — deliberately longer than the scanner's 1–5 DTE (a trend needs weeks to resolve).` };
     }
 
-    function sdRow(c, rank) {
+    // Stable identity for rank tracking: the same setup+structure, not the row id
+    // (re-scans mint new candidate ids for the same play).
+    function sdKey(c) {
+      const structure = c.trade_plan ? c.trade_plan.strategy : "";
+      return [c.symbol, c.strategy || "", c.dte_category, structure].join("|");
+    }
+
+    function sdRow(c, rank, mv) {
       const rr = c.reward_to_risk == null ? "—" : c.reward_to_risk.toFixed(2);
       const risk = c.max_risk_usd == null ? "—" : "$" + Math.round(c.max_risk_usd);
       const entry = c.entry_allowed
@@ -795,7 +838,7 @@
         : "";
       return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
-        <td><strong>${c.symbol}</strong></td>
+        <td><strong>${c.symbol}</strong>${mvBadge(mv)}</td>
         <td><span class="pill">${c.dte_category}</span>${swingPill}</td>
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
@@ -949,7 +992,7 @@
         <table><thead><tr><th>Transition</th><th>Trigger</th><th>Actor</th><th>Reason</th></tr></thead><tbody>${trs}</tbody></table>`;
       return back + head + `<div class="card">${factors}${comp}${news}${trail}</div>`;
     }
-    function sdCandTable(cands) {
+    function sdCandTable(cands, boardKey) {
       if (!cands || !cands.length)
         return `<div class="empty">No setups detected. Run a scan.</div>`;
       const COLS = 11;
@@ -964,11 +1007,14 @@
         (b.reward_to_risk || 0) - (a.reward_to_risk || 0));
       const live = sorted.filter(c => sdBucket(c) !== 5);
       const dead = sorted.filter(c => sdBucket(c) === 5);
+      // Movement is tracked over the LIVE ordering only — the terminal bucket
+      // churns constantly (expiry sweeps) and would poison the baseline.
+      const moves = boardKey ? rankMovement(boardKey, live.map(sdKey)) : {};
       let body = "", lastB = null, rank = 0;
       live.forEach(c => {
         const b = sdBucket(c);
         if (b !== lastB) { body += `<tr class="bucket"><td colspan="${COLS}">${SD_BUCKET_LABEL[b]}</td></tr>`; lastB = b; }
-        body += sdRow(c, ++rank);
+        body += sdRow(c, ++rank, moves[sdKey(c)]);
       });
       if (!body) body = `<tr><td colspan="${COLS}" class="muted">No actionable setups — see rejected below.</td></tr>`;
       let out = `<table>${head}<tbody>${body}</tbody></table>`;
@@ -999,7 +1045,7 @@
       const newsRows = (news || []).map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
         <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
       return toolbar + sdTruthBanner() + regimeBanner(r.regime) + `
-        <div class="card" style="margin-bottom:14px"><h3>Candidate board (0DTE)</h3>${sdCandTable(cands)}</div>
+        <div class="card" style="margin-bottom:14px"><h3>Candidate board (0DTE)</h3>${sdCandTable(cands, "sd:0dte")}</div>
         <div class="autogrid">
         <div class="card"><h3>Market internals <span class="proxy-note">(breadth = universe proxy)</span></h3>
           <table><thead><tr><th>Sym</th><th class="num">Last</th><th class="num">VWAP</th><th>vs VWAP</th>
@@ -1022,7 +1068,7 @@
         <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Trend-continuation setups are horizon-matched to a weeks-out expiry (marked SWING) — the thesis needs longer than 5 days to resolve. Research only — no orders.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
-      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands)}</div>
+      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands, "sd:1-5dte")}</div>
         <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
         <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
         <tbody>${evRows || `<tr><td colspan="3" class="muted">none</td></tr>`}</tbody></table></div>`;
@@ -1035,7 +1081,7 @@
       ]);
       return sdTruthBanner()
         + `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
-        + sdCandTable([...zero, ...short]);
+        + sdCandTable([...zero, ...short], "sd:all");
     }
 
     async function renderSdNews() {

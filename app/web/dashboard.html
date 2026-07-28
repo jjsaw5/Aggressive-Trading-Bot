@@ -239,7 +239,7 @@
 
     let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
                   section: "core", sdTab: "command", sdDetail: null, search: null, addPosOpen: false,
-                  histMonth: null, histSource: "live", histDay: null };
+                  histMonth: null, histSource: "live", histDay: null, sdDeadOpen: {} };
 
     // Live auto-refresh: poll while a live view is open (Ops/Positions, or the
     // Short-Duration command center / positions).
@@ -1071,7 +1071,11 @@
       let out = `<table>${head}<tbody>${body}</tbody></table>`;
       if (dead.length) {
         const drows = dead.map(c => sdRow(c, null)).join("");
-        out += `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer;padding:6px 0">
+        // Remember the expanded state across the 5s auto-refresh — innerHTML
+        // replacement would otherwise slam this shut every tick.
+        const dk = boardKey || "board";
+        out += `<details data-dead="${dk}" ${state.sdDeadOpen[dk] ? "open" : ""} style="margin-top:8px">
+          <summary class="muted" style="cursor:pointer;padding:6px 0">
           Rejected / closed (${dead.length}) — expand</summary>
           <table>${head}<tbody>${drows}</tbody></table></details>`;
       }
@@ -1693,6 +1697,13 @@
     $("#scan").addEventListener("click", runScan);
     document.querySelectorAll("#sideNav button").forEach(b =>
       b.addEventListener("click", () => setView(b.dataset.view)));
+
+    // <details> toggle doesn't bubble — capture it so the expanded state of the
+    // Rejected/closed bucket survives auto-refresh re-renders.
+    $("#view").addEventListener("toggle", (e) => {
+      const d = e.target.closest ? e.target.closest("details[data-dead]") : null;
+      if (d) state.sdDeadOpen[d.dataset.dead] = d.open;
+    }, true);
 
     $("#view").addEventListener("click", async (e) => {
       const actBtn = e.target.closest("button[data-act]");

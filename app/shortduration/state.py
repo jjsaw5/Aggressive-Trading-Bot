@@ -55,11 +55,32 @@ def staleness_reason(
 
     if c.state not in _SWEEPABLE:
         return None
-    if c.dte_category == DTECategory.ZERO_DTE and c.detected_at is not None:
-        detected_day = c.detected_at.astimezone(_ET).date()
+    if c.detected_at is None:
+        return None
+    detected_day = c.detected_at.astimezone(_ET).date()
+    if c.dte_category == DTECategory.ZERO_DTE:
         if detected_day < today_et:
             return f"0DTE setup day {detected_day.isoformat()} is over"
+        return None
+    # 1-5DTE: the contract may live for weeks, but the SETUP does not — its entry
+    # trigger, levels, and gate notes were computed from a specific session, and
+    # the daily scan re-detects anything still valid. One full trading session of
+    # grace (Friday's setup is fine Monday, dead Tuesday), then expire.
+    if detected_day < _previous_trading_day(today_et):
+        return f"setup from {detected_day.isoformat()} is more than one session old"
     return None
+
+
+def _previous_trading_day(d: date) -> date:
+    from datetime import timedelta
+
+    from app.scheduling.clock import MarketClock
+
+    clock = MarketClock()
+    cur = d - timedelta(days=1)
+    while not clock.is_trading_day(cur):
+        cur -= timedelta(days=1)
+    return cur
 
 # Legal forward transitions. REJECTED/EXPIRED are reachable from any non-terminal
 # state (added below).

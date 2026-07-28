@@ -162,9 +162,10 @@ def test_quick_add_accepts_an_inline_invalidation() -> None:
         repository.delete_paper_trade(t.id)
 
 
-def test_existing_position_can_be_tagged_after_the_fact() -> None:
-    # The path that matters for a broker-synced book: entered with no thesis,
-    # tagged later rather than managed on P&L alone.
+def test_a_position_can_be_retagged_or_cleared_after_the_fact() -> None:
+    # Entry now auto-adopts the engine's structural level, so the endpoint's job
+    # is OVERRIDING it with your own read (and clearing it if you'd rather
+    # manage on stops alone).
     import app.main as m
     from app.db import repository
 
@@ -172,7 +173,6 @@ def test_existing_position_can_be_tagged_after_the_fact() -> None:
     tid = client.post("/positions/quick-add",
                       json={"line": "NVDA 200/190p 8/21 @2.00 x1"}).json()["id"]
     try:
-        assert repository.get_paper_trade(tid).trade_plan.risk.invalidation_price is None
         r = client.post(f"/positions/{tid}/invalidation", json={"invalidation": 215.0})
         assert r.status_code == 200, r.text
         assert repository.get_paper_trade(tid).trade_plan.risk.invalidation_price == 215.0

@@ -94,6 +94,26 @@ class ExitPlan(BaseModel):
     levels: list[ExitLevel] = Field(default_factory=list)
 
 
+class EngineViewStamp(BaseModel):
+    """What the engine thought at the moment this position was opened.
+
+    Frozen so the app's own directional read becomes a gradeable prediction on
+    the trades actually taken — the missing half of the calibration loop.
+    UNCALIBRATED: recorded to be scored, never a recommendation."""
+
+    as_of: datetime
+    engine_direction: str = "neutral"
+    agrees_with_position: bool | None = None
+    price: float | None = None
+    sma20: float | None = None
+    sma50: float | None = None
+    rsi: float | None = None
+    rationale: str = ""
+    invalidation_price: float | None = None
+    invalidation_source: str = ""
+    invalidation_already_breached: bool = False
+
+
 class TradePlan(BaseModel):
     """A concrete, sized, defined-risk expression of a thesis."""
 
@@ -107,6 +127,8 @@ class TradePlan(BaseModel):
     analytics: SpreadAnalytics | None = None
     exit_plan: ExitPlan | None = None
     rationale: str = ""
+    # The engine's on-the-record read at entry (see EngineViewStamp).
+    engine_view: EngineViewStamp | None = None
 
     @property
     def total_debit_usd(self) -> float:

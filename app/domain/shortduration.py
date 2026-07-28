@@ -393,6 +393,12 @@ class ShortDurationCandidate(BaseModel):
     # Strategy diagnostics (Phase 6 observability): the detection's structured
     # metadata (e.g. ORB breakout buffer/extension, VWAP-quality sub-scores).
     signal_metadata: dict = Field(default_factory=dict)
+    # ENGINE PICK: the app going on record that this is a setup it would take,
+    # stamped at scan time so it can be graded later. UNCALIBRATED — a recorded
+    # prediction, never a recommendation.
+    engine_pick: bool = False
+    pick_rank: int | None = None
+    pick_reason: str = ""
     # Risk / entry gates (Phase 4).
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)

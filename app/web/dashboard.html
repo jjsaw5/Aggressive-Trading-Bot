@@ -128,6 +128,10 @@
     .mv-new { color: var(--accent); font-weight: 700; letter-spacing: .04em; }
     .mv-up { color: var(--green); }
     .mv-down { color: var(--red); }
+    /* Engine picks: the app on the record about what it would take. */
+    .badge.pick { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .03em; }
+    tr.pickrow td { box-shadow: inset 2px 0 0 var(--accent); }
+    .agree-yes { color: var(--green); } .agree-no { color: var(--red); }
     /* App shell: grouped sidebar + independently scrolling content pane. */
     .shell { display: flex; align-items: stretch; height: calc(100vh - 58px); }
     #sideNav { width: 198px; flex: 0 0 auto; border-right: 1px solid var(--border);
@@ -647,8 +651,20 @@
       </div>`;
       // The exit trigger that isn't a P&L number: the level that kills the reason
       // for holding. Editable inline so a synced position can be tagged later.
+      // What the engine thought at entry, and whether it backed your direction.
+      const agree = p.engine_agrees === true
+        ? '<span class="agree-yes">AGREES with your direction</span>'
+        : p.engine_agrees === false
+          ? '<span class="agree-no">DISAGREES with your direction</span>'
+          : '<span class="muted">no directional read (abstained)</span>';
+      const engineRow = !p.engine_direction ? "" :
+        `<div class="muted" style="font-size:12px;margin:2px 0 8px">
+          <b>Engine at entry:</b> ${p.engine_direction} — ${agree}.
+          ${p.engine_rationale ? `<span class="muted">${p.engine_rationale}</span>` : ""}
+          <span class="proxy-note">UNCALIBRATED — recorded to be graded, not a recommendation.</span></div>`;
       const invRow = `<div class="card" style="margin-top:8px"><b>Thesis — why you still own this</b>
         <div class="muted" style="font-size:12px;margin:4px 0 8px">${p.regime_note || "No exit regime recorded."}</div>
+        ${engineRow}
         <div class="row-actions" style="align-items:center;flex-wrap:wrap">
           <span class="muted" style="font-size:12px">Invalidate if underlying trades ${p.invalidation_side === "above" ? "at/above" : p.invalidation_side === "below" ? "at/below" : "through"}</span>
           <input type="text" id="inv-${p.id}" style="min-width:110px" placeholder="e.g. 380"
@@ -730,6 +746,7 @@
         <span class="badge" style="color:#3fb950">● marks as of ${new Date().toLocaleTimeString()}</span>
         <button data-act="pos-add-show">+ Add position</button>
         <button class="ghost" data-act="pos-refresh">Refresh</button>
+        <button class="ghost" data-act="pos-engine-view" title="Stamp the engine's current read + a structural invalidation level onto positions that have none">Stamp engine view</button>
         <span id="refreshState" class="warn" style="font-size:12px"></span>
         <span class="muted">Click a row for its exit plan, close ticket, and to mark it closed.</span></div>`;
       const rows = ps.map(p => `<tr class="pos-clickable" data-pid="${p.id}">
@@ -933,9 +950,13 @@
       const swingPill = hz
         ? ` <span class="pill warn" title="${hz.note.replace(/"/g, "&quot;")}">SWING · ${hz.dte}d</span>`
         : "";
-      return `<tr class="clickable" data-cid="${c.id}">
+      // The engine on the record: a setup it would actually take this scan.
+      const pick = c.engine_pick
+        ? ` <span class="badge pick" title="${(c.pick_reason || "").replace(/"/g, "&quot;")}">PICK #${c.pick_rank || ""}</span>`
+        : "";
+      return `<tr class="clickable ${c.engine_pick ? "pickrow" : ""}" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
-        <td><strong>${c.symbol}</strong>${mvBadge(mv)}</td>
+        <td><strong>${c.symbol}</strong>${pick}${mvBadge(mv)}</td>
         <td><span class="pill">${c.dte_category}</span>${swingPill}</td>
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
@@ -1792,6 +1813,13 @@
           } else if (act === "pos-add-cancel") {
             state.addPosOpen = false; manageOpsRefresh();
             const f = $("#posForm"); if (f) f.hidden = true;
+          } else if (act === "pos-engine-view") {
+            actBtn.disabled = true; actBtn.textContent = "Stamping…";
+            try {
+              const d = await api("POST", "/positions/refresh-engine-view");
+              toast(d.message + (d.invalidation_levels_set.length
+                ? " Levels: " + d.invalidation_levels_set.join(", ") : ""), "ok", 8000);
+            } finally { render(); }
           } else if (act === "pos-inv" || act === "pos-inv-clear") {
             const pid = actBtn.dataset.pid;
             let level = null;

@@ -316,20 +316,45 @@ def list_all_tiers() -> list[TierMember]:
 def fetch_calibration_data(
     limit: int = 1000,
 ) -> tuple[list[DecisionSnapshot], list[DecisionOutcome]]:
-    """All snapshots + outcomes for the scorecard, in one place."""
+    """Snapshots + outcomes for the scorecard, in one place.
+
+    OUTCOMES drive the window, not snapshots. The warehouse accumulates
+    thousands of unresolved decisions per week, so taking the most RECENT
+    `limit` snapshots returns only the newest (still-pending) ones and hides
+    every graded decision behind them — the scorecard then reports n_decisive=0
+    while sitting on real evidence. Fetching the latest outcomes and then the
+    snapshots they point at keeps the pairing intact at any warehouse size. A
+    recent-snapshot window is added on top so unresolved-decision counts stay
+    meaningful."""
     with SessionLocal() as session:
-        srows = session.execute(
-            select(DecisionSnapshotRow)
-            .order_by(DecisionSnapshotRow.generated_at.desc())
-            .limit(limit)
-        )
-        snaps = [DecisionSnapshot.model_validate(r.payload) for r in srows.scalars().all()]
         orows = session.execute(
             select(DecisionOutcomeRow)
             .order_by(DecisionOutcomeRow.resolved_at.desc())
             .limit(limit)
         )
         outs = [DecisionOutcome.model_validate(r.payload) for r in orows.scalars().all()]
+
+        graded_ids = {o.decision_id for o in outs}
+        snaps: list[DecisionSnapshot] = []
+        seen: set[str] = set()
+        if graded_ids:
+            grows = session.execute(
+                select(DecisionSnapshotRow).where(
+                    DecisionSnapshotRow.decision_id.in_(graded_ids)
+                )
+            )
+            for r in grows.scalars().all():
+                snaps.append(DecisionSnapshot.model_validate(r.payload))
+                seen.add(r.decision_id)
+
+        recent = session.execute(
+            select(DecisionSnapshotRow)
+            .order_by(DecisionSnapshotRow.generated_at.desc())
+            .limit(limit)
+        )
+        for r in recent.scalars().all():
+            if r.decision_id not in seen:
+                snaps.append(DecisionSnapshot.model_validate(r.payload))
         return snaps, outs
 
 

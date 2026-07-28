@@ -50,9 +50,23 @@ def test_same_day_candidate_is_not_stale() -> None:
 
 
 def test_short_dte_with_live_expiry_survives_the_weekend() -> None:
-    # A 1-5DTE (or swing) candidate whose contract still exists is NOT swept.
+    # A 1-5DTE (or swing) candidate whose contract still exists is NOT swept the
+    # next trading day — Friday's setup gets Monday (one session of grace).
     c = _cand(dte=DTECategory.SHORT_DTE, exp="2026-08-21")
     assert staleness_reason(c, now=_MON) is None
+
+
+def test_short_dte_setup_expires_after_one_trading_session() -> None:
+    # ...but the SETUP dies even while the contract lives: Friday's detection is
+    # stale on Tuesday (its entry trigger/levels/gate notes are 2 sessions old).
+    tue = datetime(2026, 7, 28, 13, 40, tzinfo=UTC)
+    c = _cand(dte=DTECategory.SHORT_DTE, exp="2026-08-21")
+    why = staleness_reason(c, now=tue)
+    assert why is not None and "more than one session old" in why
+    # A same-day or previous-session detection stays.
+    fresh = _cand(dte=DTECategory.SHORT_DTE, exp="2026-08-21",
+                  detected_at=datetime(2026, 7, 27, 14, 30, tzinfo=UTC))
+    assert staleness_reason(fresh, now=tue) is None
 
 
 def test_open_and_terminal_states_are_never_swept() -> None:

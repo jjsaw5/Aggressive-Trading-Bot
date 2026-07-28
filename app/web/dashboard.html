@@ -584,6 +584,31 @@
       return `<span class="badge ${map[a] || ''}">${label[a] || a}</span>`;
     }
 
+    // Is the REASON for holding still alive? A P&L number can't tell "wrong"
+    // from "early"; the invalidation level can. "none" is shown as an explicit
+    // prompt rather than blank — an untagged position is a gap, not a state.
+    function thesisBadge(p) {
+      if (p.thesis_status === "invalidated")
+        return `<span class="badge neg" title="The underlying broke your invalidation level — the reason you own this is gone">THESIS DEAD</span>`;
+      if (p.thesis_status === "intact") {
+        const room = p.invalidation_distance_pct == null ? ""
+          : ` ${(Math.abs(p.invalidation_distance_pct) * 100).toFixed(1)}%`;
+        return `<span class="badge pos" title="Invalidation at ${p.invalidation_price} — still ${room.trim()} away">intact${room}</span>`;
+      }
+      if (p.thesis_status === "unevaluated")
+        return `<span class="badge warn" title="Invalidation at ${p.invalidation_price} — but there's no live mark right now to check it against">thesis ?</span>`;
+      return `<span class="badge" style="opacity:.6" title="No invalidation level recorded — this position can only be managed on P&L. Click the row to set one.">no thesis</span>`;
+    }
+
+    // Decay regime the exit plan was built for (distinct from the market-regime
+    // labels used by the short-duration boards).
+    const DTE_REGIME_LABEL = { gamma: "γ", theta: "θ", swing: "swing" };
+    function regimePill(p) {
+      if (!p.dte_regime) return "";
+      const cl = p.dte_regime === "gamma" ? "warn" : "";
+      return ` <span class="pill ${cl}" title="${(p.regime_note || "").replace(/"/g, "&quot;")}">${DTE_REGIME_LABEL[p.dte_regime] || p.dte_regime}</span>`;
+    }
+
     function positionDetail(p) {
       const warn = (p.warnings || []).length
         ? `<div class="err" style="margin:6px 0">${p.warnings.join(" · ")}</div>` : "";
@@ -617,9 +642,27 @@
         <div>Breakeven</div><div>${be}${beDist}</div>
         ${popRow}
         <div>Net greeks</div><div>${greeks}</div>
-        <div>DTE / time stop</div><div>${p.dte == null ? "—" : p.dte} / ${p.time_stop_dte == null ? "—" : p.time_stop_dte} DTE</div>
+        <div>DTE / time stop</div><div>${p.dte == null ? "—" : p.dte} / ${p.time_stop_dte == null ? "—" : p.time_stop_dte} DTE${p.dte_regime ? ` <span class="pill">${p.dte_regime}</span>` : ""}</div>
         ${earn}
       </div>`;
+      // The exit trigger that isn't a P&L number: the level that kills the reason
+      // for holding. Editable inline so a synced position can be tagged later.
+      const invRow = `<div class="card" style="margin-top:8px"><b>Thesis — why you still own this</b>
+        <div class="muted" style="font-size:12px;margin:4px 0 8px">${p.regime_note || "No exit regime recorded."}</div>
+        <div class="row-actions" style="align-items:center;flex-wrap:wrap">
+          <span class="muted" style="font-size:12px">Invalidate if underlying trades ${p.invalidation_side === "above" ? "at/above" : p.invalidation_side === "below" ? "at/below" : "through"}</span>
+          <input type="text" id="inv-${p.id}" style="min-width:110px" placeholder="e.g. 380"
+                 value="${p.invalidation_price == null ? "" : p.invalidation_price}" />
+          <button class="ghost" data-act="pos-inv" data-pid="${p.id}">Save level</button>
+          ${p.invalidation_price != null ? `<button class="ghost" data-act="pos-inv-clear" data-pid="${p.id}">Clear</button>` : ""}
+          ${p.thesis_status === "invalidated"
+            ? '<span class="neg" style="font-size:12px">Level breached — the reason is gone.</span>'
+            : p.thesis_status === "intact" && p.invalidation_distance_pct != null
+              ? `<span class="pos" style="font-size:12px">${(Math.abs(p.invalidation_distance_pct)*100).toFixed(1)}% of room left.</span>`
+              : p.thesis_status === "unevaluated"
+                ? '<span class="warn" style="font-size:12px">Level recorded, but no live mark to check it against.</span>'
+                : '<span class="muted" style="font-size:12px">No level set — this position can only be managed on P&L.</span>'}
+        </div></div>`;
       const whatBanner = p.what_has_to_happen
         ? `<div class="banner" style="margin-top:8px"><b>What has to happen:</b> ${p.what_has_to_happen}</div>` : "";
       // Reversal-risk read while you HOLD it (deterministic, informational).
@@ -643,8 +686,8 @@
           &nbsp;<button class="ghost" data-act="pos-delete" data-pid="${p.id}" title="Permanently remove (bad data)">Delete</button></div>
         <div class="muted" style="margin-top:4px">Realized P&amp;L = (exit − entry) × 100 × contracts. Kept in history for model review. <b>Delete</b> removes it entirely (use for bad data).</div></div>`;
       const open = state.expandedPos.has(p.id);
-      return `<tr class="detail" id="pd-${p.id}"${open ? "" : " hidden"}><td colspan="8">
-        ${warn}${summary}${whatBanner}${posThesis}<div style="margin-top:8px"></div>${closeTicket}${exitPlan}${closeCtl}</td></tr>`;
+      return `<tr class="detail" id="pd-${p.id}"${open ? "" : " hidden"}><td colspan="9">
+        ${warn}${summary}${invRow}${whatBanner}${posThesis}<div style="margin-top:8px"></div>${closeTicket}${exitPlan}${closeCtl}</td></tr>`;
     }
 
     // Manual "add a position I hold" form — no broker connection needed.
@@ -662,8 +705,10 @@
             style="width:420px;font-family:monospace;font-size:12px;vertical-align:top"></textarea>
           <button data-act="pos-quick" style="vertical-align:top">Add</button></div>
           <div class="muted" style="margin-top:4px;font-size:11px">
-            <b>One line:</b> <code>SYMBOL strike[/strike2](c|p) date net [xQty]</code> — first strike = <b>bought</b>,
+            <b>One line:</b> <code>SYMBOL strike[/strike2](c|p) date net [xQty] [inv LEVEL]</code> — first strike = <b>bought</b>,
             second = <b>sold</b>; net <b>+</b> = debit, <b>−</b> = credit. E.g. <code>AAPL 230c 8/15 3.10</code>
+            <br><b>Record your invalidation</b> by adding <code>inv 380</code> — the underlying level that kills the
+            reason for the trade. It becomes the exit trigger that a P&amp;L number can't give you (works on pastes too).
             <br><b>Paste:</b> select-copy the broker position page — needs the leg lines
             (<code>JPM $355 Call · 7/24 · 2 Sells</code>) and <code>Average cost $0.25</code>.
             Per-leg prices there are <b>current marks, not your entry</b> — only Average cost is used.</div>
@@ -694,13 +739,14 @@
         <td class="num">${p.current_net == null ? "—" : fmt(p.current_net)}</td>
         <td class="num ${cls(p.pnl_usd)}">${p.pnl_usd == null ? "—" : (p.pnl_usd >= 0 ? "+" : "") + "$" + fmt(p.pnl_usd, 0)}</td>
         <td class="num ${cls(p.pnl_pct)}">${p.pnl_pct == null ? "—" : (p.pnl_pct >= 0 ? "+" : "") + (p.pnl_pct * 100).toFixed(0) + "%"}</td>
-        <td class="num">${p.dte == null ? "—" : p.dte}</td>
+        <td class="num">${p.dte == null ? "—" : p.dte}${regimePill(p)}</td>
+        <td>${thesisBadge(p)}</td>
         <td>${posBadge(p.action)}</td>
       </tr>` + positionDetail(p)).join("");
       const openTable = !ps.length
         ? `<div class="empty">No open positions tracked. Press <b>+ Add position</b> to enter one you hold.</div>`
         : `<table><thead><tr><th>Sym</th><th>Structure</th><th class="num">Entry</th><th class="num">Now</th>
-          <th class="num">P&amp;L</th><th class="num">%</th><th class="num">DTE</th><th>Action</th></tr></thead>
+          <th class="num">P&amp;L</th><th class="num">%</th><th class="num">DTE</th><th>Thesis</th><th>Action</th></tr></thead>
           <tbody>${rows}</tbody></table>`;
       return toolbar + addPositionForm() + openTable + await closedHistory();
     }
@@ -1746,6 +1792,20 @@
           } else if (act === "pos-add-cancel") {
             state.addPosOpen = false; manageOpsRefresh();
             const f = $("#posForm"); if (f) f.hidden = true;
+          } else if (act === "pos-inv" || act === "pos-inv-clear") {
+            const pid = actBtn.dataset.pid;
+            let level = null;
+            if (act === "pos-inv") {
+              const raw = (($("#inv-" + pid) || {}).value || "").trim();
+              if (!raw) { toast("Enter the underlying level that kills this trade.", "warn"); return; }
+              level = parseFloat(raw);
+              if (isNaN(level) || level <= 0) { toast("That isn't a valid price level.", "warn"); return; }
+            }
+            actBtn.disabled = true;
+            try {
+              const d = await api("POST", `/positions/${pid}/invalidation`, { invalidation: level });
+              toast(d.message, "ok");
+            } finally { render(); }
           } else if (act === "pos-delete") {
             if (!confirm("Permanently delete this position? This can't be undone.")) return;
             actBtn.disabled = true;

@@ -37,6 +37,77 @@ class ImportedLeg:
     expiration: date
 
 
+# --- Decay regimes -----------------------------------------------------------
+# A flat "50% stop / 7-day time stop" is wrong at both ends of the DTE range: it
+# nags on day one of a 1-DTE trade and lets a 40-DTE thesis rot. Exit parameters
+# are therefore set from the DTE the position was OPENED at, and the regime is
+# recorded on the plan so the board can explain why the numbers differ.
+GAMMA_MAX_DTE = 3
+THETA_MAX_DTE = 15
+
+
+@dataclass(frozen=True)
+class DTERegime:
+    name: str
+    profit_target_pct: float
+    stop_loss_pct: float
+    time_stop_dte: int | None
+    note: str
+
+
+def dte_regime(dte: int) -> DTERegime:
+    """Exit discipline matched to what actually dominates the P&L at this DTE."""
+    if dte <= GAMMA_MAX_DTE:
+        return DTERegime(
+            name="gamma",
+            profit_target_pct=0.40,
+            stop_loss_pct=0.50,
+            # Expiry IS the time stop; flag only on expiration day itself so the
+            # position is flattened rather than left to settle.
+            time_stop_dte=0,
+            note=(f"Gamma regime (≤{GAMMA_MAX_DTE} DTE): effectively binary — a stop can gap "
+                  "straight through, so size for a total loss and take profit early."),
+        )
+    if dte <= THETA_MAX_DTE:
+        return DTERegime(
+            name="theta",
+            profit_target_pct=0.50,
+            stop_loss_pct=0.50,
+            # Leave real time value on the table: exit with ~40% of the original
+            # life remaining rather than grinding into the decay cliff.
+            time_stop_dte=max(2, round(dte * 0.4)),
+            note=(f"Theta regime ({GAMMA_MAX_DTE + 1}-{THETA_MAX_DTE} DTE): decay dominates. "
+                  "A thesis needing longer than this expiry is already dead — exit with time left."),
+        )
+    return DTERegime(
+        name="swing",
+        profit_target_pct=0.60,
+        stop_loss_pct=0.50,
+        time_stop_dte=7,
+        note=(f"Swing regime (>{THETA_MAX_DTE} DTE): the thesis has room to work — manage on the "
+              "invalidation level, not on daily noise."),
+    )
+
+
+_INVALIDATION_RE = re.compile(
+    r"(?:^|\s)inv(?:alidation)?\s*[:=]?\s*\$?(?P<price>\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_invalidation(text: str) -> tuple[str, float | None]:
+    """Pull an `inv <price>` token out of an entry line/paste.
+
+    Returns (text without the token, price or None). Kept separate from the line
+    parsers so both the one-liner and the broker-paste path accept it without
+    changing their grammars."""
+    m = _INVALIDATION_RE.search(text)
+    if not m:
+        return text, None
+    cleaned = (text[: m.start()] + " " + text[m.end():]).strip()
+    return cleaned, float(m.group("price"))
+
+
 def _infer(legs: list[ImportedLeg]) -> tuple[StrategyType, Direction]:
     calls = [leg for leg in legs if leg.option_type == OptionType.CALL]
     puts = [leg for leg in legs if leg.option_type == OptionType.PUT]
@@ -82,6 +153,7 @@ def build_tracked_trade(
     opened_at: datetime | None = None,
     source: str = "broker_import",
     net_per_share: float | None = None,
+    invalidation: float | None = None,
 ) -> PaperTrade:
     """Build a tracked position from its legs. `net_per_share` overrides the
     per-leg sum with the structure's net cost (debit > 0, credit < 0) — the way a
@@ -121,14 +193,26 @@ def build_tracked_trade(
         )
         for leg in legs
     ]
+    # Exit discipline is set from the DTE this position was OPENED at, not a
+    # one-size-fits-all default (see dte_regime).
+    open_date = (opened_at or datetime.now(UTC)).date()
+    entry_dte = max(0, (min(leg.expiration for leg in legs) - open_date).days)
+    regime = dte_regime(entry_dte)
+    note = regime.note if invalidation is None else (
+        f"Thesis invalidated if the underlying trades "
+        f"{'at or above' if direction == Direction.BEARISH else 'at or below'} "
+        f"{invalidation:g}. {regime.note}"
+    )
     risk = RiskPlan(
         max_loss_usd=max_loss_usd,
         max_profit_usd=max_profit_usd,
         account_risk_pct=round(max_loss_usd / settings.account_equity_usd, 4),
-        profit_target_pct=0.5,
-        stop_loss_pct=0.5,
-        time_stop_dte=7,
-        invalidation_note="Imported broker position.",
+        profit_target_pct=regime.profit_target_pct,
+        stop_loss_pct=regime.stop_loss_pct,
+        time_stop_dte=regime.time_stop_dte,
+        invalidation_note=note,
+        invalidation_price=invalidation,
+        dte_regime=regime.name,
     )
     plan = TradePlan(
         symbol=symbol.upper(),

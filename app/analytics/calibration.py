@@ -76,6 +76,10 @@ _FIDELITY = {
     # hold-to-expiry POLICY the app does not run (its exit plan takes profit and
     # stops out earlier), which is flagged separately in the scorecard warnings.
     "expiry_settlement": 3,
+    # The exit policy the app actually runs, replayed over real per-day marks.
+    # This is the outcome source that answers "would the strategy have made
+    # money" — expiry settlement answers the POP question instead.
+    "managed_policy": 3,
     "option_marks": 2,
     "option_marks_bs_fallback": 2,
     "underlying_vs_breakeven": 1,
@@ -215,6 +219,38 @@ def select_scoring_outcomes(
     return best
 
 
+def select_pnl_outcomes(
+    outcomes: list[DecisionOutcome],
+) -> dict[str, DecisionOutcome]:
+    """One outcome per decision for the DOLLAR metrics, preferring the grade of
+    the policy the app actually runs.
+
+    Win rate and Brier keep the hold-to-expiry grade because probability-of-profit
+    is itself a hold-to-expiry claim. P&L is a different question — "would the
+    strategy have made money" — and the strategy takes profit, stops out, and
+    time-stops. So when a decision carries both an expiry settlement and a managed
+    replay, the managed one wins here even though both are fidelity 3."""
+    best: dict[str, DecisionOutcome] = {}
+    for o in outcomes:
+        if o.realized_pnl_usd is None:
+            continue
+        cur = best.get(o.decision_id)
+        if cur is None:
+            best[o.decision_id] = o
+            continue
+        cur_managed = cur.outcome_source == "managed_policy"
+        new_managed = o.outcome_source == "managed_policy"
+        if new_managed and not cur_managed:
+            best[o.decision_id] = o
+            continue
+        if cur_managed and not new_managed:
+            continue
+        cf, nf = _fidelity(cur), _fidelity(o)
+        if nf > cf or (nf == cf and (o.elapsed_days or 0) >= (cur.elapsed_days or 0)):
+            best[o.decision_id] = o
+    return best
+
+
 def _rate(wins: int, decisive: int) -> float | None:
     return round(wins / decisive, 4) if decisive else None
 
@@ -328,8 +364,10 @@ def build_scorecard(
 
     # Cost-adjusted P&L metrics from outcomes carrying a realized dollar P&L (real
     # marks or a closed paper trade), ordered by resolution time for drawdown.
+    # Selected separately from `chosen` so the managed-exit replay — the policy the
+    # app runs — supplies the dollars even when a hold-to-expiry grade also exists.
     priced = sorted(
-        [(s, o) for s, o in pairs if o.realized_pnl_usd is not None],
+        [(by_id[i], o) for i, o in select_pnl_outcomes(outcomes).items() if i in by_id],
         key=lambda so: so[1].resolved_at,
     )
     pnls = [o.realized_pnl_usd for _, o in priced]
@@ -444,14 +482,23 @@ def build_scorecard(
     # Policy disclosure: expiry settlement measures the RIGHT thing for POP (a
     # hold-to-expiry probability) but the WRONG thing for "what would the managed
     # strategy have returned" — no profit target or stop is applied.
-    n_expiry = sum(1 for _s, o in decisive if o.outcome_source == "expiry_settlement")
-    if n_expiry and n_expiry >= len(decisive) * 0.25:
+    n_expiry_pnl = sum(1 for _s, o in priced if o.outcome_source == "expiry_settlement")
+    n_managed = sum(1 for _s, o in priced if o.outcome_source == "managed_policy")
+    if priced and n_expiry_pnl >= len(priced) * 0.25:
         warnings.append(
-            f"{n_expiry} of {len(decisive)} decisive outcome(s) are HOLD-TO-EXPIRY "
+            f"{n_expiry_pnl} of {len(priced)} priced outcome(s) are HOLD-TO-EXPIRY "
             "settlements. That is the correct grade for probability-of-profit (a "
             "hold-to-expiry claim) but NOT what the managed exit plan would have "
             "returned — targets and stops would have exited earlier. Read P&L-based "
             "discrimination here as policy-specific."
+        )
+    if n_managed:
+        warnings.append(
+            f"{n_managed} of {len(priced)} priced outcome(s) are MANAGED-POLICY "
+            "replays: real daily marks walked forward under each decision's own "
+            "target/stop/time-stop. Those dollars answer 'would the strategy have "
+            "made money'; win rate and Brier still use the hold-to-expiry grade, "
+            "which is what probability-of-profit actually claims."
         )
     if n_excluded_pre_v3:
         warnings.append(

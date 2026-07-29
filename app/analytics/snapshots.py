@@ -186,6 +186,13 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
         breakevens=structure_breakevens(plan),
         is_credit=plan.net_debit < 0,
         entry_spot=round(entry_spot, 4),
+        # Volatility state, frozen on the candidate at scan time. Without these a
+        # decision cannot be bucketed into a vol regime, which left the conviction
+        # gate's per-regime criterion unmeasurable rather than merely unmet. The
+        # `_iv_from_signals` path above serves the funnel lineage; short-duration
+        # candidates carry no signal list, so they must supply it directly.
+        entry_iv=getattr(cand, "entry_iv", None),
+        iv_rank=getattr(cand, "iv_rank", None),
         entry_net_per_share=entry_net,
         max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
         max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,

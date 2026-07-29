@@ -121,4 +121,8 @@ class DecisionOutcome(BaseModel):
     # "option_marks" (real), "option_marks_bs_fallback", "paper_trade", or
     # "underlying_vs_breakeven" (the last-resort directional proxy).
     outcome_source: str = "underlying_vs_breakeven"
+    # Why the trade ended, when the grade replayed an exit policy:
+    # "profit_target" | "stop_loss" | "time_stop" | "expiry". Empty for grades
+    # that never simulated a path (e.g. hold-to-expiry settlement).
+    exit_reason: str = ""
     note: str = ""

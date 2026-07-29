@@ -393,6 +393,12 @@ class ShortDurationCandidate(BaseModel):
     # Strategy diagnostics (Phase 6 observability): the detection's structured
     # metadata (e.g. ORB breakout buffer/extension, VWAP-quality sub-scores).
     signal_metadata: dict = Field(default_factory=dict)
+    # Volatility state at decision time. Frozen on the candidate so the warehouse
+    # snapshot can carry it: without iv_rank a decision cannot be assigned a
+    # volatility regime, which made the conviction gate's per-regime criterion
+    # unmeasurable (not failing on evidence — unable to be asked at all).
+    entry_iv: float | None = None
+    iv_rank: float | None = None
     # ENGINE PICK: the app going on record that this is a setup it would take,
     # stamped at scan time so it can be graded later. UNCALIBRATED — a recorded
     # prediction, never a recommendation.

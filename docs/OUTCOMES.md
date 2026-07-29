@@ -51,6 +51,38 @@ Two resolvers, in order of fidelity:
 `direction_correct` is tracked separately from win/loss and is only set for
 directional theses (bullish/bearish); neutral and vol structures leave it null.
 
+## Two settlements, because there are two questions
+
+An expired decision is graded twice, on purpose, and the two grades answer
+different questions. Conflating them is how a book gets misjudged.
+
+| Grade | Module / runner | Answers |
+|---|---|---|
+| **Hold-to-expiry** (`expiry_settlement`) | `scripts/settle_pending_decisions.py` | "Did it finish past breakeven?" — exactly what probability-of-profit claims. At expiration a defined-risk structure has no extrinsic value left, so signed intrinsic **is** the payoff; nothing is modelled. |
+| **Managed policy** (`managed_policy`) | `scripts/settle_under_policy.py` | "Would the strategy have made money?" — the plan's own profit target, stop, and DTE time-stop replayed over real daily option marks from entry forward. |
+
+The app never holds to expiry: its plans take profit at 40-60%, stop at -50%,
+and time-stop by DTE regime. So the scorecard **splits the sources by metric** —
+win rate and Brier read the hold-to-expiry grade (that is what POP forecasts),
+while every dollar metric (P&L, score↔P&L Spearman, drawdown) reads the managed
+replay when one exists (`calibration.select_pnl_outcomes`). Both appear as
+scorecard warnings so the reader always knows which policy produced which number.
+
+Fidelity discipline in the managed replay:
+
+- the stop is checked **before** the profit target, so a day that traded through
+  both books the loss — assuming the good fill on an ambiguous bar is how a
+  backtest flatters itself;
+- a day where any leg is unpriced is **held through**, never valued on a partial
+  structure;
+- a decision the feed cannot price at all is **abstained** (no outcome written),
+  because a policy grade built on a guessed path is worse than no grade;
+- marks dated before entry can never trigger an exit.
+
+`DecisionOutcome.exit_reason` carries `profit_target | stop_loss | time_stop |
+expiry` for policy-replayed grades and is empty for grades that never simulated a
+path.
+
 ## The scorecard (`app/analytics/calibration.py`)
 
 `build_scorecard` pairs each decision with its best available outcome (paper

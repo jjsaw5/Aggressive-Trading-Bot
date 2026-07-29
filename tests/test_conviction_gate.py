@@ -10,9 +10,13 @@ from app.shortduration.conviction_gate import (
 
 
 def _green_scorecard() -> Scorecard:
+    # Discrimination needs a material correlation on a real sample WITH a
+    # bootstrap interval that excludes zero — a bare positive number is noise.
     return Scorecard(
         n_decisions=100, n_resolved=60, n_decisive=MIN_DECISIVE,
-        brier_score=0.18, score_pnl_spearman=0.2, validation_grade="real_marks",
+        brier_score=0.18, score_pnl_spearman=0.2,
+        score_pnl_spearman_ci=[0.05, 0.34], score_pnl_n=120,
+        validation_grade="real_marks",
         by_vol_regime=[GroupStat(key="fair", n=15, win_rate=0.6),
                        GroupStat(key="rich", n=15, win_rate=0.5)],
     )

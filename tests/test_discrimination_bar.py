@@ -64,6 +64,19 @@ def test_ci_is_deterministic_across_runs() -> None:
     assert spearman_ci(xs, ys) == spearman_ci(xs, ys)
 
 
+def test_ci_is_invariant_to_the_order_rows_arrive_in() -> None:
+    # Regression for a real gate flip: the same 136 calibration pairs sorted by
+    # resolution time gave lo=+0.0093 (PASS) and unsorted gave lo=-0.0078 (FAIL).
+    # A verdict that depends on row order is not a measurement.
+    rng = random.Random(5)
+    xs = [rng.random() for _ in range(120)]
+    ys = [x * 0.3 + rng.gauss(0, 0.9) for x in xs]  # weak — where order bit hardest
+    shuffled = list(zip(xs, ys, strict=True))
+    rng.shuffle(shuffled)
+    assert spearman_ci(xs, ys) == spearman_ci([p[0] for p in shuffled],
+                                              [p[1] for p in shuffled])
+
+
 def test_ci_abstains_on_a_sample_too_small_to_bootstrap() -> None:
     assert spearman_ci([1, 2, 3, 4, 5], [2, 1, 4, 3, 5]) is None
 

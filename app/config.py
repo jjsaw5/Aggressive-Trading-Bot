@@ -164,7 +164,13 @@ class Settings(BaseSettings):
     # additionally consult the gate (sizing_requires_green_gate).
     conviction_require_validated: bool = True
     calibration_brier_max: float = 0.25
-    calibration_spearman_min: float = 0.0
+    # Discrimination bar. Was 0.0, which a correlation of +0.03 cleared — that is
+    # noise, not skill, and a gate that passes on it grants permission it has not
+    # earned. A material floor PLUS a bootstrap interval excluding zero (see
+    # calibration_spearman_require_ci) is what separates the two.
+    calibration_spearman_min: float = 0.15
+    calibration_spearman_require_ci: bool = True  # CI lower bound must be > 0
+    calibration_spearman_min_n: int = 50  # priced outcomes needed to judge at all
     calibration_per_regime: bool = True
     sizing_requires_green_gate: bool = True
     # Scoring model — weights are configurable + versioned. Every candidate records

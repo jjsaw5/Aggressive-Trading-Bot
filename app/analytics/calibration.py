@@ -21,7 +21,13 @@ import re
 
 from pydantic import BaseModel, Field
 
-from app.analytics.metrics import expectancy, max_drawdown, profit_factor, spearman
+from app.analytics.metrics import (
+    expectancy,
+    max_drawdown,
+    profit_factor,
+    spearman,
+    spearman_ci,
+)
 from app.domain.outcomes import DecisionOutcome, DecisionSnapshot, OutcomeResult
 from app.logging_config import get_logger
 
@@ -172,6 +178,10 @@ class Scorecard(BaseModel):
     by_flow_quality_band: list[GroupStat] = Field(default_factory=list)
     flow_quality_pnl_spearman: float | None = None  # corr(flow_quality, net P&L)
     score_pnl_spearman: float | None = None  # baseline: corr(composite_score, net P&L)
+    # 95% bootstrap interval for the above, and the sample it rests on. A gate
+    # cannot tell skill from noise without these.
+    score_pnl_spearman_ci: list[float] | None = None
+    score_pnl_n: int = 0
     flow_quality_lift: float | None = None  # flow_quality corr minus score corr
     flow_quality_verdict: str = "insufficient"
     # Is this a trustworthy validation source? "real_marks" when most decisive
@@ -347,6 +357,13 @@ def build_scorecard(
         [s.composite_score for s, _ in priced],
         [o.realized_pnl_usd for _, o in priced],
     )
+    # A point estimate near zero is noise wearing a number. Carry the interval so
+    # the gate can require the correlation to plausibly exclude zero rather than
+    # merely be positive.
+    score_pnl_ci = spearman_ci(
+        [s.composite_score for s, _ in priced],
+        [o.realized_pnl_usd for _, o in priced],
+    )
     # Lift must compare like with like, so the baseline for it is re-measured on
     # the flow subsample only.
     score_sp_on_flow = spearman(
@@ -474,6 +491,8 @@ def build_scorecard(
         ),
         flow_quality_pnl_spearman=flow_pnl_sp,
         score_pnl_spearman=score_pnl_sp,
+        score_pnl_spearman_ci=list(score_pnl_ci) if score_pnl_ci else None,
+        score_pnl_n=len(priced),
         flow_quality_lift=flow_lift,
         flow_quality_verdict=flow_verdict,
         validation_grade=grade,

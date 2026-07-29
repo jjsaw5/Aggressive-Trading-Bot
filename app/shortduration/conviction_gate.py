@@ -15,7 +15,10 @@ Criteria (spec §6/§11, all must pass):
   2. CALIBRATION SAMPLE — >= MIN_DECISIVE resolved, decisive outcomes graded on
      real marks (validation_grade == "real_marks").
   3. BRIER — POP forecast Brier score <= calibration_brier_max.
-  4. DISCRIMINATION — score-vs-P&L Spearman > calibration_spearman_min.
+  4. DISCRIMINATION — score-vs-P&L Spearman >= calibration_spearman_min, on a
+     minimum sample, with a 95% bootstrap CI whose lower bound excludes zero.
+     A bare "> 0" bar passed at +0.03, which is noise; three conditions are the
+     minimum that can tell skill from a coin flip.
   5. PER-REGIME — decisive outcomes span >= 2 vol regimes with >= MIN_PER_REGIME
      each (calibration_per_regime): a single-regime green is a bull-sample trap.
 
@@ -103,12 +106,29 @@ def evaluate_conviction_gate(scorecard=None) -> ConvictionGate:
         detail=f"brier={brier} (need <={settings.calibration_brier_max})",
     ))
 
+    # DISCRIMINATION — three conditions, because any one alone can pass on noise:
+    # a big enough sample to judge, a materially positive correlation (not merely
+    # a positive sign), and a bootstrap interval that excludes zero.
     sp = getattr(scorecard, "score_pnl_spearman", None)
-    sp_ok = sp is not None and sp > settings.calibration_spearman_min
-    crits.append(GateCriterion(
-        name="discrimination", passed=sp_ok,
-        detail=f"score_pnl_spearman={sp} (need >{settings.calibration_spearman_min})",
-    ))
+    sp_ci = getattr(scorecard, "score_pnl_spearman_ci", None)
+    sp_n = getattr(scorecard, "score_pnl_n", 0) or 0
+    need = settings.calibration_spearman_min
+    enough_n = sp_n >= settings.calibration_spearman_min_n
+    material = sp is not None and sp >= need
+    ci_ok = (not settings.calibration_spearman_require_ci) or (
+        sp_ci is not None and sp_ci[0] > 0.0
+    )
+    sp_ok = bool(enough_n and material and ci_ok)
+    if not enough_n:
+        why = f"n={sp_n} priced outcome(s) (need >={settings.calibration_spearman_min_n})"
+    elif not material:
+        why = f"spearman={sp} (need >={need} — a smaller value is not distinguishable from noise)"
+    elif not ci_ok:
+        why = (f"spearman={sp} but its 95% CI {sp_ci} includes zero — "
+               "the correlation could plausibly be nothing")
+    else:
+        why = f"spearman={sp}, 95% CI {sp_ci}, n={sp_n}"
+    crits.append(GateCriterion(name="discrimination", passed=sp_ok, detail=why))
 
     if settings.calibration_per_regime:
         regimes = [g for g in (getattr(scorecard, "by_vol_regime", None) or [])

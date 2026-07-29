@@ -243,7 +243,7 @@ def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
     contract: ContractResult, gate: EntryGate, fresh=None, levels=None, thesis=None,
-    pop=None, what_has="",
+    pop=None, what_has="", iv=None,
 ) -> ShortDurationCandidate:
     from app.shortduration.exit_plan import build_short_duration_exit_plan
 
@@ -273,6 +273,10 @@ def _candidate_from(
         thesis=thesis,
         probability_of_profit=pop,
         what_has_to_happen=what_has,
+        # Freeze the volatility state so the warehouse snapshot can carry it —
+        # a decision with no iv_rank cannot be assigned a vol regime later.
+        entry_iv=getattr(iv, "iv30", None) if iv is not None else None,
+        iv_rank=getattr(iv, "iv_rank", None) if iv is not None else None,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -424,7 +428,7 @@ async def _score_symbol(
             # that IV is unavailable, never silently to iv30.
             expiry_iv = _traded_expiry_iv(chain, contract.plan, spot)
             pop, what_has = _candidate_odds(det, symbol, contract, spot, expiry_iv, now)
-            scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has))
+            scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has, iv))
     return scored, coverage
 
 
@@ -471,10 +475,10 @@ async def run_detection(
         scored = row[0] if row else None
         if not scored:
             continue
-        for det, card, news, contract, gate, fresh, thesis, pop, what_has in scored:
+        for det, card, news, contract, gate, fresh, thesis, pop, what_has, iv in scored:
             cand = _candidate_from(
                 det, symbol, now, card, news, regime, contract, gate, fresh,
-                levels=_ctx.levels, thesis=thesis, pop=pop, what_has=what_has,
+                levels=_ctx.levels, thesis=thesis, pop=pop, what_has=what_has, iv=iv,
             )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)

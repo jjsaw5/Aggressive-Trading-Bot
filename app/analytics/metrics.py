@@ -63,20 +63,31 @@ def spearman_ci(
     permission. The interval answers the only question that matters: could this
     correlation plausibly be zero?
 
-    Deterministic by construction (fixed seed) — a gate whose verdict flickers
-    between runs on the same data is not a gate. Returns None when the base
-    correlation is undefined or the sample is too small to bootstrap honestly."""
+    Deterministic by construction — a gate whose verdict flickers between runs on
+    the same data is not a gate. A fixed seed alone is NOT enough for that: the
+    resampled indices are drawn against the caller's row order, so the same
+    sample fed in a different order yields a different interval. That is not
+    hypothetical — sorting the calibration pairs by resolution time versus not
+    moved the lower bound across zero, flipping the gate's verdict on identical
+    data. So the pairs are canonically ordered here before resampling, making the
+    interval a property of the sample and nothing else.
+
+    Returns None when the base correlation is undefined or the sample is too
+    small to bootstrap honestly."""
     import random
 
     base = spearman(xs, ys)
     if base is None or len(xs) < min_n:
         return None
+    pairs = sorted(zip(xs, ys, strict=True))
+    cx = [p[0] for p in pairs]
+    cy = [p[1] for p in pairs]
     rng = random.Random(seed)
-    n = len(xs)
+    n = len(cx)
     vals: list[float] = []
     for _ in range(resamples):
         idx = [rng.randrange(n) for _ in range(n)]
-        s = spearman([xs[i] for i in idx], [ys[i] for i in idx])
+        s = spearman([cx[i] for i in idx], [cy[i] for i in idx])
         if s is not None:
             vals.append(s)
     if len(vals) < resamples // 2:  # too many degenerate resamples to trust

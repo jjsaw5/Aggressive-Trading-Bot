@@ -504,10 +504,26 @@ async def run_detection(
     # this scan rather than only ever ranking. Best-effort — a scan must not
     # fail because a pick couldn't be saved.
     try:
-        from app.shortduration.ranking import mark_engine_picks
+        from app.shortduration.ranking import mark_engine_picks, retire_engine_picks
 
-        for cand in mark_engine_picks(created):
+        # Retire the PREVIOUS scan's commitments first. Without this the flag is
+        # write-only: every scan added picks and none ever expired, so the board
+        # accumulated them across sessions and a stale bearish day kept renaming
+        # itself today's read.
+        prior = await asyncio.to_thread(
+            repository.list_short_duration_candidates,
+            dte_category=dte.value, limit=500, ranked=False,
+        )
+        fresh_ids = {c.id for c in created}
+        retired = retire_engine_picks(prior, keep_ids=fresh_ids)
+        for cand in retired:
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+
+        picked = mark_engine_picks(created)
+        for cand in picked:
+            await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+        log.info("engine_picks_marked", dte=dte.value, picked=len(picked),
+                 retired=len(retired))
     except Exception as exc:  # noqa: BLE001
         log.warning("engine_picks_failed", dte=dte.value, error=str(exc))
     _record_scan_metrics(dte, created)

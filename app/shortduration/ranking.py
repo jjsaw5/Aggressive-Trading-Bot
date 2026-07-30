@@ -154,9 +154,47 @@ def dedupe_latest(cands: list[ShortDurationCandidate]) -> list[ShortDurationCand
     return list(latest.values())
 
 
+def retire_engine_picks(
+    cands: list[ShortDurationCandidate], *, keep_ids: set[str] | None = None
+) -> list[ShortDurationCandidate]:
+    """Clear the pick flag on prior commitments. Returns only what changed.
+
+    A pick list is a commitment to NOW — "these are the setups the engine would
+    take this scan". The flag is persisted per row and, until this existed,
+    nothing ever cleared it: every scan added up to three more permanently-marked
+    rows, so the board accumulated picks from every scan ever run. Two days of
+    that and a bullish tape reads as uniformly bearish, because yesterday's
+    bearish commitments never retired.
+
+    Retiring is deliberately unconditional rather than age-based: exactly one
+    scan's worth of picks may be live, and the newest scan owns them."""
+    keep = keep_ids or set()
+    changed: list[ShortDurationCandidate] = []
+    for c in cands:
+        if c.engine_pick and c.id not in keep:
+            c.engine_pick = False
+            c.pick_rank = None
+            c.pick_reason = ""
+            changed.append(c)
+    return changed
+
+
+def _demote_dead_picks(cands: list[ShortDurationCandidate]) -> None:
+    """A pick on a rejected/expired/closed row is not a live commitment.
+
+    Read-path belt to the write-path braces: a scan that dies between marking and
+    retiring, or a row that expires after being picked, must not keep presenting
+    itself as something the engine would take right now."""
+    for c in cands:
+        if c.engine_pick and bucket(c) == TERMINAL:
+            c.engine_pick = False
+            c.pick_rank = None
+
+
 def rank_candidates(
     cands: list[ShortDurationCandidate], *, dedupe: bool = True
 ) -> list[ShortDurationCandidate]:
     """Dedupe (optional) then order by actionability. Returns a new list."""
     rows = dedupe_latest(cands) if dedupe else list(cands)
+    _demote_dead_picks(rows)
     return sorted(rows, key=_rank_key)

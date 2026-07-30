@@ -24,6 +24,7 @@ from app.logging_config import get_logger
 from app.providers import registry
 from app.quant.analytics import structure_breakevens
 from app.quant.probability import probability_of_profit, what_has_to_happen
+from app.risk.bracket import bracket_from_plan
 from app.tiers.models import PositionRisk
 from app.tiers.tier4_positions import Tier4PositionMonitor
 
@@ -81,6 +82,16 @@ class PositionView(BaseModel):
     earnings_before_expiry: bool = False
     # Thesis tracking: the recorded invalidation level and whether it still holds.
     # "none" when no level was recorded — the honest state for an untagged position.
+    # The two orders that should be resting at the broker: target AND stop, both
+    # priced off the debit. Surfaced on every open position, not just new ones,
+    # because a position without a stop is the state this exists to make visible.
+    bracket_target_price: float | None = None
+    bracket_target_pnl_usd: float | None = None
+    bracket_stop_price: float | None = None
+    bracket_stop_pnl_usd: float | None = None
+    bracket_action: str = ""  # sell_to_close | buy_to_close
+    bracket_paste: str = ""
+    bracket_note: str = ""
     invalidation_price: float | None = None
     thesis_status: str = "none"  # none | intact | invalidated
     invalidation_distance_pct: float | None = None  # signed; + = room before invalidation
@@ -235,6 +246,8 @@ def _build_view(
             for lv in plan.exit_plan.levels
         ]
 
+    bracket = bracket_from_plan(plan)
+
     action = r.action if r else "unmarked"
     dte = r.dte if r else None
     time_stop = plan.risk.time_stop_dte
@@ -321,6 +334,13 @@ def _build_view(
         time_stop_dte=time_stop,
         legs=legs,
         exit_levels=exit_levels,
+        bracket_target_price=bracket.target_price if bracket else None,
+        bracket_target_pnl_usd=bracket.target_pnl_usd if bracket else None,
+        bracket_stop_price=bracket.stop_price if bracket else None,
+        bracket_stop_pnl_usd=bracket.stop_pnl_usd if bracket else None,
+        bracket_action=bracket.close_action if bracket else "",
+        bracket_paste=bracket.paste if bracket else "",
+        bracket_note=bracket.note if bracket else "",
         warnings=warnings,
         underlying_price=r.underlying_price if r else None,
         net_delta=r.net_delta if r else None,

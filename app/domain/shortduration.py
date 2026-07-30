@@ -422,6 +422,22 @@ class ShortDurationCandidate(BaseModel):
     probability_of_profit: float | None = None
     what_has_to_happen: str = ""
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def order_bracket(self) -> dict | None:
+        """The target AND stop to place together, at entry.
+
+        Derived on read rather than stored: it is a pure function of the plan, so
+        persisting it could only ever go stale. Exposed on the candidate itself so
+        every surface that renders a board gets the pair for free — a stop that
+        lives one click away is a stop that does not get placed."""
+        if self.trade_plan is None:
+            return None
+        from app.risk.bracket import bracket_from_plan
+
+        b = bracket_from_plan(self.trade_plan)
+        return b.model_dump() | {"paste": b.paste} if b else None
+
 
 class ShortDurationTrade(BaseModel):
     """A paper (or, later, live) short-duration position, tagged with the entry

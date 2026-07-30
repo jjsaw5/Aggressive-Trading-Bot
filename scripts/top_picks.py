@@ -44,6 +44,23 @@ def _short(c) -> str:
     return f"{c.symbol} {d}{gate}"
 
 
+def _bracket_line(c) -> str:
+    """The two orders to place together, at entry. Emitted with the pick rather
+    than left to be worked out later, because the target that never gets placed
+    is the one that costs money."""
+    from app.risk.bracket import bracket_from_plan
+
+    if c.trade_plan is None:
+        return ""
+    b = bracket_from_plan(c.trade_plan)
+    if b is None:
+        return ""
+    verb = "BUY" if b.is_credit else "SELL"
+    return (f"\n      BRACKET · {verb} to close x{b.contracts} at "
+            f"TARGET {b.target_price:.2f} ({b.target_pnl_usd:+.0f}) "
+            f"or STOP {b.stop_price:.2f} ({b.stop_pnl_usd:+.0f}) — place both, now")
+
+
 def _detail(c) -> str:
     risk = f"${c.max_risk_usd:,.0f}" if c.max_risk_usd is not None else "—"
     rr = f"{c.reward_to_risk:.2f}:1" if c.reward_to_risk is not None else "—"
@@ -53,7 +70,8 @@ def _detail(c) -> str:
         (c.entry_notes or ["blocked"])[:1])
     return (f"  #{c.pick_rank} {c.symbol} {c.direction.value} · {c.strategy.value if c.strategy else '?'}\n"
             f"      {struct} · risk {risk} · R:R {rr} · POP {pop} (uncalibrated)\n"
-            f"      score {c.score:.2f} · {gate}")
+            f"      score {c.score:.2f} · {gate}"
+            f"{_bracket_line(c)}")
 
 
 async def main() -> None:
@@ -89,6 +107,10 @@ async def main() -> None:
     print("\n\n".join(detail))
     print("\nUNCALIBRATED — the engine's recorded picks, not validated advice. "
           "Your thesis and your sizing.")
+    print("BRACKET prices are ±% of the DEBIT — the same basis the conviction gate "
+          "grades, and a nearer number than the dashboard's scale-out target. "
+          "Place the stop WITH the target: a stop is not gap protection, so the "
+          "target is what actually protects a winner.")
 
 
 if __name__ == "__main__":

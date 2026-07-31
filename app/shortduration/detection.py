@@ -106,8 +106,18 @@ async def build_context(
             log.warning("sd_ctx_fetch_failed", symbol=symbol, feed=label, error=str(exc))
             return None
 
+    # Ask for the session this scan is FOR, not "whatever the feed considers most
+    # recent". The two silently disagreed: levels are computed against `now`, so a
+    # feed answering with a different session produced an empty opening range and
+    # no ORB detections — a blind scanner indistinguishable from a quiet one. If
+    # the requested session genuinely has no bars yet (pre-market), the honest
+    # answer is no levels and no detections, not another day's levels.
+    from app.shortduration.levels import session_date_for
     ctx.bars_1m = await _safe(
-        registry.intraday_provider().get_intraday_bars(symbol, interval="1min"), "intraday"
+        registry.intraday_provider().get_intraday_bars(
+            symbol, interval="1min", session_date=session_date_for(now)
+        ),
+        "intraday",
     ) or []
     ctx.quote = await _safe(market.get_quote(symbol), "quote")
     if ctx.quote and ctx.quote.prev_close:

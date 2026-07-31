@@ -23,6 +23,11 @@ def _et(ts: datetime) -> datetime:
     return ts.astimezone(_ET)
 
 
+def session_date_for(now: datetime) -> date:
+    """The ET trading date a timestamp belongs to — the session a scan is FOR."""
+    return _et(now).date()
+
+
 def rth_bars(bars: list[IntradayBar]) -> list[IntradayBar]:
     """Bars within regular trading hours (09:30–16:00 ET), chronological."""
     out = [b for b in bars if _RTH_OPEN <= _et(b.ts).time() < _RTH_CLOSE]
@@ -103,8 +108,21 @@ def compute_intraday_levels(
     `relative_volume_reading` (a volume_profile.RelativeVolumeReading) overrides
     the flat proration when the caller has built a time-of-day profile; its method
     and estimated flag are carried onto the levels for transparency."""
-    d = session_date or _et(now).date()
-    session = rth_bars(bars)
+    # These levels describe ONE session, and every primitive must agree on which.
+    #
+    # Two defects met here. The date came from `now` — an assertion the data never
+    # had to honour, since the feed returns "the most recent session available";
+    # when the feed lagged, the opening range was computed over a day with no bars
+    # and came back (None, None), so ORB detected nothing and the scanner looked
+    # quiet rather than blind. And only `opening_range` filtered by date at all,
+    # so a multi-session response left VWAP, last, and relative volume blended
+    # across days — plausible numbers describing no session that ever happened.
+    #
+    # The bars are the evidence: take the session they end in, then keep only that
+    # session. An explicit `session_date` still wins, for callers that know.
+    rth = rth_bars(bars)
+    d = session_date or (_et(rth[-1].ts).date() if rth else _et(now).date())
+    session = [b for b in rth if _et(b.ts).date() == d]
     last = session[-1].close if session else None
     or_high, or_low = opening_range(session, opening_range_minutes, d)
     if relative_volume_reading is not None:

@@ -34,6 +34,12 @@ for _var in (
 os.environ["ALERTS_ENABLED"] = "false"
 os.environ["ALERTS_CHANNEL"] = "console"
 os.environ["SHORT_DURATION_PAPER_UNCONSTRAINED"] = "false"  # tests assert the real caps
+# Pin the mock provider to a mid-session time of day. It caps generated intraday
+# bars at its own clock, so a suite run before ~09:45 ET saw an incomplete
+# opening range and no ORB detections — correct behaviour, but it made every
+# detection test pass or fail on WHEN the suite ran. Only the time is pinned;
+# today's date is kept so DTE and expiration maths are untouched.
+os.environ["MOCK_CLOCK_ET_TIME"] = "12:00"
 # Disable the provider cache + rate limiter globally so call-count assertions
 # are deterministic; both are exercised directly in their own test modules.
 os.environ["CACHE_ENABLED"] = "false"

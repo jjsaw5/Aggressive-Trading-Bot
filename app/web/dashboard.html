@@ -195,6 +195,7 @@
       <div class="nlabel">Short-Duration</div>
       <button data-view="sd/command">0DTE Command Center</button>
       <button data-view="sd/scanner">1–5DTE Scanner</button>
+      <button data-view="sd/medium">Medium Duration</button>
       <button data-view="sd/candidates">Trade Candidates</button>
       <button data-view="sd/positions">Open Positions</button>
       <button data-view="sd/news">News &amp; Catalysts</button>
@@ -1214,23 +1215,33 @@
       const events = await api("GET", "/short-duration/events");
       const toolbar = `<div style="margin-bottom:10px">
         <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE scan</button>
-        <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Trend-continuation setups are horizon-matched to a weeks-out expiry (marked SWING) — the thesis needs longer than 5 days to resolve. Research only — no orders.</span></div>`;
+        <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Every row here expires within 5 days — setups the scanner horizon-matched to a weeks-out expiry are filed under <b>Medium Duration</b>. Research only — no orders.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
         <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
-      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates</h3>${sdCandTable(cands, "sd:1-5dte")}</div>
+      return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates <span class="muted" style="font-size:12px">(≤5 DTE only)</span></h3>${sdCandTable(cands, "sd:1-5dte")}</div>
         <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
         <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
         <tbody>${evRows || `<tr><td colspan="3" class="muted">none</td></tr>`}</tbody></table></div>`;
     }
 
+    async function renderSdMedium() {
+      const cands = await api("GET", "/short-duration/medium/candidates?limit=50");
+      const toolbar = `<div style="margin-bottom:10px">
+        <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE scan</button>
+        <span class="muted">Setups the scanner deliberately expressed <b>weeks out</b> — a daily-trend thesis needs longer than five days to resolve, so forcing it into a sub-week contract guarantees the option expires before the thesis can. These are produced by the same 1–5DTE scan; only the contract horizon differs. Research only — no orders.</span></div>`;
+      return toolbar + sdTruthBanner()
+        + `<div class="card"><h3>Medium Duration candidates <span class="muted" style="font-size:12px">(swing horizon, &gt;5 DTE)</span></h3>${sdCandTable(cands, "sd:medium")}</div>`;
+    }
+
     async function renderSdCandidates() {
-      const [zero, short] = await Promise.all([
+      const [zero, short, medium] = await Promise.all([
         api("GET", "/short-duration/0dte/candidates?limit=100"),
         api("GET", "/short-duration/1-5dte/candidates?limit=100"),
+        api("GET", "/short-duration/medium/candidates?limit=100"),
       ]);
       return sdTruthBanner()
-        + `<div class="muted" style="margin-bottom:8px">Filter: all short-duration candidates (0DTE + 1–5DTE).</div>`
-        + sdCandTable([...zero, ...short], "sd:all");
+        + `<div class="muted" style="margin-bottom:8px">Filter: every candidate across all three boards (0DTE + 1–5DTE + Medium).</div>`
+        + sdCandTable([...zero, ...short, ...medium], "sd:all");
     }
 
     async function renderSdNews() {
@@ -1390,6 +1401,7 @@
       switch (state.sdTab) {
         case "command": return await renderSdCommand();
         case "scanner": return await renderSdScanner();
+        case "medium": return await renderSdMedium();
         case "candidates": return await renderSdCandidates();
         case "positions": return await renderSdPositions();
         case "news": return await renderSdNews();

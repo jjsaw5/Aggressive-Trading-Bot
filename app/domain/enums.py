@@ -113,6 +113,12 @@ class DTECategory(str, Enum):
 
     ZERO_DTE = "0dte"
     SHORT_DTE = "1-5dte"
+    # A board, not a scan. Some setups (daily-trend continuation) are deliberately
+    # expressed weeks out because the thesis needs weeks to resolve — see
+    # contracts.is_swing. Those were landing on the 1-5DTE board and made 65% of
+    # it, so "1-5DTE" meant nothing. The scan still runs as 0DTE/1-5DTE; only the
+    # board a candidate is FILED under follows the contract's real horizon.
+    MEDIUM_DTE = "medium"
 
 
 class ShortDurationStrategy(str, Enum):

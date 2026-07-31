@@ -18,7 +18,9 @@ Within a bucket: score DESC → reward:risk DESC → most recent first.
 
 from __future__ import annotations
 
-from app.domain.enums import CandidateState
+from datetime import date
+
+from app.domain.enums import CandidateState, DTECategory
 from app.domain.shortduration import ShortDurationCandidate
 
 READY = 0
@@ -63,10 +65,17 @@ def bucket_label(b: int) -> str:
 
 
 def _rank_key(c: ShortDurationCandidate) -> tuple:
-    # Sort ascending: bucket first (0 best), then push high score / high R:R /
-    # fresh to the top by negating them.
+    # Sort ascending: bucket first (0 best), then score, then freshness.
+    #
+    # Reward:risk is deliberately NOT a sort term. It is already a scoring
+    # component (risk_quality), so ranking on it again double-counts it — and the
+    # `or 0.0` fallback it needed was actively wrong: a long single option has
+    # UNBOUNDED max profit, so its R:R is undefined, not zero. Treating undefined
+    # as zero buried every single-leg candidate beneath every spread at equal
+    # score. A quarter of everything the scanner produces is a single leg, and
+    # essentially none of it ever reached a pick list.
     ts = c.detected_at.timestamp() if c.detected_at else 0.0
-    return (bucket(c), -(c.score or 0.0), -(c.reward_to_risk or 0.0), -ts)
+    return (bucket(c), -(c.score or 0.0), -ts)
 
 
 # How many setups the engine commits to per board per scan. Small on purpose: a
@@ -152,6 +161,46 @@ def dedupe_latest(cands: list[ShortDurationCandidate]) -> list[ShortDurationCand
         if cur is None or (c.detected_at and cur.detected_at and c.detected_at > cur.detected_at):
             latest[key] = c
     return list(latest.values())
+
+
+# A contract expiring beyond this many days is not a 1-5DTE trade, whatever the
+# scan that produced it was called.
+SHORT_DTE_MAX_DAYS = 5
+
+
+def contract_horizon_days(c: ShortDurationCandidate) -> int | None:
+    """Days from detection to the structure's NEAREST expiration, or None when the
+    candidate carries no dated structure (a rejected setup has nothing to file)."""
+    legs = (c.contract.legs if c.contract else None) or []
+    exps: list[date] = []
+    for lg in legs:
+        raw = lg.get("expiration") if isinstance(lg, dict) else getattr(lg, "expiration", None)
+        if raw is None:
+            continue
+        try:
+            exps.append(raw if isinstance(raw, date) else date.fromisoformat(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    if not exps or c.detected_at is None:
+        return None
+    return (min(exps) - c.detected_at.date()).days
+
+
+def board_for(c: ShortDurationCandidate) -> DTECategory:
+    """Which board a candidate belongs on, by the horizon it can actually be
+    traded at rather than the scan that produced it.
+
+    0DTE stays 0DTE — it is same-day by definition and its contracts already
+    match. A 1-5DTE scan, though, deliberately expresses a daily-trend thesis
+    weeks out (contracts.is_swing), and those were filed on the 1-5DTE board
+    where they became 65% of it. Routing on the contract keeps the label honest:
+    "1-5DTE" means a contract expiring within five days, and nothing else."""
+    if c.dte_category == DTECategory.ZERO_DTE:
+        return DTECategory.ZERO_DTE
+    days = contract_horizon_days(c)
+    if days is None:
+        return c.dte_category  # no structure to route on — leave the scan's own board
+    return DTECategory.SHORT_DTE if days <= SHORT_DTE_MAX_DAYS else DTECategory.MEDIUM_DTE
 
 
 def retire_engine_picks(

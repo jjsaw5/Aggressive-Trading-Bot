@@ -29,7 +29,11 @@ from app.logging_config import get_logger
 
 log = get_logger(__name__)
 
-_BOARDS = [("0DTE", DTECategory.ZERO_DTE, "0dte"), ("1-5DTE", DTECategory.SHORT_DTE, "1-5dte")]
+# Medium shares the 1-5DTE scan — its candidates are the same setups expressed at
+# a swing horizon — so it is reported, never scanned separately.
+_BOARDS = [("0DTE", DTECategory.ZERO_DTE, "0dte"),
+           ("1-5DTE", DTECategory.SHORT_DTE, "1-5dte"),
+           ("MEDIUM", None, "medium")]
 
 
 def _picks(dte_key: str) -> list:
@@ -83,6 +87,8 @@ async def main() -> None:
         from app.shortduration.detection import run_detection
 
         for label, dte, _key in _BOARDS:
+            if dte is None:
+                continue  # reported, not scanned — see _BOARDS
             try:
                 found = await run_detection(dte)
                 log.info("top_picks_scanned", board=label, detected=len(found))

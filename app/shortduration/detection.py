@@ -106,8 +106,18 @@ async def build_context(
             log.warning("sd_ctx_fetch_failed", symbol=symbol, feed=label, error=str(exc))
             return None
 
+    # Ask for the session this scan is FOR, not "whatever the feed considers most
+    # recent". The two silently disagreed: levels are computed against `now`, so a
+    # feed answering with a different session produced an empty opening range and
+    # no ORB detections — a blind scanner indistinguishable from a quiet one. If
+    # the requested session genuinely has no bars yet (pre-market), the honest
+    # answer is no levels and no detections, not another day's levels.
+    from app.shortduration.levels import session_date_for
     ctx.bars_1m = await _safe(
-        registry.intraday_provider().get_intraday_bars(symbol, interval="1min"), "intraday"
+        registry.intraday_provider().get_intraday_bars(
+            symbol, interval="1min", session_date=session_date_for(now)
+        ),
+        "intraday",
     ) or []
     ctx.quote = await _safe(market.get_quote(symbol), "quote")
     if ctx.quote and ctx.quote.prev_close:
@@ -246,6 +256,7 @@ def _candidate_from(
     pop=None, what_has="", iv=None,
 ) -> ShortDurationCandidate:
     from app.shortduration.exit_plan import build_short_duration_exit_plan
+    from app.shortduration.ranking import board_for
 
     reasons = list(det.reasons)
     reasons.append(card.summary)
@@ -254,7 +265,7 @@ def _candidate_from(
     plan = contract.plan
     rr = plan.risk.reward_to_risk if plan and plan.risk else None
     exit_plan = build_short_duration_exit_plan(det, levels=levels, plan=plan)
-    return ShortDurationCandidate(
+    cand = ShortDurationCandidate(
         id=uuid.uuid4().hex[:12],
         symbol=symbol,
         dte_category=det.dte_category,
@@ -292,6 +303,11 @@ def _candidate_from(
         freshness=fresh.model_dump() if fresh is not None else None,
         reject_reasons=[r.value for r in contract.reject_reasons] + [r.value for r in gate.reject_reasons],
     )
+    # File it under the board matching the contract's REAL horizon. Everything
+    # above — detection, scoring weights, risk policy, gates — already ran under
+    # the scan's own category, so this only changes where the candidate is shown.
+    cand.dte_category = board_for(cand)
+    return cand
 
 
 async def _detect_symbol(
@@ -506,24 +522,31 @@ async def run_detection(
     try:
         from app.shortduration.ranking import mark_engine_picks, retire_engine_picks
 
-        # Retire the PREVIOUS scan's commitments first. Without this the flag is
-        # write-only: every scan added picks and none ever expired, so the board
-        # accumulated them across sessions and a stale bearish day kept renaming
-        # itself today's read.
-        prior = await asyncio.to_thread(
-            repository.list_short_duration_candidates,
-            dte_category=dte.value, limit=500, ranked=False,
-        )
-        fresh_ids = {c.id for c in created}
-        retired = retire_engine_picks(prior, keep_ids=fresh_ids)
-        for cand in retired:
-            await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+        # Per BOARD, not per scan: one 1-5DTE scan now files short-horizon and
+        # swing-horizon candidates on two different boards, and each board owns
+        # its own commitment list.
+        by_board: dict[DTECategory, list] = {}
+        for c in created:
+            by_board.setdefault(c.dte_category, []).append(c)
 
-        picked = mark_engine_picks(created)
-        for cand in picked:
-            await asyncio.to_thread(repository.save_short_duration_candidate, cand)
-        log.info("engine_picks_marked", dte=dte.value, picked=len(picked),
-                 retired=len(retired))
+        for board, rows in by_board.items():
+            # Retire the PREVIOUS scan's commitments first. Without this the flag
+            # is write-only: every scan added picks and none ever expired, so the
+            # board accumulated them across sessions and a stale bearish day kept
+            # renaming itself today's read.
+            prior = await asyncio.to_thread(
+                repository.list_short_duration_candidates,
+                dte_category=board.value, limit=500, ranked=False,
+            )
+            retired = retire_engine_picks(prior, keep_ids={c.id for c in rows})
+            for cand in retired:
+                await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+
+            picked = mark_engine_picks(sorted(rows, key=_board_rank_key))
+            for cand in picked:
+                await asyncio.to_thread(repository.save_short_duration_candidate, cand)
+            log.info("engine_picks_marked", board=board.value, scan=dte.value,
+                     picked=len(picked), retired=len(retired))
     except Exception as exc:  # noqa: BLE001
         log.warning("engine_picks_failed", dte=dte.value, error=str(exc))
     _record_scan_metrics(dte, created)

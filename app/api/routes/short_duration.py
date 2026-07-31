@@ -261,6 +261,18 @@ async def short_dte_candidates(limit: int = 100) -> list[ShortDurationCandidate]
     )
 
 
+@router.get("/medium/candidates", response_model=list[ShortDurationCandidate])
+async def medium_dte_candidates(limit: int = 100) -> list[ShortDurationCandidate]:
+    """Setups the scanner deliberately expressed weeks out (contracts.is_swing).
+
+    Filed here rather than on the 1-5DTE board, where they had become 65% of the
+    rows and made that label meaningless. The scan lineage is unchanged; only the
+    board follows the contract's real horizon."""
+    return await run_in_threadpool(
+        repository.list_short_duration_candidates, dte_category="medium", limit=limit
+    )
+
+
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
 async def candidate_detail(candidate_id: str) -> CandidateDetail:
     cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)

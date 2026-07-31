@@ -176,7 +176,14 @@ async def test_scan_stays_bounded_over_larger_universe() -> None:
     cands = await run_detection(DTECategory.SHORT_DTE, now=_FRI_RTH, universe=universe)
     assert len(cands) <= len(universe) * 2  # at most a couple strategies per symbol
     assert all(0.0 <= c.score <= 1.0 for c in cands)
-    assert cands == sorted(cands, key=lambda c: c.score, reverse=True)
+    # Board order is _board_rank_key, NOT raw score: scores are bucketed to
+    # ~0.05 and cost-drag breaks ties inside a bucket, so the cheapest-to-trade
+    # expression of a near-equal setup ranks above one scoring a hair higher.
+    # Asserting strict score-descending only ever passed by coincidence — it
+    # holds until two candidates share a bucket with inverted drag.
+    from app.shortduration.detection import _board_rank_key
+
+    assert cands == sorted(cands, key=_board_rank_key)
 
 
 def test_paper_unconstrained_lifts_risk_cap(monkeypatch) -> None:

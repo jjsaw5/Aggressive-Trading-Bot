@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -93,6 +94,29 @@ def _anchor(symbol: str) -> float:
     return _ANCHOR_PRICE.get(symbol.upper(), 50.0 + _seed(symbol) * 150.0)
 
 
+def _default_now() -> datetime:
+    """Wall clock, unless MOCK_CLOCK_ET_TIME pins the time of day.
+
+    The mock caps generated intraday bars at its own clock, so before ~09:45 ET a
+    scan sees an incomplete opening range and legitimately detects nothing. Real
+    behaviour, but it makes any test that expects a formed session pass or fail on
+    what time the suite happens to run. Pinning only the TIME (today's date is
+    kept, so every DTE and expiration calculation is unchanged) makes the session
+    complete without moving the calendar underneath anything.
+
+    Format "HH:MM" in America/New_York. Unset in production, where the wall clock
+    is the whole point."""
+    raw = os.environ.get("MOCK_CLOCK_ET_TIME", "").strip()
+    if not raw:
+        return datetime.now(UTC)
+    try:
+        hh, mm = (int(p) for p in raw.split(":", 1))
+        today_et = datetime.now(UTC).astimezone(_ET_TZ).date()
+        return datetime.combine(today_et, time(hh, mm), tzinfo=_ET_TZ).astimezone(UTC)
+    except (TypeError, ValueError):
+        return datetime.now(UTC)
+
+
 class MockProvider(
     MarketDataProvider,
     FundamentalsProvider,
@@ -109,7 +133,7 @@ class MockProvider(
     meta = _META
 
     def __init__(self, now: datetime | None = None) -> None:
-        self._now = now or datetime.now(UTC)
+        self._now = now or _default_now()
 
     # --- Market data ---
     async def get_quote(self, symbol: str) -> Quote:

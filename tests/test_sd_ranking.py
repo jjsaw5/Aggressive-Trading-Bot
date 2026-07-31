@@ -42,12 +42,18 @@ def test_ready_outranks_higher_score_that_is_blocked_or_watchlist() -> None:
     assert [c.id for c in out] == ["ready", "blocked", "watch", "rej"]
 
 
-def test_within_bucket_sorts_by_score_then_rr() -> None:
+def test_within_bucket_sorts_by_score_and_ignores_reward_to_risk() -> None:
+    # R:R is deliberately NOT a sort term: it already feeds the composite via
+    # risk_quality, so ranking on it double-counted it — and the `or 0.0` fallback
+    # it required buried every single-leg candidate (unbounded max profit, so R:R
+    # is undefined, not zero) beneath every spread. Score decides; ties go to the
+    # fresher row. See tests/test_board_routing.py for the single-leg regression.
     a = _cand(id="a", symbol="A", state=CandidateState.WATCHLIST, score=0.60, reward_to_risk=1.0)
     b = _cand(id="b", symbol="B", state=CandidateState.WATCHLIST, score=0.80, reward_to_risk=1.0)
     c = _cand(id="c", symbol="C", state=CandidateState.WATCHLIST, score=0.80, reward_to_risk=3.0)
     out = ranking.rank_candidates([a, b, c])
-    assert [x.id for x in out] == ["c", "b", "a"]  # score first, then R:R breaks the 0.80 tie
+    assert out[-1].id == "a"                       # lowest score sorts last
+    assert {x.id for x in out[:2]} == {"b", "c"}   # equal scores, R:R does not reorder
 
 
 def test_dedupe_keeps_freshest_per_setup() -> None:

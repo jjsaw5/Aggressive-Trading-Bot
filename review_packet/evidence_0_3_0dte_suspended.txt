@@ -1,0 +1,6 @@
+ITEM 0.3 — 0DTE signal generation disabled
+  capture_suspended_buckets = '0dte'
+  capture_earnings_hard_gate = True
+  0dte     -> SUSPENDED: 0dte capture suspended pending NBBO persistence + intraday marks; rows without them cannot be graded on the policy they claim
+  1-5dte   -> active
+  medium   -> active

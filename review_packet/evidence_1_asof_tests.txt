@@ -1,0 +1,12 @@
+tests/test_market_context.py::test_cost_drag_survives_to_the_context PASSED [  9%]
+tests/test_market_context.py::test_the_iv_term_structure_is_captured PASSED [ 18%]
+tests/test_market_context.py::test_volume_and_open_interest_are_captured_per_leg PASSED [ 27%]
+tests/test_market_context.py::test_greeks_are_absent_without_a_spot PASSED [ 36%]
+tests/test_market_context.py::test_full_nbbo_is_only_true_when_every_leg_has_a_book PASSED [ 45%]
+tests/test_signal_export_integrity.py::test_a_real_spot_survives_to_the_export PASSED [ 54%]
+tests/test_signal_export_integrity.py::test_a_missing_spot_reports_a_sentinel_not_zero PASSED [ 63%]
+tests/test_signal_export_integrity.py::test_the_snapshot_model_permits_an_absent_spot PASSED [ 72%]
+tests/test_signal_export_integrity.py::test_the_captured_nbbo_reaches_the_export PASSED [ 81%]
+tests/test_signal_export_integrity.py::test_every_leg_survives_in_full_alongside_the_flat_columns PASSED [ 90%]
+tests/test_signal_export_integrity.py::test_a_row_predating_capture_says_no_data_not_not_implemented PASSED [100%]
+====================== 11 passed, 39 deselected in 0.73s =======================

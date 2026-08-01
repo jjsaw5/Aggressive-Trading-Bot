@@ -1,0 +1,31 @@
+ITEM 0.1 — scanner -> order placement gating
+SOURCE: app/modes/execution_guard.py
+
+def _conviction_block() -> str | None:
+    """Deny reason while the conviction gate is RED, else None.
+
+    Fails CLOSED: if the gate cannot be evaluated at all, that is not permission.
+    An engine that cannot demonstrate calibration is indistinguishable, from the
+    broker's side, from one that has none."""
+    try:
+        from app.shortduration.conviction_gate import get_conviction_gate
+
+        gate = get_conviction_gate()
+    except Exception as exc:  # noqa: BLE001 — unevaluable gate denies, never allows
+        log.warning("conviction_gate_unevaluable_denying", error=str(exc))
+        return "conviction_gate_unevaluable"
+    if not gate.green:
+        failed = ",".join(c.name for c in gate.criteria if not c.passed)
+        return f"conviction_gate_red[{failed}]"
+    return None
+
+--- gate state at time of packet ---
+GREEN=False
+  FAIL  validated_feature: no feature has cleared the out-of-sample validation gate (registries empty — 7 pre-registered/OOS tests, all null)
+  PASS  calibration_sample: n_decisive=145 (need >=30), grade=real_marks (need real_marks)
+  PASS  brier: brier=0.0849 (need <=0.25)
+  FAIL  discrimination: spearman=0.1529 but its 95% CI [-0.0133, 0.3193] includes zero — the correlation could plausibly be nothing
+  FAIL  per_regime: 0 regime(s) with n>=10 (need >=2 — a single-regime green is a bull-sample trap)
+tests/test_capture_gates.py::test_a_red_conviction_gate_denies_execution PASSED [ 50%]
+tests/test_capture_gates.py::test_approval_is_still_checked_before_the_gate PASSED [100%]
+======================= 2 passed, 13 deselected in 0.51s =======================

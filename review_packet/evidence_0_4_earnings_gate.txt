@@ -1,0 +1,31 @@
+ITEM 0.4 — earnings gate code path
+SOURCE: app/shortduration/capture_gates.py
+
+def earnings_before_expiry(
+    next_earnings: date | None, expiration: date | None
+) -> CaptureRejection | None:
+    """Reject when earnings land on or before the expiry being traded.
+
+    Inclusive of the expiry date itself: a report on expiration day resolves the
+    position on the print, which is the case the rule exists for."""
+    if not settings.capture_earnings_hard_gate:
+        return None
+    if next_earnings is None or expiration is None:
+        return None
+    if next_earnings <= expiration:
+        return CaptureRejection(
+            RejectReason.EARNINGS_GATE,
+            f"earnings {next_earnings} on/before expiry {expiration} — event binary "
+            f"(IV crush + gap), not a continuation trade",
+        )
+    return None
+
+
+def bucket_suspended(dte: DTECategory) -> CaptureRejection | None:
+tests/test_capture_gates.py::test_earnings_before_expiry_rejects_the_setup PASSED [ 16%]
+tests/test_capture_gates.py::test_earnings_on_the_expiry_date_itself_rejects PASSED [ 33%]
+tests/test_capture_gates.py::test_earnings_after_expiry_is_fine PASSED   [ 50%]
+tests/test_capture_gates.py::test_an_unknown_earnings_date_does_not_reject PASSED [ 66%]
+tests/test_capture_gates.py::test_suspension_is_reported_before_earnings PASSED [ 83%]
+tests/test_capture_gates.py::test_the_aapl_case_cannot_reach_a_candidate PASSED [100%]
+======================= 6 passed, 9 deselected in 0.82s ========================

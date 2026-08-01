@@ -106,9 +106,14 @@ def _det(direction: Direction = Direction.BULLISH) -> StrategyDetection:
     )
 
 
-# Each case pins one axis of scorer behaviour. `term_structure_*` are THE cases
-# FINDING_01 turns on: production supplies None today, and the fix makes it a
-# real number, which must move the score and must be visible here.
+# Each case pins one axis of scorer behaviour.
+#
+# NOTE on the `term_structure_*` cases: they pin what the SCORER does with a
+# given slope. They do NOT detect the provider starting or stopping supplying
+# one — the inputs here are fixed by construction, so a provider change cannot
+# move these numbers. That boundary is covered by
+# tests/test_provider_scoring_contract.py. FINDING_01 lived exactly between the
+# two, which is why both exist.
 CASES: dict[str, dict] = {
     "baseline_bullish_no_term_slope": {"iv": {}, "direction": "bullish"},
     "term_structure_backwardated": {"iv": {"term_structure_slope": -0.05}, "direction": "bullish"},

@@ -1,0 +1,169 @@
+name: CI
+
+# Pre-flight item P3 (reviewer Ruling 4). Until this existed there was no
+# automation on this repository at all: the freeze was enforced by tests nothing
+# ran, and FINDING_01 reached production behaviour unopposed.
+#
+# Two jobs, and the second is the point. `tests` proves the code works.
+# `freeze-guard` proves the SCORING MODEL did not change without saying so — the
+# check that would have caught FINDING_01 at review time rather than at audit.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A superseded run tells you nothing useful; cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Providers are pinned to mock and Turso is blanked so CI can never reach a
+  # live vendor or the production warehouse. conftest.py does this too; doing it
+  # here as well means a conftest regression cannot silently open the door.
+  PROVIDER_MARKET_DATA: mock
+  PROVIDER_OPTIONS_CHAIN: mock
+  PROVIDER_OPTIONS_FLOW: mock
+  PROVIDER_IV_HISTORY: mock
+  PROVIDER_INTRADAY: mock
+  PROVIDER_NEWS: mock
+  PROVIDER_CALENDAR: mock
+  PROVIDER_ECON_CALENDAR: mock
+  PROVIDER_FUNDAMENTALS: mock
+  PROVIDER_BROKERAGE: mock
+  TURSO_DATABASE_URL: ""
+  TURSO_AUTH_TOKEN: ""
+  UW_HISTORIC_ENABLED: "false"
+  UW_INTRADAY_ENABLED: "false"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest pytest-asyncio ruff
+      - name: Lint
+        run: python -m ruff check app/ scripts/ tests/
+      - name: Full test suite
+        run: python -m pytest -o addopts="" -q
+
+  freeze-guard:
+    # THE job FINDING_01 argued for. Fails a PR that changes scoring behaviour
+    # without declaring it, whether the change is inside the scorer or upstream
+    # of it in a provider.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need the base ref to diff against
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest pytest-asyncio
+
+      - name: Behavioural freeze controls
+        # These three are what actually detect a model change. They run in the
+        # `tests` job too; running them here as a named step means the failure
+        # reads as "the freeze broke", not "some test failed".
+        run: |
+          python -m pytest -o addopts="" -q \
+            tests/test_scoring_freeze.py \
+            tests/test_scoring_golden.py \
+            tests/test_provider_scoring_contract.py
+
+      - name: Path guard — scoring touched without declaring it
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Paths whose behaviour IS the frozen model. The provider files are
+          # included deliberately: FINDING_01 changed the shipped model from
+          # unusual_whales/client.py, with no diff under scoring/ at all.
+          GUARDED='^(app/shortduration/scoring/|app/shortduration/strategies/|app/providers/unusual_whales/client\.py|app/providers/mock/provider\.py|app/engine/iv_context\.py)'
+
+          CHANGED="$(git diff --name-only "$BASE" "$HEAD")"
+          TOUCHED="$(echo "$CHANGED" | grep -E "$GUARDED" || true)"
+
+          if [ -z "$TOUCHED" ]; then
+            echo "No guarded path touched — freeze not implicated."
+            exit 0
+          fi
+
+          echo "Guarded paths touched:"
+          echo "$TOUCHED" | sed 's/^/  /'
+
+          # A guarded change is legitimate ONLY with both a version bump and a
+          # dated pre-registration amendment, in the same PR.
+          VERSION_BUMPED=0
+          git diff "$BASE" "$HEAD" -- app/config.py \
+            | grep -qE '^\+.*scoring_model_version' && VERSION_BUMPED=1 || true
+
+          PREREG_AMENDED=0
+          git diff "$BASE" "$HEAD" -- docs/CAPTURE_WINDOW_PREREGISTRATION.md \
+            | grep -qiE '^\+.*amendment' && PREREG_AMENDED=1 || true
+
+          if [ "$VERSION_BUMPED" = "1" ] && [ "$PREREG_AMENDED" = "1" ]; then
+            echo "Declared: scoring_model_version bumped AND pre-registration amended."
+            exit 0
+          fi
+
+          echo ""
+          echo "FREEZE VIOLATION"
+          echo "This PR touches a path whose behaviour is the frozen scoring model,"
+          echo "without declaring a model change."
+          echo ""
+          echo "  scoring_model_version bumped : $VERSION_BUMPED"
+          echo "  pre-registration amended     : $PREREG_AMENDED"
+          echo ""
+          echo "See CAPTURE_WINDOW_PREREGISTRATION.md sections 2 and 8, and"
+          echo "docs/FREEZE_POINT.md. A legitimate model change needs, in THIS PR:"
+          echo "  1. a scoring_model_version bump in app/config.py"
+          echo "  2. a dated amendment under pre-registration section 8"
+          echo "  3. a regenerated tests/golden/scoring_v3.json with the delta documented"
+          echo ""
+          echo "If this change does NOT alter scoring behaviour, say so in the PR"
+          echo "body and a reviewer can override — do not weaken this job."
+          exit 1
+
+      - name: Freeze-point diff (informational)
+        # Resolves the tag, falls back to the recorded SHA, and fails loudly if
+        # neither is reachable — a check that silently passes because its
+        # reference is missing is worse than no check.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          SHA="$(grep -oE '[0-9a-f]{40}' docs/FREEZE_POINT.md | head -1)"
+          REF="freeze/sd-scoring-2026.08-v3.1"
+          if git rev-parse -q --verify "refs/tags/$REF" >/dev/null; then
+            POINT="$REF"
+          elif git cat-file -e "$SHA^{commit}" 2>/dev/null; then
+            POINT="$SHA"
+            echo "note: tag $REF unavailable; using the SHA recorded in docs/FREEZE_POINT.md"
+          else
+            echo "ERROR: neither the freeze tag nor its recorded SHA is reachable."
+            exit 1
+          fi
+          echo "Diff of scoring paths since the freeze point ($POINT):"
+          git diff "$POINT" -- app/shortduration/scoring/ app/shortduration/strategies/ \
+            | tee /tmp/freeze.diff
+          test -s /tmp/freeze.diff \
+            && echo "NON-EMPTY — expected only if an amendment covers it." \
+            || echo "Empty — scoring paths unchanged since the freeze."

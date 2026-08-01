@@ -172,12 +172,19 @@ def _greeks_source(mc) -> str:
     return ";".join(sorted(sources))
 
 
-def _signal_row(s, o, cand, sha: str) -> dict:
+def _signal_row(s, o, cand, sha: str, regimes: list | None = None) -> dict:
     plan = s.trade_plan
     risk = plan.risk if plan else None
     bucket = _bucket(s.dte_at_entry)
     is_live = s.source.value == "live"
     mc = getattr(s, "market_context", None)
+    # Market-level regime AS OF the signal (P6). Strictly the PRIOR session:
+    # a signal fired intraday cannot know its own session's close, so joining
+    # to the same day would condition the per-regime cuts on the future.
+    dr = None
+    if regimes:
+        from app.analytics.daily_regime import regime_as_of
+        dr = regime_as_of(regimes, s.generated_at.astimezone(_ET).date())
 
     row = {
         # --- 1A identification ---
@@ -239,6 +246,27 @@ def _signal_row(s, o, cand, sha: str) -> dict:
         "net_delta_modeled": _f(mc.net_delta, 4) if mc and mc.net_delta is not None else NO_DATA,
         "greeks_source": _greeks_source(mc),
         # --- 1C(iv) regime (item 1.11) ---
+        # MARKET-level, from the daily table. This is the class the
+        # pre-registration's per-regime cuts and the conviction gate use: it
+        # exists independently of any signal, so two signals in the same minute
+        # cannot disagree about what market they were in.
+        "market_regime_class": dr.regime_class if dr else NO_DATA,
+        "market_regime_session": dr.session.isoformat() if dr else NO_DATA,
+        "vix_close": _f(dr.vix_close, 4) if dr and dr.vix_close is not None else NO_DATA,
+        "vix_percentile_20d": (
+            _f(dr.vix_percentile_20d, 4)
+            if dr and dr.vix_percentile_20d is not None else NO_DATA
+        ),
+        "spx_realized_vol_20d": (
+            _f(dr.spx_realized_vol_20d, 6)
+            if dr and dr.spx_realized_vol_20d is not None else NO_DATA
+        ),
+        "spx_vs_50d_sma": (
+            _f(dr.spx_vs_50d_sma, 6)
+            if dr and dr.spx_vs_50d_sma is not None else NO_DATA
+        ),
+        # SUPPLEMENTARY per-signal tag (symbol-level). Retained per Ruling 2,
+        # but it does not replace the market class above.
         "regime_tag": mc.regime_tag if mc else NO_DATA,
         "regime_vol": mc.regime_vol if mc else NO_DATA,
         "regime_tape": mc.regime_tape if mc else NO_DATA,
@@ -421,13 +449,20 @@ async def main() -> None:
     pairs = [(by_id[i], o) for i, o in select_pnl_outcomes(outs).items() if i in by_id]
     pairs.sort(key=lambda so: so[0].generated_at, reverse=True)
 
+    # Loaded once, not per row: `regime_as_of` scans the series, and the table
+    # is small (one row per session).
+    regimes = await asyncio.to_thread(repository.list_daily_regimes)
+    if not regimes:
+        print("  WARNING: daily regime table is empty — market_regime_* columns "
+              "will report NA_no_data. Run scripts/build_regime_table.py.")
+
     rows, forward = [], []
     for s, o in pairs:
         cand = None
         if not s.decision_id.startswith("live:"):
             cid = s.decision_id.split(":", 1)[1] if ":" in s.decision_id else s.decision_id
             cand = await asyncio.to_thread(repository.get_short_duration_candidate, cid)
-        r = _signal_row(s, o, cand, sha)
+        r = _signal_row(s, o, cand, sha, regimes)
         rows.append(r)
         if s.source.value == "live":
             fr = dict(r)

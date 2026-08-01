@@ -114,6 +114,24 @@ class DecisionOutcomeRow(Base, TimestampMixin):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+class DailyRegimeRow(Base, TimestampMixin):
+    """One session's market-level regime (P6). Immutable once written: rewriting
+    a row would silently re-cut every analysis already grouped by it."""
+
+    __tablename__ = "daily_regimes"
+
+    session: Mapped[date] = mapped_column(Date, primary_key=True)
+    vix_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vix_percentile_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spx_realized_vol_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spx_vs_50d_sma: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Indexed: the per-regime gate groups by this across the whole corpus.
+    regime_class: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    vol_state: Mapped[str] = mapped_column(String(12), nullable=False)
+    trend_state: Mapped[str] = mapped_column(String(12), nullable=False)
+    source: Mapped[str] = mapped_column(String(24), default="")
+
+
 class TierMemberRow(Base, TimestampMixin):
     """Current membership of a symbol in a funnel tier (Tier 1-4)."""
 

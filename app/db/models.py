@@ -82,7 +82,9 @@ class DecisionSnapshotRow(Base, TimestampMixin):
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     composite_score: Mapped[float] = mapped_column(Float, nullable=False)
     probability_of_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
-    entry_spot: Mapped[float] = mapped_column(Float, nullable=False)
+    # Nullable: absent must be representable. NOT NULL forced builders into
+    # `or 0.0`, and every scanner row reported a spot of zero (audit B1).
+    entry_spot: Mapped[float | None] = mapped_column(Float, nullable=True)
     iv_rank: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_loss_usd: Mapped[float] = mapped_column(Float, nullable=False)
     expiration: Mapped[date | None] = mapped_column(Date, nullable=True)

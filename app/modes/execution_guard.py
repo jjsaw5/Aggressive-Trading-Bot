@@ -34,6 +34,25 @@ class ExecutionDecision:
     reason: str
 
 
+def _conviction_block() -> str | None:
+    """Deny reason while the conviction gate is RED, else None.
+
+    Fails CLOSED: if the gate cannot be evaluated at all, that is not permission.
+    An engine that cannot demonstrate calibration is indistinguishable, from the
+    broker's side, from one that has none."""
+    try:
+        from app.shortduration.conviction_gate import get_conviction_gate
+
+        gate = get_conviction_gate()
+    except Exception as exc:  # noqa: BLE001 — unevaluable gate denies, never allows
+        log.warning("conviction_gate_unevaluable_denying", error=str(exc))
+        return "conviction_gate_unevaluable"
+    if not gate.green:
+        failed = ",".join(c.name for c in gate.criteria if not c.passed)
+        return f"conviction_gate_red[{failed}]"
+    return None
+
+
 class ExecutionGuard:
     def __init__(self, policy: RiskPolicy | None = None) -> None:
         self.policy = policy or RiskPolicy.from_settings()
@@ -52,6 +71,20 @@ class ExecutionGuard:
         # 3. Risk must still fit policy at execution time.
         if proposal.trade_plan.risk.max_loss_usd > self.policy.max_trade_risk_usd + 1e-6:
             return self._deny(proposal, "risk_exceeds_policy_at_execution")
+
+        # 4. The engine must have earned the right to spend money. Signal-only
+        #    capture mode: while the conviction gate is RED, no scanner-derived
+        #    intent may reach a broker, whatever else is configured.
+        #
+        #    This is deliberately the LAST check and deliberately not
+        #    configurable. The audit of build 7afa098 found 67 scanner signals
+        #    spanning 4 sessions, 78% one direction, score-vs-outcome
+        #    indistinguishable from zero. The gate was already red and correct to
+        #    be; it simply was not wired to execution. A gate nothing consults is
+        #    documentation.
+        gate_reason = _conviction_block()
+        if gate_reason is not None:
+            return self._deny(proposal, gate_reason)
 
         log.info(
             "execution_authorized",

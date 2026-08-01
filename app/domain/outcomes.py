@@ -67,7 +67,10 @@ class DecisionSnapshot(BaseModel):
     is_credit: bool = False
 
     # --- Frozen market state at decision time ---
-    entry_spot: float
+    # Nullable on purpose: absent must be representable. It was a required
+    # float, so builders wrote `or 0.0` when the value was missing and every
+    # scanner row reported a spot of zero — a silent null wearing a number.
+    entry_spot: float | None = None
     entry_iv: float | None = None
     iv_rank: float | None = None
     # Shadow signal (see app/engine/flow_quality.py): the sibling scanner's

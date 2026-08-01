@@ -249,11 +249,30 @@ def _apply_cost_drag(contract: ContractResult, chain, as_of: date) -> None:
     )
 
 
+def _front_expiration(chain, dte: DTECategory, now: datetime) -> date | None:
+    """The nearest expiry this bucket would actually trade.
+
+    Used by the earnings gate BEFORE a contract is selected, so the decision to
+    reject does not depend on the structure that rejection prevents from being
+    built. Falls back to the bucket's own horizon window when no chain is
+    available, which is the conservative reading — an unknown expiry is treated
+    as the nearest one the bucket could reach."""
+    from datetime import timedelta
+
+    today = now.date()
+    if chain is not None and chain.contracts:
+        exps = sorted({c.expiration for c in chain.contracts if c.expiration >= today})
+        if exps:
+            return exps[0]
+    horizon = 1 if dte == DTECategory.ZERO_DTE else settings.short_duration_max_dte
+    return today + timedelta(days=horizon)
+
+
 def _candidate_from(
     det: StrategyDetection, symbol: str, now: datetime,
     card: ScoreCard, news: NewsScore | None, regime: ShortDurationRegimeState,
     contract: ContractResult, gate: EntryGate, fresh=None, levels=None, thesis=None,
-    pop=None, what_has="", iv=None,
+    pop=None, what_has="", iv=None, spot=None,
 ) -> ShortDurationCandidate:
     from app.shortduration.exit_plan import build_short_duration_exit_plan
     from app.shortduration.ranking import board_for
@@ -288,6 +307,9 @@ def _candidate_from(
         # a decision with no iv_rank cannot be assigned a vol regime later.
         entry_iv=getattr(iv, "iv30", None) if iv is not None else None,
         iv_rank=getattr(iv, "iv_rank", None) if iv is not None else None,
+        # The spot the structure was priced against. None when genuinely
+        # unknown — never 0.0, which reads as a real price of zero.
+        entry_spot=round(spot, 4) if spot else None,
         max_risk_usd=plan.risk.max_loss_usd if plan else None,
         reward_to_risk=rr,
         state=CandidateState.DETECTED,
@@ -411,6 +433,18 @@ async def _score_symbol(
     daily = await asyncio.to_thread(daily_risk_state, now)
     scored = []
     for det in dets:
+        # Pre-scoring rejections: a setup that must not enter the research record
+        # at all. Rejections are logged with a reason (see capture_gates) so an
+        # excluded setup remains evidence rather than vanishing.
+        from app.shortduration.capture_gates import evaluate_capture_gates
+
+        blocked = evaluate_capture_gates(
+            dte=det.dte_category, symbol=symbol, next_earnings=ctx.next_earnings,
+            expiration=_front_expiration(chain, det.dte_category, now),
+        )
+        if blocked is not None:
+            continue
+
         fa = analyze_flow(ctx.flow, now, det.direction)
         news = best_news_score(
             ctx.news, for_symbol=symbol, change_pct=ctx.change_pct, rel_volume=rel_vol, flow=fa
@@ -444,7 +478,12 @@ async def _score_symbol(
             # that IV is unavailable, never silently to iv30.
             expiry_iv = _traded_expiry_iv(chain, contract.plan, spot)
             pop, what_has = _candidate_odds(det, symbol, contract, spot, expiry_iv, now)
-            scored.append((det, card, news, contract, gate, fresh, thesis, pop, what_has, iv))
+            # `spot` travels with the row so the candidate can freeze the price it
+            # was actually scored against (see B1: it used to be recomputed from a
+            # funnel object that is None here, and silently became 0.0).
+            scored.append(
+                (det, card, news, contract, gate, fresh, thesis, pop, what_has, iv, spot)
+            )
     return scored, coverage
 
 
@@ -491,10 +530,11 @@ async def run_detection(
         scored = row[0] if row else None
         if not scored:
             continue
-        for det, card, news, contract, gate, fresh, thesis, pop, what_has, iv in scored:
+        for det, card, news, contract, gate, fresh, thesis, pop, what_has, iv, spot in scored:
             cand = _candidate_from(
                 det, symbol, now, card, news, regime, contract, gate, fresh,
                 levels=_ctx.levels, thesis=thesis, pop=pop, what_has=what_has, iv=iv,
+                spot=spot,
             )
             transitions = _classify_transitions(cand, det, now, tradeable=contract.is_tradeable)
             await asyncio.to_thread(repository.save_short_duration_candidate, cand)

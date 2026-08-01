@@ -109,7 +109,13 @@ def test_1_5dte_plan_is_dte_time_stopped_not_intraday() -> None:
     assert "expiration" in ep.expiration_action.lower()
 
 
-async def test_run_detection_attaches_exit_plan() -> None:
+async def test_run_detection_attaches_exit_plan(monkeypatch) -> None:
+    # 0DTE capture is suspended by policy (directive Phase 0.3) pending NBBO
+    # persistence and intraday marks. This test exercises detection, not that
+    # policy, so it un-suspends explicitly. Suspension is covered in
+    # tests/test_capture_gates.py.
+    from app.config import settings as _settings
+    monkeypatch.setattr(_settings, "capture_suspended_buckets", "")
     from app.shortduration.detection import run_detection
 
     cands = await run_detection(DTECategory.ZERO_DTE, now=_NOW)

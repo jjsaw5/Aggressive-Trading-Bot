@@ -116,6 +116,16 @@ class Settings(BaseSettings):
     # And an earnings report before the expiry turns a continuation trade into an
     # event binary (IV-crush + gap). Both are surfaced, never auto-gated.
     thesis_swing_min_dte: int = 10
+    # --- Capture controls (signal-only mode; see shortduration/capture_gates.py) ---
+    # Earnings on/before expiry REJECTS the setup pre-scoring rather than
+    # annotating it. The advisory version gated nothing and an AAPL spread was
+    # picked #1 the day before earnings on that basis.
+    capture_earnings_hard_gate: bool = True
+    # Buckets whose data-capture dependencies are unmet. 0DTE is suspended until
+    # NBBO persistence and intraday marks land: all 38 audited 0DTE signals
+    # resolved `expiry` because daily marks cannot see an intraday exit, so the
+    # managed policy they claim to run was never measured.
+    capture_suspended_buckets: str = "0dte"
     # When a daily-trend (swing) thesis fires in the short-duration scanner, express
     # it at a SWING expiry (weeks, not days) so the instrument matches the thesis —
     # the fix for a daily-trend signal landing in a ~4-DTE spread. 21-45 DTE targets

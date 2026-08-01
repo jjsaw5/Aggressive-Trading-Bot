@@ -15,6 +15,12 @@ import pytest
 _REPO = Path(__file__).resolve().parents[1]
 _TABLE = "short_duration_candidates"
 _NEW_COLS = {"scoring_model_version", "risk_policy_version"}
+# The revision 0004 introduced, and the one immediately before it. Named
+# explicitly rather than reached via `downgrade -1`: that only ever meant
+# "undo 0004" while 0004 happened to be head, so the test silently stopped
+# exercising it the moment a later migration landed.
+_REV_0004 = "0004_sd_candidate_scoring_version"
+_REV_BEFORE_0004 = "0003_short_duration_trades"
 
 
 def _alembic(db_path: Path, *args: str) -> subprocess.CompletedProcess:
@@ -46,7 +52,7 @@ def test_full_chain_up_down_is_reversible_and_idempotent(tmp_path) -> None:
     cols = _columns(db, _TABLE)
     assert _NEW_COLS <= cols, f"0004 columns missing after upgrade: {cols}"
 
-    down = _alembic(db, "downgrade", "-1")
+    down = _alembic(db, "downgrade", _REV_BEFORE_0004)
     assert down.returncode == 0, down.stderr
     assert not (_NEW_COLS & _columns(db, _TABLE)), "0004 downgrade left its columns behind"
 

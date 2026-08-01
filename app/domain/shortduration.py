@@ -421,6 +421,12 @@ class ShortDurationCandidate(BaseModel):
     # the structure's break-even + IV, and a plain-English "what has to happen" line.
     probability_of_profit: float | None = None
     what_has_to_happen: str = ""
+    # Underlying price the structure was priced against, frozen at scan.
+    # Previously computed and discarded: the snapshot read it from
+    # `trade_plan.analytics`, which is a funnel-lineage object and is None for
+    # short-duration plans, so `or 0.0` wrote a silent zero on every scanner
+    # row. 67/67 audited signals had spot_price=0.0.
+    entry_spot: float | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -63,14 +63,44 @@ def earnings_before_expiry(
 
 
 def bucket_suspended(dte: DTECategory) -> CaptureRejection | None:
-    """Reject every setup in a bucket whose data-capture dependencies are unmet."""
+    """Reject every setup in a bucket whose data-capture dependencies are unmet.
+
+    0DTE's re-enable conditions are QUANTITATIVE as of reviewer Ruling 2, and no
+    longer merely "intraday marks ship". Intraday marks did ship (Phase 2) and
+    0DTE stays suspended anyway, because the marks that shipped are trade-driven
+    and sparse: 31% session coverage with a 53-minute maximum gap on a LIQUID
+    contract. For a bucket whose entire trade lives inside one session, a
+    53-minute blind spot is not a bound on the answer — it is a hole in it.
+
+    The bar is now three conditions, all required:
+      1. stored NBBO at signal time                     — DONE (Phase 1)
+      2. intraday marks                                 — DONE (Phase 2)
+      3. demonstrated coverage >= 80% of RTH minutes
+         with max gap <= 5 minutes, on a representative
+         contract sample                                — NOT MET
+    See app/analytics/mark_quality.py for (3)'s measurement and thresholds.
+    """
     suspended = {s.strip() for s in settings.capture_suspended_buckets.split(",") if s.strip()}
     if dte.value in suspended:
-        return CaptureRejection(
-            RejectReason.BUCKET_SUSPENDED,
-            f"{dte.value} capture suspended pending NBBO persistence + intraday "
-            f"marks; rows without them cannot be graded on the policy they claim",
+        from app.analytics.mark_quality import (
+            ZERO_DTE_MAX_GAP_MINUTES,
+            ZERO_DTE_MIN_COVERAGE_PCT,
         )
+
+        detail = (
+            f"{dte.value} capture suspended pending NBBO persistence + intraday "
+            f"marks; rows without them cannot be graded on the policy they claim"
+        )
+        if dte == DTECategory.ZERO_DTE:
+            detail = (
+                f"{dte.value} capture suspended: NBBO (done) + intraday marks "
+                f"(done) + demonstrated coverage >= "
+                f"{ZERO_DTE_MIN_COVERAGE_PCT:.0%} of RTH with max gap <= "
+                f"{ZERO_DTE_MAX_GAP_MINUTES}min (NOT MET — measured 31% coverage, "
+                f"52min max gap on a liquid contract). A same-session trade "
+                f"cannot be graded through a 52-minute blind spot."
+            )
+        return CaptureRejection(RejectReason.BUCKET_SUSPENDED, detail)
     return None
 
 

@@ -14,6 +14,16 @@ ISO 8601. Source values are stored UTC and converted on export.
 | `NA_no_data` | The concept exists, but this row has no value for it. |
 | `NA_unresolved` | Outcome not yet determined. |
 
+**Two capture eras — read every §1C/§1E column against the right one:**
+
+| Era | Boundary | What §1C / mark-quality columns hold |
+|---|---|---|
+| **Pre-capture** | signals before Phase 1 deploy | `NA_no_data`. Market context was computed on every scan and discarded before the warehouse. **Not backfillable** — a point-in-time quote cannot be reconstructed. |
+| **Capture** | signals after Phase 1 deploy | Populated. |
+
+`NA_no_data` in §1C therefore means "this row predates capture", NOT "the system
+cannot do this". `NA_not_implemented` continues to mean the latter.
+
 **Row scope:** one row per resolved decision carrying a dollar P&L. Two
 populations, distinguished by `signal_source`:
 
@@ -85,35 +95,98 @@ These are **not** independent inputs. The composite treats them as if they were.
 
 ## 1C · Market context at signal time
 
-**This section is mostly a gap.** The warehouse froze the *prediction*, not the
-order book. A point-in-time quote cannot be reconstructed after the fact.
+Frozen onto the decision at scan time (`MarketContext`) — see the two-era note
+above. Everything here is **recorded, never scored**:
+`CAPTURE_WINDOW_PREREGISTRATION.md` §2 permits persistence precisely because it
+does not change what the scorer computes, and `tests/test_scoring_freeze.py`
+enforces that no scoring module can import it.
 
-| Column | Status | Note |
+### Structure pricing — NBBO
+
+The flat columns describe the **primary long leg**. A debit structure's identity
+sits in the leg it is long; the short leg is a financing choice. Every leg's full
+quote ships in `legs_nbbo_json`, because item 1.1 is NBBO *per leg* and
+collapsing a spread to one book loses the thing being measured.
+
+| Column | Definition | Source | Formula |
+|---|---|---|---|
+| `spot_price` | Underlying at plan time | `entry_spot` | Frozen at scan. **Never 0.0** — see B1 |
+| `option_bid` / `option_ask` | Primary long leg NBBO | UW `option-contracts` | `nbbo_bid` / `nbbo_ask` |
+| `option_mid` | Midpoint | derived | `(bid+ask)/2`, **only** when `ask >= bid`. A crossed book yields `NA_no_data`, not a midpoint |
+| `option_mark` | — | — | `NA_not_implemented` **by design.** No provider in the stack publishes a consolidated mark. Per Ruling 2 the spec is amended: where no vendor mark exists, `option_mid` off a real two-sided book is the reference price and this stays NA. Inventing one would be worse than declaring its absence |
+| `spread_pct` | Relative spread | derived | `(ask-bid)/mid`; `NA_no_data` when `mid <= 0` |
+| `legs_nbbo_json` | Every leg, full quote | derived | JSON array: strike, type, expiration, signed qty, bid/ask/mid/spread, volume, OI, iv, delta/gamma/theta/vega, `greeks_source`, `quote_source` |
+
+### Cost
+
+| Column | Definition | Source | Formula |
+|---|---|---|---|
+| `cost_drag_ratio` | Round-trip spread tax as a share of defined risk | computed at scan | `(Σ half-spread × 2 × 100 × contracts) / max_loss_usd`. Requires **every** leg two-sided; a partial sum would understate the tax |
+| `round_trip_cost_usd` | Same tax in dollars | derived | The ratio's numerator, emitted so its denominator is auditable |
+
+### Volatility
+
+| Column | Definition | Source | Formula |
+|---|---|---|---|
+| `iv` | 30-day ATM IV | UW `volatility/stats` | `iv` field |
+| `iv_rank_252d` | Rank of current IV30 in its trailing 252-session range | UW IV history | See the note below |
+| `iv_percentile` | Percentile of the same series | UW IV history | — |
+| `iv_rank_source` | How rank was derived | — | `iv_history` (true rank) / `hv_proxy` (realized-vol stand-in — **a different construct**, and the scorer discounts it 0.85) / `provider` |
+| `term_slope` | Front-to-back ATM IV slope | UW `volatility/term-structure` | `iv(back ~30DTE) − iv(front, smallest DTE ≥ 1)`. **Negative = backwardation** (IV-crush risk for a debit buyer). DTE 0 is excluded from the front leg: the expiration-day ATM solve is unstable (SPY: 0.24 at dte=0 vs 0.08 at dte=3) and anchoring there would manufacture backwardation on every 0DTE-listed name. **Populated only from `sd-scoring-2026.08-v3.1`** — see FINDING_01 |
+| `iv_skew` | OTM-put IV minus OTM-call IV | derived from chain | `>0` = downside fear |
+| `implied_move_to_expiry` | Expected move as a fraction of spot | derived | `iv_traded_expiry × sqrt(dte/365)`. Uses the **traded** expiry's IV, not IV30 — a 30-day IV over a 2-day horizon badly overstates the move |
+| `implied_move_usd` | Same, in dollars | derived | `implied_move_to_expiry × spot` |
+| `realized_vol_20d` | 20-day realized vol on the underlying | `IVContext.hv20` | Annualised stdev of 20 daily log returns |
+| `vrp` | Variance risk premium, **in vol points** | derived | `iv30 − hv20` |
+| `vrp_ratio` | Same, dimensionless | derived | `iv30 / hv20` |
+
+Both VRP conventions ship named, because "VRP" is ambiguous in the literature
+and a single unlabeled column would be unusable at analysis time. Both are
+`NA_no_data` unless *both* inputs exist.
+
+### Depth and events
+
+| Column | Definition | Source |
 |---|---|---|
-| `spot_price` | **Available** | `entry_spot`, frozen at plan time |
-| `option_bid` / `option_ask` / `option_mark` / `option_mid` | `NA_not_implemented` | Never persisted. The chain snapshot existed at scan; only the derived net was kept |
-| `spread_pct` | `NA_not_implemented` | Requires bid/ask |
-| `cost_drag_ratio` | `NA_not_implemented` | **Computed live** on the candidate (round-trip spread ÷ max risk) but never copied to the snapshot. Observed live values 2–36% |
-| `iv` | `NA_no_data` on all 145 | `entry_iv` field exists; null on every historical row |
-| `iv_rank_252d` | `NA_no_data` on all 145 | See below |
-| `implied_move_to_expiry` | `NA_not_implemented` | No straddle-implied move is computed anywhere |
-| `realized_vol_20d` | `NA_not_implemented` | HV is computed inside the mock provider only, never for live scoring |
-| `vrp` | `NA_not_implemented` | No VRP on the signal path. A separate VRP *study* exists (`docs/VRP_STAGE*`) and returned null |
-| `term_slope` | `NA_not_implemented` | `IVContext.term_structure_slope` exists on the provider but is not persisted |
-| `volume` / `open_interest` | `NA_not_implemented` | Gate contract selection at scan; not stored |
-| `earnings_days_away` | `NA_not_implemented` | Computed live for the guardrail, written into thesis prose, never persisted as a number |
-| `time_of_day_bucket` | **Available** | Derived from `signal_ts` in ET: `open` <10:00, `morning` <12:00, `midday` <15:00, `power_hour` <15:45, `close` ≥15:45, else `outside_rth` |
+| `volume` / `open_interest` | Primary long leg | UW `option-contracts` |
+| `earnings_days_away` | Calendar days to next report | FMP earnings calendar | **Negative is meaningful** (the report already happened) and is not clamped |
+| `time_of_day_bucket` | ET session segment | derived from `signal_ts` | `open` <10:00, `morning` <12:00, `midday` <15:00, `power_hour` <15:45, `close` ≥15:45, else `outside_rth`. **Logged as a feature; never scored** — `test_time_of_day_is_not_an_input_to_the_scorer` pins it |
 
-### `iv_rank_252d` — named input series, as the spec requires
+### Greeks — MODELED, and labeled
 
-The intended source is `IVContext.iv_rank` from the Unusual Whales IV-history
-endpoint: **rank of current 30-day constant-maturity IV within its own trailing
-252-session range** — *not* the traded contract's IV, and not an index.
+| Column | Definition | Source | Formula |
+|---|---|---|---|
+| `net_delta_modeled` | Structure delta per contract | **Black-Scholes, ours** | `Σ(leg delta × signed qty)`. `NA_no_data` if **any** leg is unpriced — a partial sum looks identical to a complete one |
+| `greeks_source` | Provenance | — | Always `black_scholes_modeled`. **No provider in the stack supplies Greeks** (`unusual_whales/client.py`: "UW does not supply greeks"). Per Ruling 2 this stamp is permanent |
 
-It is `NA_no_data` on **all 145 rows**. Short-duration candidates carried an
-empty `signals` list and the extractor served only the funnel lineage, so the
-value was dropped before the snapshot. Fixed for signals written after
-2026-07-29; **not backfillable**, because it is a point-in-time reading.
+### Market regime (P6)
+
+**Market-level, and deliberately not the per-signal tag.** Ruling 2 rejected
+substituting a symbol-level tag: two signals fired in the same minute must not
+disagree about what market they were in, and the pre-registered per-regime cuts
+need classes that exist independently of any signal.
+
+**Join rule — no lookahead.** `market_regime_session` is the most recent session
+**strictly before** the signal's date. A signal fired at 10:15 cannot know that
+day's close; joining to it would condition the per-regime cuts on the future.
+
+| Column | Definition | Source | Formula |
+|---|---|---|---|
+| `market_regime_class` | The cut the gate and window-close analysis use | `daily_regimes` | `{vol}_{trend}`, e.g. `highvol_below`. `unknown` if either axis is unmeasured — **never** defaulted to a middle bucket, which would swell one class with rows never measured |
+| `market_regime_session` | Which session the regime came from | `daily_regimes` | Strictly prior to `signal_ts` |
+| `vix_close` | VIX close that session | FMP `^VIX` | — |
+| `vix_percentile_20d` | Percentile of `vix_close` in the trailing 20 sessions, inclusive | derived | `count(v <= today) / 20`. **Coarse by construction** (5% granularity); the 20-session window is the ruling's specification, applied literally. `lowvol` <0.33, `highvol` ≥0.67 |
+| `spx_realized_vol_20d` | S&P 500 realized vol | FMP `^GSPC` | Annualised sample stdev of 20 daily log returns × √252 |
+| `spx_vs_50d_sma` | Trend position | FMP `^GSPC` | `(close − SMA50)/SMA50`. `above` if ≥0 |
+| `regime_tag` / `regime_vol` / `regime_tape` | **Supplementary** per-signal tag | `MarketContext` | Symbol-level: iv_rank × the symbol's own 20-day close z-score. Retained per Ruling 2 but **does not replace** `market_regime_class` |
+
+### Provenance
+
+| Column | Definition |
+|---|---|
+| `signal_build_sha` | Git SHA of the build that **produced the signal** |
+| `export_git_sha` | Git SHA of the build that **produced this CSV** — a different thing |
+| `scanner_version` | `scoring_model_version` the decision was scored under. The real model lineage |
 
 ## 1D · Entry and exit assumptions
 
@@ -134,19 +207,69 @@ mixes bases.
 | Column | Definition | Formula / status |
 |---|---|---|
 | `outcome` | `win` / `loss` / `scratch` / `unresolved` | Scratch band = ±5% of max risk |
-| `exit_ts` | Resolution timestamp | `resolved_at`, ET |
-| `exit_price_basis` | Matches entry basis | See above |
-| `exit_price` | `NA_no_data` | The exit *net* was not persisted separately from P&L |
-| `exit_reason` | `profit_target` / `stop_loss` / `time_stop` / `expiry` | Empty for grades that simulated no path |
-| `pnl_usd_net` | Net of costs | `realized_pnl_usd` |
-| `pnl_usd_gross` | Before costs | `realized_pnl_gross_usd` |
-| `costs_usd` | Commission (+ modelled slippage where applied) | `costs_usd` |
-| `pnl_pct` | Return on defined risk | `pnl_usd_net / abs(max_loss_usd)` |
-| `r_multiple` | P&L ÷ defined risk | Same as `pnl_pct` — for a defined-risk debit the denominators coincide. Emitted separately rather than silently merged |
-| `mfe` / `mae` | `NA_not_implemented` | Excursions are never tracked. Grading walks daily closes only |
-| `hold_minutes` | Wall-clock signal→resolution | Computed. **Caveat:** for managed grades the resolution timestamp is when the *grader ran*, not when the exit triggered, so this overstates hold time on scanner rows |
-| `elapsed_days` | Entry date → exit date | `elapsed_days`; this is the trustworthy duration field |
-| `outcome_source` | Grading method | `live_close` (real fill) / `managed_policy` (daily-mark replay) |
+| `exit_ts` | When the position closed | The **measured** exit instant when the grade replayed minute bars; otherwise the moment the grader ran |
+| `exit_ts_is_measured` | Which of those two it is | `True` = real exit time. `False` = grader clock — **do not read as hold time** |
+| `exit_price` | Signed structure net at exit, per share | `exit_price_per_share` |
+| `exit_price_basis` | Matches entry basis | `actual_fill` / `modeled_mid` |
+| `exit_reason` | `profit_target` / `stop_loss` / `time_stop` / `session_close` / `expiry` | Empty for grades that simulated no path |
+| `pnl_usd_net` / `pnl_usd_gross` / `costs_usd` | Net, gross, and the difference | — |
+| `pnl_pct` / `r_multiple` | Return on defined risk | `pnl_usd_net / abs(max_loss_usd)`. Identical for a defined-risk debit; emitted separately rather than silently merged |
+| `hold_minutes` | Entry → exit | Measured from `exit_ts` when available; otherwise derived and **overstates** hold time |
+| `elapsed_days` | Entry date → exit date | Trustworthy on every row |
+| `outcome_source` | Grading method | `live_close` (real fill) / `managed_policy` (daily marks) / `managed_policy_intraday` (minute bars). **Never pooled** — the daily and intraday grades are different measurements and both are kept |
+
+### Excursion — BOUNDS, not achieved prices
+
+| Column | Definition | Formula |
+|---|---|---|
+| `mfe` / `mae` | Most favourable / adverse excursion, per share as a fraction of entry | From minute-bar extremes |
+| `mfe_ts` / `mae_ts` | When each occurred | — |
+
+**Why bounds.** A minute bar has a high and a low with **no ordering between
+them**. For a spread the best case pairs each long leg's high with each short
+leg's low; those extremes need not have co-occurred within the minute. So MFE/MAE
+bracket what the structure *could* have shown, not a price that was certainly
+available.
+
+The same ambiguity is resolved against the strategy on exits: the stop is
+evaluated on the bar's **worst** value and checked **before** the target on its
+best, so a minute that traded through both books as a **loss**.
+
+### Mark quality — the caveat travels with the grade (P7)
+
+UW minute bars are **trade-driven**: a bar exists only for a minute that printed.
+The replay holds through gaps and never interpolates, so an exit that triggered
+and reversed inside a gap is **missed, not mispriced**. The error is therefore
+**directional** — trades look longer-held than they were, and stop-outs are
+under-reported.
+
+| Column | Definition | Formula |
+|---|---|---|
+| `n_marks` / `bars_observed` | Priced minutes the replay actually saw | — |
+| `mark_coverage_pct` | Fraction of RTH minutes observed | `n_marks / RTH minutes in [entry, exit]`, capped at 1.0. Counts weekday RTH without a holiday calendar, so a holiday inflates the denominator and **understates** coverage — wrong in the conservative direction |
+| `max_gap_minutes` | Largest run of consecutive unobserved minutes | Consecutive bars are a **0-minute** gap. `NA_no_data` with fewer than 2 marks — one observation cannot evidence continuity, and reporting 0 would claim perfect coverage |
+| `grade_confidence` | `high` / `low` / `unknown` | `low` when `max_gap_minutes > 15` |
+
+**Reference measurement** (`SPY260728C00730000`, 2026-07-28, a *liquid* 0DTE):
+`n_marks 123 · coverage 31.5% · max_gap 52min · confidence low`.
+
+**0DTE re-enable bar** (Ruling 2): coverage ≥80% of RTH **and** max gap ≤5min, on
+a representative sample. The reference measurement **fails** it, which is why
+0DTE remains suspended even though intraday marks shipped.
+
+### Cost stress — the H4 gate input
+
+`CAPTURE_WINDOW_PREREGISTRATION.md` §6 makes H4-after-one-tick a **precondition
+for live capital**, so these are not footnotes.
+
+| Column | Definition | Formula |
+|---|---|---|
+| `pnl_at_1tick_worse` | P&L one tick worse on entry **and** exit | `pnl_mid − (legs × 2 × $0.01 × 100 × contracts)`. Both directions: you pay it entering and again exiting |
+| `pnl_at_half_spread_worse` | P&L at half-spread worse both ways | `pnl_mid − (half_spread × legs × 2 × 100 × contracts)`. `NA_no_data` rather than guessed when no two-sided minute exists |
+| `cost_stress_source` | Where the spread came from | `effective_from_side_volume` (derived from executions: `premium_side / volume_side`) or `nbbo` (a quoted book). **Not interchangeable** — never pooled. Per Ruling 2, quote-derived is primary on new rows and execution-derived is the fallback |
+
+At $0.01 per leg per direction, a 2-leg spread surrenders **$4 round trip** —
+4% of a $100 defined-risk cap before any spread at all.
 
 ## Bucket-specific columns
 
@@ -154,8 +277,7 @@ mixes bases.
 |---|---|---|
 | `session_segment_score` | 0DTE | `NA_not_implemented` — no time-of-day weighting exists |
 | `gex_proxy` | 0DTE | `NA_not_implemented` — no dealer-positioning input |
-| `pnl_at_1tick_worse` | 0DTE | `NA_not_implemented` — no stored bid/ask to perturb |
-| `theta_at_entry` / `vega_at_entry` | LONG | `NA_not_implemented` — Greeks available at scan, never persisted |
+| `theta_at_entry` / `vega_at_entry` | LONG | Structure-level, summed from the **modeled** per-leg Greeks (see `greeks_source`). `NA_no_data` unless every leg priced |
 
 ## forward_log.csv
 

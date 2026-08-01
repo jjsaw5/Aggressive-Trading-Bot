@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from app.db.models import (
     CandidateRow,
     CandidateTransitionRow,
+    DailyRegimeRow,
     DecisionOutcomeRow,
     DecisionSnapshotRow,
     EventRestrictionRow,
@@ -586,3 +587,50 @@ def get_short_duration_trade(trade_id: str) -> ShortDurationTrade | None:
     with SessionLocal() as session:
         row = session.get(ShortDurationTradeRow, trade_id)
         return ShortDurationTrade.model_validate(row.payload) if row else None
+
+
+# --- Daily market regime (P6) ------------------------------------------------
+def save_daily_regimes(rows: list) -> int:
+    """Upsert regime rows. Existing sessions are LEFT ALONE, not refreshed.
+
+    A regime row describes a closed session and never legitimately changes. If a
+    vendor revises history, that is a decision for a human to make explicitly —
+    silently rewriting rows would re-cut analyses that already grouped by them.
+    """
+    from app.db.models import DailyRegimeRow as _R
+
+    added = 0
+    with SessionLocal() as session:
+        for r in rows:
+            if session.get(_R, r.session) is not None:
+                continue
+            session.add(_R(
+                session=r.session, vix_close=r.vix_close,
+                vix_percentile_20d=r.vix_percentile_20d,
+                spx_realized_vol_20d=r.spx_realized_vol_20d,
+                spx_vs_50d_sma=r.spx_vs_50d_sma,
+                regime_class=r.regime_class, vol_state=r.vol_state,
+                trend_state=r.trend_state, source=r.source,
+            ))
+            added += 1
+        session.commit()
+    return added
+
+
+def list_daily_regimes(limit: int = 1000) -> list:
+    """All regime rows, ascending by session — the order `regime_as_of` expects."""
+    from app.domain.regime import DailyRegime
+
+    with SessionLocal() as session:
+        stmt = select(DailyRegimeRow).order_by(DailyRegimeRow.session.asc()).limit(limit)
+        return [
+            DailyRegime(
+                session=r.session, vix_close=r.vix_close,
+                vix_percentile_20d=r.vix_percentile_20d,
+                spx_realized_vol_20d=r.spx_realized_vol_20d,
+                spx_vs_50d_sma=r.spx_vs_50d_sma,
+                regime_class=r.regime_class, vol_state=r.vol_state,
+                trend_state=r.trend_state, source=r.source or "",
+            )
+            for r in session.execute(stmt).scalars().all()
+        ]

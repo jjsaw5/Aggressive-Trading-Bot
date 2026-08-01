@@ -152,7 +152,16 @@ class DecisionOutcome(BaseModel):
     mae_per_share: float | None = None
     mfe_ts: datetime | None = None
     mae_ts: datetime | None = None
-    bars_observed: int = 0  # priced bars the replay actually saw
+    bars_observed: int = 0  # priced bars the replay actually saw (= n_marks)
+
+    # --- Phase 2 / P7: how well-observed this grade was (Ruling 2) ---
+    # UW minute bars are trade-driven, so a session is sparse. An exit that
+    # triggered and reversed inside a gap is MISSED, not mispriced — the bias is
+    # directional (trades look longer-held, stop-outs under-reported). These
+    # travel WITH the grade so the caveat cannot be separated from the number.
+    mark_coverage_pct: float | None = None   # priced minutes / RTH minutes
+    max_gap_minutes: int | None = None       # largest unobserved run
+    grade_confidence: str = ""               # high | low | unknown
 
     # --- Phase 2: cost stress (item 2.4) ---
     # P&L had the round trip been one tick worse on entry AND exit. The

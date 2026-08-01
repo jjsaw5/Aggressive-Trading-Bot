@@ -24,6 +24,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.domain.enums import Direction, StrategyType
+from app.domain.market_context import MarketContext
 from app.domain.trades import TradePlan
 
 
@@ -93,6 +94,13 @@ class DecisionSnapshot(BaseModel):
     # decisions below the v3 boundary (the IV-rank-restored fix) so degraded scores
     # can never enter a calibration corpus. See app/analytics/calibration.py.
     scoring_model_version: str = ""
+
+    # The market this decision was made in, frozen at decision time (Phase 1 of
+    # the remediation directive): per-leg NBBO, depth, modeled Greeks, IV term
+    # structure, cost drag, earnings distance and the regime tag. All of it was
+    # computed on every scan and discarded before this field existed, which left
+    # the corpus unable to answer why a decision lost. Recorded, never scored.
+    market_context: MarketContext | None = None
 
     # Full plan for faithful replay / audit.
     trade_plan: TradePlan

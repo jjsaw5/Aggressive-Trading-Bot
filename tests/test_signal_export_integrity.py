@@ -158,6 +158,94 @@ def test_a_row_without_a_scorecard_reports_no_weight_total() -> None:
     assert _row(cand=None)["weights_sum"] in SENTINELS
 
 
+# --- Phase 1: the captured market context reaches the CSV ---------------------
+def _mc():
+    from app.domain.market_context import GREEKS_MODELED, LegQuote, MarketContext
+
+    return MarketContext(
+        legs=[
+            LegQuote(strike=500.0, option_type=OptionType.CALL, expiration=_EXP,
+                     signed_quantity=1, bid=1.90, ask=2.10, mid=2.0, spread=0.20,
+                     spread_pct_of_mid=0.10, volume=1200, open_interest=5400,
+                     implied_volatility=0.24, delta=0.55, gamma=0.02, theta=-0.04,
+                     vega=0.11, greeks_source=GREEKS_MODELED, quote_source="unusual_whales"),
+            LegQuote(strike=505.0, option_type=OptionType.CALL, expiration=_EXP,
+                     signed_quantity=-1, bid=0.90, ask=1.10, mid=1.0, spread=0.20,
+                     spread_pct_of_mid=0.20, volume=800, open_interest=3100,
+                     implied_volatility=0.23, delta=0.40, gamma=0.02, theta=-0.03,
+                     vega=0.09, greeks_source=GREEKS_MODELED, quote_source="unusual_whales"),
+        ],
+        cost_drag_ratio=0.18, round_trip_cost_usd=40.0,
+        iv30=0.22, iv_rank=0.45, realized_vol_20d=0.18, vrp_points=0.04,
+        term_structure_slope=0.03, implied_move_pct=0.053,
+        earnings_days_away=32, signal_build_sha="abc123def456",
+        regime_tag="midvol/uptape", regime_vol="midvol", regime_tape="uptape",
+    )
+
+
+def test_the_captured_nbbo_reaches_the_export() -> None:
+    # The audit's finding was that this was computed on every scan and discarded.
+    r = _row(snap={"market_context": _mc()})
+    assert r["option_bid"] == 1.90 and r["option_ask"] == 2.10
+    assert r["spread_pct"] == 0.10
+
+
+def test_flat_quote_columns_describe_the_long_leg() -> None:
+    # A spread has two books; the flat columns must name which one they mean.
+    r = _row(snap={"market_context": _mc()})
+    assert r["option_mid"] == 2.0  # the long 500 call, not the short 505
+    assert r["volume"] == 1200 and r["open_interest"] == 5400
+
+
+def test_every_leg_survives_in_full_alongside_the_flat_columns() -> None:
+    # Item 1.1 is NBBO per LEG. Collapsing to one loses the measurement.
+    import json
+
+    legs = json.loads(_row(snap={"market_context": _mc()})["legs_nbbo_json"])
+    assert len(legs) == 2
+    assert {lg["strike"] for lg in legs} == {500.0, 505.0}
+    assert legs[1]["qty"] == -1
+
+
+def test_greeks_are_never_exported_without_their_provenance() -> None:
+    r = _row(snap={"market_context": _mc()})
+    assert r["greeks_source"] == "black_scholes_modeled"
+    assert r["net_delta_modeled"] == pytest.approx(0.15)  # 0.55 - 0.40
+
+
+def test_structure_greeks_are_signed_by_position() -> None:
+    r = _row(snap={"market_context": _mc()})
+    assert r["theta_at_entry"] == pytest.approx(-0.04 + 0.03)
+    assert r["vega_at_entry"] == pytest.approx(0.11 - 0.09)
+
+
+def test_the_regime_tag_and_producing_build_reach_the_export() -> None:
+    r = _row(snap={"market_context": _mc()})
+    assert r["regime_tag"] == "midvol/uptape"
+    assert r["regime_tape"] == "uptape"
+    # Distinct from export_git_sha, which is the build that made the CSV.
+    assert r["signal_build_sha"] == "abc123def456"
+
+
+def test_cost_drag_and_its_dollar_denominator_both_ship() -> None:
+    r = _row(snap={"market_context": _mc()})
+    assert r["cost_drag_ratio"] == 0.18 and r["round_trip_cost_usd"] == 40.0
+
+
+def test_a_row_predating_capture_says_no_data_not_not_implemented() -> None:
+    # THE sentinel distinction. These rows exist (145 of them); the capability
+    # now exists too. "Not implemented" would misdescribe both.
+    r = _row(snap={"market_context": None})
+    for col in ("option_bid", "cost_drag_ratio", "regime_tag", "signal_build_sha",
+                "legs_nbbo_json", "greeks_source", "net_delta_modeled"):
+        assert r[col] == "NA_no_data", f"{col} was {r[col]!r}"
+
+
+def test_the_new_columns_are_never_blank() -> None:
+    for mc in (_mc(), None):
+        assert all(v != "" and v is not None for v in _row(snap={"market_context": mc}).values())
+
+
 # --- Component direction ------------------------------------------------------
 def test_component_direction_is_emitted_for_the_inverted_scoring_check() -> None:
     r = _row()

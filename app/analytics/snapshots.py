@@ -201,6 +201,10 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
         # candidates carry no signal list, so they must supply it directly.
         entry_iv=getattr(cand, "entry_iv", None),
         iv_rank=getattr(cand, "iv_rank", None),
+        # The full market state at decision time (Phase 1): per-leg NBBO, depth,
+        # modeled Greeks, IV term structure, cost drag, earnings distance and the
+        # regime tag. Previously computed on every scan and discarded here.
+        market_context=getattr(cand, "market_context", None),
         entry_net_per_share=entry_net,
         max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
         max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,

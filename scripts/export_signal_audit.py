@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import subprocess
 from collections import defaultdict
 from datetime import datetime
@@ -96,11 +97,87 @@ def _f(v, nd: int = 6):
     return NO_DATA if v is None else round(float(v), nd)
 
 
+def _primary_leg(mc):
+    """The long leg the flat market-context columns describe.
+
+    A debit structure's identity sits in the leg it is long; the short leg is a
+    financing choice. Falls back to the first leg so a row is never silently
+    empty when the signs are unexpected.
+    """
+    if mc is None or not mc.legs:
+        return None
+    longs = [lg for lg in mc.legs if lg.signed_quantity > 0]
+    return longs[0] if longs else mc.legs[0]
+
+
+def _mcf(mc, field: str, *, leg: bool = False):
+    """One market-context field, or NA_no_data. Never blank, never zero-filled.
+
+    `leg=True` reads from the primary long leg instead of the structure. A row
+    predating the MarketContext returns NO_DATA, not NOT_IMPL — the capability
+    exists, that row just never captured it.
+    """
+    src = _primary_leg(mc) if leg else mc
+    if src is None:
+        return NO_DATA
+    v = getattr(src, field, None)
+    if v is None or v == "":
+        return NO_DATA
+    return round(v, 6) if isinstance(v, float) else v
+
+
+def _legs_json(mc) -> str:
+    """Every leg's full quote (item 1.1 is per LEG, not per structure)."""
+    if mc is None or not mc.legs:
+        return NO_DATA
+    return json.dumps([
+        {
+            "strike": lg.strike, "type": lg.option_type.value,
+            "expiration": lg.expiration.isoformat(), "qty": lg.signed_quantity,
+            "bid": lg.bid, "ask": lg.ask, "mid": lg.mid, "spread": lg.spread,
+            "volume": lg.volume, "open_interest": lg.open_interest,
+            "iv": lg.implied_volatility,
+            "delta": lg.delta, "gamma": lg.gamma, "theta": lg.theta, "vega": lg.vega,
+            "greeks_source": lg.greeks_source or None,
+            "quote_source": lg.quote_source or None,
+        }
+        for lg in mc.legs
+    ], separators=(",", ":"))
+
+
+def _net_greek(mc, name: str):
+    """Structure-level Greek from the modeled per-leg values.
+
+    All-or-nothing: one unpriced leg makes the sum NO_DATA rather than a partial
+    total that looks like a complete measurement.
+    """
+    if mc is None or not mc.legs:
+        return NO_DATA
+    vals = [getattr(lg, name, None) for lg in mc.legs]
+    if any(v is None for v in vals):
+        return NO_DATA
+    return round(
+        sum(v * lg.signed_quantity for v, lg in zip(vals, mc.legs, strict=True)), 6
+    )
+
+
+def _greeks_source(mc) -> str:
+    """Provenance of the Greeks. Never blank: an unlabeled Greek is the failure
+    mode this column exists to prevent."""
+    if mc is None or not mc.legs:
+        return NO_DATA
+    sources = {lg.greeks_source for lg in mc.legs if lg.greeks_source}
+    if not sources:
+        return NO_DATA
+    return ";".join(sorted(sources))
+
+
 def _signal_row(s, o, cand, sha: str) -> dict:
     plan = s.trade_plan
     risk = plan.risk if plan else None
     bucket = _bucket(s.dte_at_entry)
     is_live = s.source.value == "live"
+    mc = getattr(s, "market_context", None)
 
     row = {
         # --- 1A identification ---
@@ -123,23 +200,52 @@ def _signal_row(s, o, cand, sha: str) -> dict:
         "predicted_pop_source": s.pop_source or NO_DATA,
         "weights_sum": NO_DATA,
         # --- 1C market context ---
+        # Populated from the frozen MarketContext (Phase 1). Rows captured before
+        # that field existed report NA_no_data, NOT NA_not_implemented: the
+        # concept exists now, those rows simply never recorded it. Keeping the
+        # distinction is the point — it makes the capture boundary visible.
         "spot_price": _f(s.entry_spot, 4),
-        "option_bid": NOT_IMPL,
-        "option_ask": NOT_IMPL,
+        "option_bid": _mcf(mc, "bid", leg=True),
+        "option_ask": _mcf(mc, "ask", leg=True),
+        # No provider in the stack supplies a consolidated mark. Mid is the
+        # midpoint of a real two-sided book; a "mark" would be an invention.
         "option_mark": NOT_IMPL,
-        "option_mid": NOT_IMPL,
-        "spread_pct": NOT_IMPL,
-        "cost_drag_ratio": NOT_IMPL,
+        "option_mid": _mcf(mc, "mid", leg=True),
+        "spread_pct": _mcf(mc, "spread_pct_of_mid", leg=True),
+        "cost_drag_ratio": _mcf(mc, "cost_drag_ratio"),
+        "round_trip_cost_usd": _mcf(mc, "round_trip_cost_usd"),
         "iv": _f(s.entry_iv, 6) if s.entry_iv is not None else NO_DATA,
         "iv_rank_252d": _f(s.iv_rank, 6) if s.iv_rank is not None else NO_DATA,
-        "implied_move_to_expiry": NOT_IMPL,
-        "realized_vol_20d": NOT_IMPL,
-        "vrp": NOT_IMPL,
-        "term_slope": NOT_IMPL,
-        "volume": NOT_IMPL,
-        "open_interest": NOT_IMPL,
-        "earnings_days_away": NOT_IMPL,
+        "iv_percentile": _mcf(mc, "iv_percentile"),
+        "iv_rank_source": _mcf(mc, "iv_rank_source"),
+        "iv_skew": _mcf(mc, "iv_skew"),
+        "implied_move_to_expiry": _mcf(mc, "implied_move_pct"),
+        "implied_move_usd": _mcf(mc, "implied_move_usd"),
+        "realized_vol_20d": _mcf(mc, "realized_vol_20d"),
+        # "VRP" is ambiguous in the literature, so both conventions ship named.
+        "vrp": _mcf(mc, "vrp_points"),
+        "vrp_ratio": _mcf(mc, "vrp_ratio"),
+        "term_slope": _mcf(mc, "term_structure_slope"),
+        "volume": _mcf(mc, "volume", leg=True),
+        "open_interest": _mcf(mc, "open_interest", leg=True),
+        "earnings_days_away": _mcf(mc, "earnings_days_away"),
         "time_of_day_bucket": _tod_bucket(s.generated_at),
+        # --- 1C(ii) per-leg detail (item 1.1) ---
+        # The flat columns above describe the PRIMARY LONG leg. A spread has more
+        # than one book and collapsing them loses the thing being measured, so
+        # every leg's full quote ships as JSON alongside.
+        "legs_nbbo_json": _legs_json(mc),
+        # --- 1C(iii) Greeks — MODELED, and labeled as such (item 1.8) ---
+        "net_delta_modeled": _f(mc.net_delta, 4) if mc and mc.net_delta is not None else NO_DATA,
+        "greeks_source": _greeks_source(mc),
+        # --- 1C(iv) regime (item 1.11) ---
+        "regime_tag": mc.regime_tag if mc else NO_DATA,
+        "regime_vol": mc.regime_vol if mc else NO_DATA,
+        "regime_tape": mc.regime_tape if mc else NO_DATA,
+        # --- 1C(v) provenance (item 1.10) ---
+        # The build that PRODUCED this signal, as opposed to export_git_sha which
+        # is the build that produced the CSV.
+        "signal_build_sha": (mc.signal_build_sha or NO_DATA) if mc else NO_DATA,
         # --- 1D entry/exit assumptions ---
         "entry_price_basis": "actual_fill" if is_live else "modeled_mid",
         "entry_price": _f(s.entry_net_per_share, 4),
@@ -179,8 +285,11 @@ def _signal_row(s, o, cand, sha: str) -> dict:
         "session_segment_score": NOT_IMPL,
         "gex_proxy": NOT_IMPL,
         "pnl_at_1tick_worse": NOT_IMPL,
-        "theta_at_entry": NOT_IMPL,
-        "vega_at_entry": NOT_IMPL,
+        # Structure-level theta/vega, summed from the MODELED per-leg Greeks (see
+        # greeks_source). Sum is None-safe by construction: net_theta/net_vega
+        # report NO_DATA unless every leg priced.
+        "theta_at_entry": _net_greek(mc, "theta"),
+        "vega_at_entry": _net_greek(mc, "vega"),
     }
 
     # pnl_pct / r_multiple: both are P&L over defined risk for a debit structure,

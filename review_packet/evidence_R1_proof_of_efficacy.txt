@@ -53,3 +53,16 @@ Golden totals are unchanged by the fix (52.1 / 50.6 / etc). Only the
 recorded model_version moved, v3 -> v3.1. Production scores WILL move for
 backwardated names — which is the point of the version bump, and is the
 thing the golden file structurally cannot observe.
+
+=== P3: path-guard logic validated against real history ===
+GUARDED regex includes provider files, because FINDING_01 changed the
+shipped model from unusual_whales/client.py with no diff under scoring/.
+
+CASE A — the FINDING_01 fix (3e292b2..46e3738):
+  guarded touched : app/providers/unusual_whales/client.py
+  version bumped  : 1
+  prereg amended  : 1
+  -> PASSES, because the change was declared. Undeclared, it FAILS.
+
+CASE B — Phase 2, pure grading (104ce41..7b8fb06):
+  guarded touched : <none>  -> does not trip. No false positive.

@@ -105,6 +105,14 @@ class RejectReason(str, Enum):
     RESTRICTED_EVENT_WINDOW = "restricted_event_window"
     TIME_OF_DAY_BLOCKED = "time_of_day_blocked"
     DAILY_LOSS_LIMIT = "daily_loss_limit"
+    # Earnings on or before expiry turns a continuation trade into an event
+    # binary (IV crush + gap). Previously advisory prose that never blocked
+    # anything; an AAPL call spread was picked #1 the day before earnings on
+    # that basis. Event plays, if wanted, get their own bucket and model.
+    EARNINGS_GATE = "earnings_gate"
+    # Bucket suspended pending its data-capture dependencies (NBBO + intraday
+    # marks). Rows without them are uninterpretable and pollute the sample.
+    BUCKET_SUSPENDED = "bucket_suspended"
 
 
 class DTECategory(str, Enum):

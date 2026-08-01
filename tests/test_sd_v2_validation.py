@@ -38,7 +38,13 @@ async def test_every_candidate_carries_the_full_v2_payload() -> None:
         assert c.confidence <= c.score + 1e-9
 
 
-async def test_0dte_signal_metadata_and_exit_clock() -> None:
+async def test_0dte_signal_metadata_and_exit_clock(monkeypatch) -> None:
+    # 0DTE capture is suspended by policy (directive Phase 0.3) pending NBBO
+    # persistence and intraday marks. This test exercises detection, not that
+    # policy, so it un-suspends explicitly. Suspension is covered in
+    # tests/test_capture_gates.py.
+    from app.config import settings as _settings
+    monkeypatch.setattr(_settings, "capture_suspended_buckets", "")
     from app.shortduration.detection import run_detection
 
     cands = await run_detection(DTECategory.ZERO_DTE, now=_NOW)

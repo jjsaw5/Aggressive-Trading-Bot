@@ -20,6 +20,7 @@ from app.domain.enums import (
     ShortDurationRegime,
     ShortDurationStrategy,
 )
+from app.domain.market_context import MarketContext
 from app.domain.trades import TradePlan
 
 
@@ -421,6 +422,17 @@ class ShortDurationCandidate(BaseModel):
     # the structure's break-even + IV, and a plain-English "what has to happen" line.
     probability_of_profit: float | None = None
     what_has_to_happen: str = ""
+    # Underlying price the structure was priced against, frozen at scan.
+    # Previously computed and discarded: the snapshot read it from
+    # `trade_plan.analytics`, which is a funnel-lineage object and is None for
+    # short-duration plans, so `or 0.0` wrote a silent zero on every scanner
+    # row. 67/67 audited signals had spot_price=0.0.
+    entry_spot: float | None = None
+    # The market state this candidate was priced in, frozen at scan time so the
+    # warehouse snapshot can carry it (Phase 1). Everything in it was already
+    # being computed and thrown away: NBBO per leg, depth, IV term structure,
+    # cost drag, earnings distance, regime. Recorded, never scored.
+    market_context: MarketContext | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

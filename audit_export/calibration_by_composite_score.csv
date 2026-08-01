@@ -1,0 +1,13 @@
+dte_bucket,pop_bin,n_signals,n_decisive,predicted_pop_mean,actual_win_rate,avg_win_r,avg_loss_r,expectancy_r,sample_sufficient
+0DTE,0-10,10,9,0.0,0.4444,0.7447,-0.8234,-0.1265,NO_insufficient_sample
+0DTE,30-40,1,1,0.3945,0.0,NA_no_data,-1.0653,NA_no_data,NO_insufficient_sample
+0DTE,40-50,2,2,0.413,0.0,NA_no_data,-1.0961,NA_no_data,NO_insufficient_sample
+0DTE,50-60,6,6,0.5485,0.3333,2.1609,-1.0757,0.0031,NO_insufficient_sample
+0DTE,60-70,9,9,0.6577,0.1111,1.1459,-1.0662,-0.8204,NO_insufficient_sample
+0DTE,70-80,18,18,0.7659,0.2222,2.2254,-1.0988,-0.3602,NO_insufficient_sample
+0DTE,80-90,2,2,0.8024,1.0,5.8444,NA_no_data,NA_no_data,NO_insufficient_sample
+1-5DTE,0-10,19,19,0.0,0.2105,0.9597,-0.7464,-0.3873,NO_insufficient_sample
+1-5DTE,50-60,6,6,0.557,0.0,NA_no_data,-1.0859,NA_no_data,NO_insufficient_sample
+1-5DTE,60-70,10,10,0.642,0.4,1.8117,-1.0697,0.0829,NO_insufficient_sample
+1-5DTE,70-80,13,13,0.7405,0.0,NA_no_data,-1.0669,NA_no_data,NO_insufficient_sample
+LONG,0-10,49,49,0.0,0.4082,0.5296,-0.6154,-0.148,yes

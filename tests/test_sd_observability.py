@@ -9,7 +9,13 @@ from app.domain.enums import DTECategory
 _NOW = datetime(2026, 7, 17, 15, 0, tzinfo=UTC)
 
 
-async def test_candidate_carries_signal_metadata() -> None:
+async def test_candidate_carries_signal_metadata(monkeypatch) -> None:
+    # 0DTE capture is suspended by policy (directive Phase 0.3) pending NBBO
+    # persistence and intraday marks. This test exercises detection, not that
+    # policy, so it un-suspends explicitly. Suspension is covered in
+    # tests/test_capture_gates.py.
+    from app.config import settings as _settings
+    monkeypatch.setattr(_settings, "capture_suspended_buckets", "")
     from app.shortduration.detection import run_detection
 
     cands = await run_detection(DTECategory.ZERO_DTE, now=_NOW)

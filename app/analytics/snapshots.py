@@ -60,8 +60,9 @@ def snapshot_from_candidate(
     iv30, iv_rank = _iv_from_signals(candidate)
     flow_quality = _flow_quality_from_signals(candidate)
 
-    # Entry spot: frozen on the analytics at compute time.
-    entry_spot = (analytics.spot_at_analysis if analytics else None) or 0.0
+    # Entry spot: frozen on the analytics at compute time. Absent stays absent —
+    # a zero here is a real price of zero, not a missing reading.
+    entry_spot = analytics.spot_at_analysis if analytics else None
 
     # Per-share signed net (debit > 0, credit < 0); the exit plan already carries
     # it, otherwise fall back to net_debit expressed per share.
@@ -91,7 +92,7 @@ def snapshot_from_candidate(
         expected_value_usd=(analytics.expected_value_usd if analytics else None),
         breakevens=list(analytics.breakevens) if analytics else [],
         is_credit=bool(analytics.is_credit) if analytics else (entry_net < 0),
-        entry_spot=round(entry_spot, 4),
+        entry_spot=round(entry_spot, 4) if entry_spot else None,
         entry_iv=iv30,
         iv_rank=iv_rank,
         flow_quality_proprietary=flow_quality,
@@ -133,7 +134,7 @@ def snapshot_from_live_trade(trade) -> DecisionSnapshot | None:
         reward_to_risk=plan.risk.reward_to_risk if plan.risk else None,
         breakevens=structure_breakevens(plan),
         is_credit=plan.net_debit < 0,
-        entry_spot=0.0,  # not recorded at import time; outcome carries the exit truth
+        entry_spot=None,  # not recorded at import time; outcome carries the exit truth
         entry_net_per_share=round(plan.net_debit / 100.0, 4),
         max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
         max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,
@@ -165,7 +166,14 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
     expiration = min((leg.expiration for leg in plan.legs), default=None)
     dte = (expiration - cand.detected_at.date()).days if expiration else None
     analytics = plan.analytics
-    entry_spot = (analytics.spot_at_analysis if analytics else None) or 0.0
+    # Spot, in order of trustworthiness: the value frozen on the candidate, then
+    # the funnel's analytics object. `plan.analytics` is None for short-duration
+    # plans, and the previous `or 0.0` turned that into a silent zero on every
+    # scanner row — 67/67 audited signals reported spot_price=0.0 while the data
+    # dictionary claimed the field was available. Absent stays absent now.
+    entry_spot = getattr(cand, "entry_spot", None)
+    if entry_spot is None:
+        entry_spot = analytics.spot_at_analysis if analytics else None
     entry_net = (
         plan.exit_plan.entry_net_per_share
         if plan.exit_plan is not None
@@ -185,7 +193,7 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
         reward_to_risk=plan.risk.reward_to_risk if plan.risk else None,
         breakevens=structure_breakevens(plan),
         is_credit=plan.net_debit < 0,
-        entry_spot=round(entry_spot, 4),
+        entry_spot=round(entry_spot, 4) if entry_spot else None,
         # Volatility state, frozen on the candidate at scan time. Without these a
         # decision cannot be bucketed into a vol regime, which left the conviction
         # gate's per-regime criterion unmeasurable rather than merely unmet. The
@@ -193,6 +201,10 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
         # candidates carry no signal list, so they must supply it directly.
         entry_iv=getattr(cand, "entry_iv", None),
         iv_rank=getattr(cand, "iv_rank", None),
+        # The full market state at decision time (Phase 1): per-leg NBBO, depth,
+        # modeled Greeks, IV term structure, cost drag, earnings distance and the
+        # regime tag. Previously computed on every scan and discarded here.
+        market_context=getattr(cand, "market_context", None),
         entry_net_per_share=entry_net,
         max_profit_usd=plan.risk.max_profit_usd if plan.risk else None,
         max_loss_usd=plan.risk.max_loss_usd if plan.risk else 0.0,

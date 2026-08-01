@@ -249,10 +249,17 @@ def test_short_duration_api_read_endpoints() -> None:
     assert news and "end_to_end_latency_s" in news[0]
 
 
-def test_short_duration_scan_and_state_machine() -> None:
+def test_short_duration_scan_and_state_machine(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
+    from app.config import settings
     from app.main import app
+
+    # 0DTE capture is suspended by policy (Phase 0.3) pending NBBO persistence and
+    # intraday marks. This test exercises the scan + state machine, not that
+    # policy, so it un-suspends the bucket explicitly. The suspension itself is
+    # covered in tests/test_capture_gates.py.
+    monkeypatch.setattr(settings, "capture_suspended_buckets", "")
 
     c = TestClient(app)
     scanned = c.post("/short-duration/scans/0dte").json()

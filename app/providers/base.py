@@ -31,6 +31,7 @@ from app.domain.options import (
     IVHistory,
     OptionChain,
     OptionMarkPoint,
+    OptionMinuteBar,
 )
 from app.domain.shortduration import EconomicEvent, IntradayBar, NewsItem
 
@@ -116,6 +117,26 @@ class HistoricalOptionsProvider(Provider):
     async def get_option_mark_series(
         self, option_symbol: str, start: date, end: date
     ) -> list[OptionMarkPoint]: ...
+
+
+class IntradayOptionsProvider(Provider):
+    """Per-contract INTRADAY option bars — the feed a managed-exit replay needs.
+
+    Daily marks cannot see an intraday exit. Every one of the 38 audited 0DTE
+    signals resolved `expiry` for that reason: the managed policy those rows
+    claimed to run was never actually measured, only assumed. This is the
+    capability that makes it measurable.
+
+    Bars are sparse by nature — only minutes that traded produce one. Callers
+    must hold through a gap, never interpolate: an unobserved minute is not a
+    flat minute.
+    """
+
+    @abc.abstractmethod
+    async def get_option_minute_bars(
+        self, option_symbol: str, session: date
+    ) -> list[OptionMinuteBar]:
+        """One session's minute bars for one contract, ascending by time."""
 
 
 class IVHistoryProvider(Provider):

@@ -1,0 +1,126 @@
+{
+  "_comment": "Golden scoring reference. Regenerating this file is a MODEL CHANGE. Bump scoring_model_version and amend CAPTURE_WINDOW_PREREGISTRATION.md \u00a78 in the same commit. See tests/test_scoring_golden.py.",
+  "cases": {
+    "baseline_bullish_no_term_slope": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4516,
+      "total": 52.1
+    },
+    "bearish_direction": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.1,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.3082,
+      "total": 35.56
+    },
+    "hv_proxy_rank_is_discounted": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4386,
+      "total": 50.6
+    },
+    "rich_iv_crush_risk": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.42,
+      "total": 48.45
+    },
+    "term_structure_backwardated": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4386,
+      "total": 50.6
+    },
+    "term_structure_contango": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4516,
+      "total": 52.1
+    },
+    "term_structure_flat_within_deadband": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4516,
+      "total": 52.1
+    },
+    "very_low_iv": {
+      "components": {
+        "data_quality": 0.667,
+        "execution_quality": 0.756,
+        "flow_confidence": null,
+        "liquidity": 0.756,
+        "market_alignment": 0.5,
+        "news_confidence": null,
+        "risk_quality": 0.4
+      },
+      "data_quality": 0.667,
+      "model_version": "sd-scoring-2026.08-v3.1",
+      "overall_confidence": 0.4178,
+      "total": 48.2
+    }
+  },
+  "model_version": "sd-scoring-2026.08-v3.1"
+}

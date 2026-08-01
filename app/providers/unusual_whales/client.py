@@ -44,6 +44,7 @@ from app.domain.options import (
     OptionChain,
     OptionContract,
 )
+from app.logging_config import get_logger
 from app.providers._http import AsyncHTTP
 from app.providers.base import (
     IVHistoryProvider,
@@ -52,6 +53,8 @@ from app.providers.base import (
     ProviderMeta,
 )
 from app.quant.pricing import black_scholes_delta
+
+log = get_logger(__name__)
 
 _META = ProviderMeta(
     name="unusual_whales",
@@ -333,8 +336,57 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChain
             source="unusual_whales",
         )
 
+    async def _term_structure_slope(self, symbol: str) -> float | None:
+        """Front-to-back ATM IV slope from /volatility/term-structure.
+
+        NEGATIVE = backwardation (front richer than back), which the scorer treats
+        as IV-crush risk for debit structures. Positive = normal contango.
+
+        This was missing until FINDING_01. `term_structure_slope` had been read by
+        `scoring/components.py` since v3 and never populated by any live provider,
+        so the backwardation penalty could not fire in production even though it
+        fired in every mock-backed test. See CAPTURE_WINDOW_PREREGISTRATION.md §8.
+
+        DTE 0 is excluded deliberately: on expiration day the ATM IV solve is
+        numerically unstable (SPY showed 0.24 at dte=0 against 0.08 at dte=3), and
+        anchoring the front leg there would manufacture backwardation on every
+        0DTE-listed name.
+        """
+        try:
+            r = await self._http.get_json(
+                f"/api/stock/{symbol.upper()}/volatility/term-structure"
+            )
+        except Exception as exc:  # noqa: BLE001 — slope is optional context
+            log.warning("uw_term_structure_failed", symbol=symbol, error=str(exc))
+            return None
+        rows = r.get("data", r) if isinstance(r, dict) else r
+        if not isinstance(rows, list):
+            return None
+
+        points: list[tuple[int, float]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dte, vol = _i(row, "dte"), _f(row, "volatility", "implied_volatility")
+            if dte is None or vol is None or dte < 1 or vol <= 0:
+                continue
+            points.append((dte, vol))
+        if len(points) < 2:
+            return None  # a single tenor is not a term structure
+
+        points.sort()
+        front_dte, front_iv = points[0]
+        # Back leg at ~30 DTE, the conventional reference tenor; falls back to the
+        # longest available so a short-dated-only chain still yields a slope.
+        back = next((p for p in points if p[0] >= 30), points[-1])
+        if back[0] == front_dte:
+            return None
+        return round(back[1] - front_iv, 6)
+
     async def get_iv_context(self, symbol: str) -> IVContext:
-        """Current ATM IV from /api/stock/{ticker}/volatility/stats (iv field).
+        """Current ATM IV from /api/stock/{ticker}/volatility/stats (iv field),
+        plus the front-to-back term-structure slope.
+
         IV rank/percentile are computed elsewhere from the IV history."""
         iv30 = None
         try:
@@ -347,6 +399,7 @@ class UnusualWhalesProvider(OptionsFlowProvider, IVHistoryProvider, OptionsChain
         return IVContext(
             symbol=symbol.upper(),
             iv30=iv30,
+            term_structure_slope=await self._term_structure_slope(symbol),
             as_of=datetime.now(UTC),
             source="unusual_whales",
         )

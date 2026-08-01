@@ -33,7 +33,14 @@ _SCORING = _APP / "shortduration" / "scoring"
 _STRATEGIES = _APP / "shortduration" / "strategies"
 
 # The frozen model. Changing this string is itself a window-ending act.
-FROZEN_MODEL_VERSION = "sd-scoring-2026.07-v3"
+#
+# Moved v3 -> v3.1 on 2026-08-01 under CAPTURE_WINDOW_PREREGISTRATION.md §8
+# Amendment 1, BEFORE the first captured signal. This constant failing is how the
+# bump was caught: the full suite went red on
+# `test_the_frozen_scoring_version_is_still_the_configured_one` the moment
+# config changed, which is precisely the intended behaviour. Updating it is only
+# legitimate alongside a dated amendment — never on its own.
+FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v3.1"
 
 # Modules Phase 1 introduced. None of them may be reachable from the scorer.
 CAPTURE_ONLY_MODULES = {

@@ -115,10 +115,58 @@ Stated so it cannot be rationalised away later:
 
 ## 8. Amendments
 
-None. Any change to sections 3–7 after the first captured signal must be recorded
-here with its date and reason, and the analysis must report both the original and
+Any change to sections 3–7 after the first captured signal must be recorded here
+with its date and reason, and the analysis must report both the original and
 amended plan.
 
 ---
 
 *Committed 2026-07-31, before the first signal captured under the new pipeline.*
+
+---
+
+### Amendment 1 — 2026-08-01 — model version `sd-scoring-2026.07-v3` → `sd-scoring-2026.08-v3.1`
+
+**Recorded before the first captured signal.** Zero signals had been captured at
+the time of this amendment: production was still running build `7afa098` and the
+window had not started. Section 2's freeze is therefore not breached — there is
+no corpus to split, and nothing here was chosen after seeing an outcome.
+
+**What changed.** `IVContext.term_structure_slope` is now populated by the live
+Unusual Whales provider, from `GET /api/stock/{ticker}/volatility/term-structure`.
+
+**Why it is a version change even though no weight moved.** Weights, components
+and thresholds are byte-identical to v3. But `app/shortduration/scoring/
+components.py:137` has read `term_structure_slope` since v3 and applies a 0.85
+multiplier to the volatility component when the structure is backwardated
+(front IV richer than back — IV-crush risk for a debit buyer). No live provider
+ever populated the field, so **that penalty had never once fired in production**,
+while the mock provider did populate it and so fired it in every test run. The
+tested model and the shipped model were not the same model. The version records
+that the shipped one has changed, not that the code has.
+
+Measured effect on the golden reference: a backwardated term structure scores
+**50.6 against a 52.1 baseline** — a 1.5-point penalty that production signals
+can now receive and previously could not.
+
+**Why now rather than during or after the window.** This is the only moment the
+change is free. Mid-window it would split the corpus; post-window it would leave
+8–12 weeks of data collected under a model whose behaviour differed from the one
+under test. The alternative — deleting the branch — would discard a sound
+IV-crush guard to preserve a wiring bug.
+
+**Sections 3–7 are unchanged.** Window length, hypotheses, statistics, gate
+thresholds and falsification criteria all stand exactly as originally committed.
+
+**Controls added with the change** (so this class of defect is mechanically
+detectable rather than found by audit):
+- `tests/test_scoring_golden.py` — golden-file regression over the scorer:
+  fixed inputs, asserted composite outputs.
+- `tests/test_provider_scoring_contract.py` — pins which provider fields reach
+  the scorer. Against the pre-fix provider, 8 of its 9 tests fail; against the
+  fixed provider, all 9 pass. That is the demonstration that the control catches
+  this defect class.
+
+**Origin:** self-reported as FINDING_01 in the audit packet of 2026-08-01, then
+ruled on by the reviewer (Ruling 1). Recorded here per this section's own
+mechanism.

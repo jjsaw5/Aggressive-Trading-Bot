@@ -196,7 +196,12 @@ class Settings(BaseSettings):
     # treated as degraded and excluded from any calibration corpus (they cannot be
     # re-scored — the original market snapshot is gone). The version bump is the
     # separation boundary the warehouse needs.
-    scoring_model_version: str = "sd-scoring-2026.07-v3"
+    # v3.1 (2026-08-01): identical weights, components and thresholds to v3.
+    # The version records an EFFECTIVE behaviour change — term_structure_slope
+    # is now populated by the live provider, so the backwardation penalty at
+    # scoring/components.py:137 can fire in production for the first time.
+    # See FINDING_01 and CAPTURE_WINDOW_PREREGISTRATION.md §8.
+    scoring_model_version: str = "sd-scoring-2026.08-v3.1"
     risk_policy_version: str = "sd-risk-2026.07-v1"
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {

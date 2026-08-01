@@ -30,6 +30,6 @@ local_data/
 .idea/
 .vscode/
 
-# Review packets are bundled from review_packet/, which is tracked.
+# Review packets are bundled from review_packet*/, which is tracked.
 # The zip is a regenerable duplicate of it.
-review_packet.zip
+review_packet*.zip

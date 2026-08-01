@@ -147,6 +147,7 @@ def volatility_suitability(iv: IVContext | None) -> ScoreComponent:
     return ScoreComponent(value=round(min(1.0, val), 3), explanation="; ".join(parts))
 
 
+# CI path-guard demonstration — comment only, no behaviour change.
 def catalyst_news(ctx: SetupContext, news: NewsScore | None) -> ScoreComponent:
     parts, val = [], 0.3
     if news is not None:

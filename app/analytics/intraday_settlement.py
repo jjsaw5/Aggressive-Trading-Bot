@@ -200,6 +200,18 @@ def settle_intraday(
 
     hold_min = round((exit_.exit_ts - snapshot.generated_at).total_seconds() / 60.0)
 
+    # Observation quality over the graded window, from the minutes the replay
+    # actually priced (not the vendor's raw response) — so the metric describes
+    # this grade rather than the download.
+    from app.analytics.mark_quality import assess
+
+    priced = [
+        m for m in sorted(bars_by_minute)
+        if snapshot.generated_at <= m <= exit_.exit_ts
+        and structure_range(plan, bars_by_minute[m]) is not None
+    ]
+    q = assess(priced, start=snapshot.generated_at, end=exit_.exit_ts)
+
     return DecisionOutcome(
         decision_id=snapshot.decision_id,
         symbol=snapshot.symbol,
@@ -221,12 +233,20 @@ def settle_intraday(
         mfe_ts=exc.mfe_ts if exc else None,
         mae_ts=exc.mae_ts if exc else None,
         bars_observed=exc.bars_seen if exc else 0,
+        mark_coverage_pct=q.coverage_pct,
+        max_gap_minutes=q.max_gap_minutes,
+        grade_confidence=q.confidence,
         note=(
             f"Exited {exit_.reason} at {exit_.exit_ts:%Y-%m-%d %H:%M}Z, "
             f"{exit_.exit_net:+.2f}/sh vs {entry_net:+.2f} entry, on 1-minute "
             f"TRADE bars ({exc.bars_seen if exc else 0} priced). Stop evaluated on "
             "the bar low before the target on the bar high, so a minute that "
-            "traded through both books as a loss."
+            f"traded through both books as a loss. Coverage "
+            f"{q.coverage_pct:.0%} of RTH, largest blind spot "
+            f"{q.max_gap_minutes}min, confidence {q.confidence}."
+            if q.coverage_pct is not None and q.max_gap_minutes is not None
+            else "the bar low before the target on the bar high. Coverage "
+                 f"unmeasurable; confidence {q.confidence}."
         ),
     )
 

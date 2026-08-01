@@ -315,7 +315,20 @@ def _signal_row(s, o, cand, sha: str, regimes: list | None = None) -> dict:
         "mae": _f(o.mae_per_share, 4) if o.mae_per_share is not None else NO_DATA,
         "mfe_ts": o.mfe_ts.astimezone(_ET).isoformat() if o.mfe_ts else NO_DATA,
         "mae_ts": o.mae_ts.astimezone(_ET).isoformat() if o.mae_ts else NO_DATA,
+        # --- P7 mark quality: the caveat travels WITH the grade (Ruling 2) ---
+        # A 53-minute blind spot and full coverage are not the same measurement.
+        # An exit inside a gap is MISSED, not mispriced, so the bias is
+        # directional: trades look longer-held and stop-outs under-reported.
+        "n_marks": o.bars_observed if o.bars_observed else NO_DATA,
         "bars_observed": o.bars_observed if o.bars_observed else NO_DATA,
+        "mark_coverage_pct": (
+            _f(o.mark_coverage_pct, 4)
+            if o.mark_coverage_pct is not None else NO_DATA
+        ),
+        "max_gap_minutes": (
+            o.max_gap_minutes if o.max_gap_minutes is not None else NO_DATA
+        ),
+        "grade_confidence": o.grade_confidence or NO_DATA,
         "hold_minutes": NO_DATA,
         "elapsed_days": o.elapsed_days if o.elapsed_days is not None else NO_DATA,
         "outcome_source": o.outcome_source,

@@ -1,0 +1,22 @@
+ITEM 1.4 — intraday marks: cadence actually achieved
+
+DIVERGENCE FROM REQUEST: the request assumes a POLLING loop storing a mark
+series per open position. That is not what was built. Marks are fetched
+ON DEMAND from UW /api/option-contract/{id}/intraday at grading time, one
+session per call. There is no poller, no cadence, and NO STORED SERIES —
+bars are held in memory for the replay and discarded.
+
+Storage location: NONE. Grades derived from them are stored on
+decision_outcomes (exit_price_per_share, exit_ts, mfe/mae, bars_observed).
+
+The 'cadence achieved' is therefore a property of the VENDOR's bars, not of
+a poller. Measured on SPY260728C00730000, 2026-07-28:
+  span 402 min (13:30Z-20:11Z) | bars 123 | COVERAGE 31% | 41 gaps | LARGEST GAP 53 min
+
+LIMITATION THIS IMPLIES (not previously flagged):
+  A 53-minute hole is long enough for a managed exit to trigger and reverse
+  unobserved. The replay holds through gaps and never interpolates, so such
+  an exit is MISSED, not mispriced. Direction of bias: the replay will
+  under-report exits, making trades look like they ran longer than they did.
+  This is a property of trade-driven bars and cannot be fixed without a
+  quote feed. It should bound how strongly 2.1 results are read.

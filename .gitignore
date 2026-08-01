@@ -29,3 +29,7 @@ local_data/
 .DS_Store
 .idea/
 .vscode/
+
+# Review packets are bundled from review_packet/, which is tracked.
+# The zip is a regenerable duplicate of it.
+review_packet.zip

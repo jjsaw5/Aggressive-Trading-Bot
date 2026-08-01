@@ -1,0 +1,55 @@
+PROOF OF EFFICACY — Ruling 1 step 2
+Reviewer expectation: 'The golden file must break on the fix.'
+OUTCOME: it does not, and structurally cannot. See note below.
+
+=== PRE-FIX: provider-contract suite against the OLD get_iv_context ===
+tests/test_provider_scoring_contract.py::test_the_scored_field_list_still_matches_the_scorer PASSED [ 11%]
+tests/test_provider_scoring_contract.py::test_the_slope_is_populated_at_all FAILED [ 22%]
+tests/test_provider_scoring_contract.py::test_contango_is_positive FAILED [ 33%]
+tests/test_provider_scoring_contract.py::test_backwardation_is_negative FAILED [ 44%]
+tests/test_provider_scoring_contract.py::test_expiration_day_is_excluded_from_the_front_leg FAILED [ 55%]
+tests/test_provider_scoring_contract.py::test_a_single_tenor_is_not_a_term_structure FAILED [ 66%]
+tests/test_provider_scoring_contract.py::test_an_empty_or_malformed_response_yields_none_not_zero FAILED [ 77%]
+tests/test_provider_scoring_contract.py::test_a_failing_endpoint_degrades_rather_than_raising FAILED [ 88%]
+tests/test_provider_scoring_contract.py::test_get_iv_context_actually_carries_the_slope_through FAILED [100%]
+FAILED tests/test_provider_scoring_contract.py::test_the_slope_is_populated_at_all
+FAILED tests/test_provider_scoring_contract.py::test_contango_is_positive - A...
+FAILED tests/test_provider_scoring_contract.py::test_backwardation_is_negative
+FAILED tests/test_provider_scoring_contract.py::test_expiration_day_is_excluded_from_the_front_leg
+FAILED tests/test_provider_scoring_contract.py::test_a_single_tenor_is_not_a_term_structure
+FAILED tests/test_provider_scoring_contract.py::test_an_empty_or_malformed_response_yields_none_not_zero
+FAILED tests/test_provider_scoring_contract.py::test_a_failing_endpoint_degrades_rather_than_raising
+FAILED tests/test_provider_scoring_contract.py::test_get_iv_context_actually_carries_the_slope_through
+========================= 8 failed, 1 passed in 1.20s ==========================
+
+=== POST-FIX: same suite against the NEW get_iv_context ===
+tests/test_provider_scoring_contract.py::test_the_scored_field_list_still_matches_the_scorer PASSED [ 11%]
+tests/test_provider_scoring_contract.py::test_the_slope_is_populated_at_all PASSED [ 22%]
+tests/test_provider_scoring_contract.py::test_contango_is_positive PASSED [ 33%]
+tests/test_provider_scoring_contract.py::test_backwardation_is_negative PASSED [ 44%]
+tests/test_provider_scoring_contract.py::test_expiration_day_is_excluded_from_the_front_leg PASSED [ 55%]
+tests/test_provider_scoring_contract.py::test_a_single_tenor_is_not_a_term_structure PASSED [ 66%]
+tests/test_provider_scoring_contract.py::test_an_empty_or_malformed_response_yields_none_not_zero PASSED [ 77%]
+tests/test_provider_scoring_contract.py::test_a_failing_endpoint_degrades_rather_than_raising PASSED [ 88%]
+tests/test_provider_scoring_contract.py::test_get_iv_context_actually_carries_the_slope_through PASSED [100%]
+============================== 9 passed in 1.24s ===============================
+
+=== ADDITIONAL PROOF: the freeze guard also caught it ===
+Bumping scoring_model_version turned the full suite red on:
+  tests/test_scoring_freeze.py::test_the_frozen_scoring_version_is_still_the_configured_one
+  (1 failed, 811 passed)
+That is the guard working. FROZEN_MODEL_VERSION was then moved to v3.1
+alongside the dated §8 amendment — never on its own.
+
+=== WHY THE GOLDEN FILE DID NOT BREAK (deviation from Ruling 1 step 2) ===
+The golden file scores FIXED IVContext fixtures. A provider change cannot
+move its numbers, because the inputs are pinned by construction. That is
+inherent to a golden file, not a defect in this one: it pins what the
+SCORER computes given inputs. The provider-contract test pins WHICH INPUTS
+production actually supplies. The two meet exactly at the boundary
+FINDING_01 exploited; neither alone covers it.
+
+Golden totals are unchanged by the fix (52.1 / 50.6 / etc). Only the
+recorded model_version moved, v3 -> v3.1. Production scores WILL move for
+backwardated names — which is the point of the version bump, and is the
+thing the golden file structurally cannot observe.

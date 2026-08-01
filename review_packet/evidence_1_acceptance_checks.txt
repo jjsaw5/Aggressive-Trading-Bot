@@ -1,0 +1,47 @@
+rows=6  cols=108
+
+--- CHECK 1: zero NA_not_implemented in 1C except gex_proxy ---
+FAIL: [('sd:1ed7b7d5ae8b', 'option_mark'), ('sd:696df9713726', 'option_mark'), ('sd:a81db0263e4a', 'option_mark'), ('sd:21e860da9b41', 'option_mark'), ('sd:0dc10ea1cd5f', 'option_mark'), ('sd:8bc2459f5daa', 'option_mark')]
+  (option_mark is NA_not_implemented by design: NA_not_implemented)
+
+--- CHECK 2: spot_price non-zero on every scan row (B1) ---
+PASS
+  values: ['461.99', '461.99', '89.2102', '89.2102', '472.1454', '472.1454']
+
+--- CHECK 3: required 1C fields populated ---
+  iv                         6/6 populated   e.g. 0.302
+  iv_rank_252d               6/6 populated   e.g. 0.4334
+  term_slope                 0/6 populated   e.g. NA_no_data
+  implied_move_to_expiry     6/6 populated   e.g. 0.0197
+  cost_drag_ratio            6/6 populated   e.g. 0.0767
+  spread_pct                 6/6 populated   e.g. 0.0767
+  option_bid                 6/6 populated   e.g. 6.9
+  option_ask                 6/6 populated   e.g. 7.45
+  option_mid                 6/6 populated   e.g. 7.175
+  earnings_days_away         6/6 populated   e.g. 88
+  volume                     6/6 populated   e.g. 6785
+  open_interest              6/6 populated   e.g. 1109
+  realized_vol_20d           6/6 populated   e.g. 0.5669
+  vrp                        6/6 populated   e.g. -0.2649
+  net_delta_modeled          6/6 populated   e.g. 0.5976
+  theta_at_entry             6/6 populated   e.g. -0.8831
+  vega_at_entry              6/6 populated   e.g. 0.1323
+
+--- CHECK 4: signal_build_sha present and != export sha (1.10/B4) ---
+  signal_build_sha = a5173775b1ec
+  export_git_sha   = a517377
+  PASS (distinct)
+
+--- CHECK 5: greeks provenance labeled ---
+  greeks_source = black_scholes_modeled
+
+--- CHECK 6: no blank cells anywhere ---
+PASS
+
+--- regime (1.11) ---
+  MSFT   midvol/uptape        vol=midvol   tape=uptape
+  MSFT   midvol/uptape        vol=midvol   tape=uptape
+  INTC   midvol/downtape      vol=midvol   tape=downtape
+  INTC   midvol/downtape      vol=midvol   tape=downtape
+  AMD    highvol/downtape     vol=highvol  tape=downtape
+  AMD    highvol/downtape     vol=highvol  tape=downtape

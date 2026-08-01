@@ -1,0 +1,28 @@
+ITEM 1.9 — realized vol and VRP formulas, as implemented
+
+SOURCE: app/quant/iv.py::realized_vol (hv20 on IVContext)
+def realized_vol(closes: list[float], window: int = 20) -> float | None:
+    """Annualized realized volatility over the last `window` returns."""
+    if len(closes) < window + 1:
+        return None
+    seg = closes[-(window + 1) :]
+    rets = [math.log(seg[k] / seg[k - 1]) for k in range(1, len(seg)) if seg[k - 1] > 0]
+    if len(rets) < 2:
+        return None
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return math.sqrt(var) * math.sqrt(_TRADING_DAYS)
+
+
+def realized_vol_series(closes: list[float], window: int = 20) -> list[float]:
+
+SOURCE: app/analytics/market_context.py — VRP, both conventions
+240:    vrp_pts = round(iv30 - hv20, 4) if iv30 is not None and hv20 else None
+241:    vrp_ratio = round(iv30 / hv20, 4) if iv30 is not None and hv20 else None
+276:        vrp_points=vrp_pts,
+277:        vrp_ratio=vrp_ratio,
+
+  realized_vol_20d = IVContext.hv20  (annualised stdev of 20 daily log returns)
+  vrp_points       = iv30 - hv20      (vol points)
+  vrp_ratio        = iv30 / hv20      (dimensionless)
+  Both None unless BOTH iv30 and a non-zero hv20 exist.

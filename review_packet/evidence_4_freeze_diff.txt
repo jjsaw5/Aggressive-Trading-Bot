@@ -1,0 +1,9 @@
+ITEM 4 / freeze verification
+freeze tag: NONE — no git tag exists (see status matrix 0.2)
+Using the prereg commit 37a129b as the de-facto freeze point.
+
+$ git diff 37a129b..HEAD -- app/shortduration/scoring/ app/shortduration/strategies/
+<<< END DIFF (empty above = no scoring change) >>>
+
+$ git diff 37a129b..HEAD --stat -- app/config.py | grep -i scoring
+199:    scoring_model_version: str = "sd-scoring-2026.07-v3"

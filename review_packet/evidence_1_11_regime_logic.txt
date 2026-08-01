@@ -1,0 +1,70 @@
+ITEM 1.11 — regime tag, as implemented
+
+NOTE: this DIVERGES from the packet request, which asked for a daily regime
+table of (date, VIX close, VIX 20d pct, SPX 20d RV, SPX vs 50d SMA).
+No such table was built. See status matrix 1.11.
+
+def vol_regime(iv_rank: float | None) -> str:
+    """Volatility half of the regime tag. Accepts 0-1 or 0-100."""
+    if iv_rank is None:
+        return "unknown"
+    r = iv_rank if iv_rank <= 1.0 else iv_rank / 100.0
+    if r < _VOL_LOW:
+        return "lowvol"
+    if r >= _VOL_HIGH:
+        return "highvol"
+    return "midvol"
+
+
+def tape_regime(closes: list[float] | None) -> str:
+    """Directional half of the regime tag, from the underlying's own daily closes.
+
+    The audit's central unanswerable question was whether four losing sessions
+    reflected a bad model or a bad week — 52 of 67 signals were bearish into a
+    strengthening tape. A volatility label cannot separate those. This one can,
+    because it records which way the tape was actually going.
+
+    Measured as the last close's distance from its 20-day mean, scaled by the
+    20-day standard deviation of closes. Needs 20 closes; fewer is `unknown`
+    rather than a short-window estimate wearing the same label.
+    """
+    if not closes or len(closes) < 20:
+        return "unknown"
+    window = closes[-20:]
+    mean = sum(window) / len(window)
+    var = sum((c - mean) ** 2 for c in window) / len(window)
+    sd = math.sqrt(var)
+    if sd <= 0:
+        return "flat"
+    z = (window[-1] - mean) / sd
+    if z >= _TAPE_Z:
+        return "uptape"
+    if z <= -_TAPE_Z:
+        return "downtape"
+    return "flat"
+
+
+def regime_tag(iv_rank: float | None, closes: list[float] | None) -> tuple[str, str, str]:
+def regime_tag(iv_rank: float | None, closes: list[float] | None) -> tuple[str, str, str]:
+    """The canonical composite tag: `(tag, vol, tape)`.
+
+    Composite because either half alone is degenerate for the pre-registration's
+    per-regime requirement — a corpus can span two IV-rank buckets and still be
+    one continuous bull tape.
+    """
+    v = vol_regime(iv_rank)
+    t = tape_regime(closes)
+    if v == "unknown" and t == "unknown":
+        return "unknown", v, t
+    return f"{v}/{t}", v, t
+
+
+def _signed_quantity(leg) -> int:
+per-signal regime tags observed (no daily table exists):
+signal_ts                    sym    regime_tag           vol       tape      iv_rank 
+2026-07-31T23:33:54.832140-04:00 MSFT   midvol/uptape        midvol    uptape    0.4334  
+2026-07-31T23:33:54.832140-04:00 MSFT   midvol/uptape        midvol    uptape    0.4334  
+2026-07-31T23:33:54.832140-04:00 INTC   midvol/downtape      midvol    downtape  0.6785  
+2026-07-31T23:33:54.832140-04:00 INTC   midvol/downtape      midvol    downtape  0.6785  
+2026-07-31T23:33:54.832140-04:00 AMD    highvol/downtape     highvol   downtape  0.7886  
+2026-07-31T23:33:54.832140-04:00 AMD    highvol/downtape     highvol   downtape  0.7886  

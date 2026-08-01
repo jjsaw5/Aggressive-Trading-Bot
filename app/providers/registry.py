@@ -25,6 +25,7 @@ from app.providers.base import (
     EconomicCalendarProvider,
     FundamentalsProvider,
     HistoricalOptionsProvider,
+    IntradayOptionsProvider,
     IntradayProvider,
     IVHistoryProvider,
     MarketDataProvider,
@@ -68,6 +69,13 @@ def _uw_historic():
     from app.providers.unusual_whales.historical import UWHistoricalOptionsProvider
 
     return UWHistoricalOptionsProvider()
+
+
+@lru_cache
+def _uw_intraday():
+    from app.providers.unusual_whales.intraday import UnusualWhalesIntradayProvider
+
+    return UnusualWhalesIntradayProvider()
 
 
 @lru_cache
@@ -138,6 +146,23 @@ def historical_options_provider() -> HistoricalOptionsProvider:
     if not settings.unusual_whales_api_key:
         raise ProviderConfigError("UNUSUAL_WHALES_API_KEY is not set")
     return _uw_historic()
+
+
+def intraday_options_provider() -> IntradayOptionsProvider:
+    """Per-contract minute bars — the feed the managed-exit replay needs.
+
+    Gated on its own flag rather than sharing `uw_historic_enabled`: the two are
+    different endpoints and could be entitled independently, and conflating them
+    would silently disable one when the other is turned off.
+    """
+    if not settings.uw_intraday_enabled:
+        raise ProviderConfigError(
+            "UW_INTRADAY_ENABLED is false — intraday managed-exit replay is off. "
+            "Enable once the intraday entitlement is confirmed on this token."
+        )
+    if not settings.unusual_whales_api_key:
+        raise ProviderConfigError("UNUSUAL_WHALES_API_KEY is not set")
+    return _uw_intraday()
 
 
 def fundamentals_provider() -> FundamentalsProvider:

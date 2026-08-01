@@ -37,8 +37,18 @@ FROZEN_MODEL_VERSION = "sd-scoring-2026.07-v3"
 
 # Modules Phase 1 introduced. None of them may be reachable from the scorer.
 CAPTURE_ONLY_MODULES = {
+    # Phase 1 — market state frozen at decision time.
     "app.analytics.market_context",
     "app.domain.market_context",
+    # Phase 2 — grading integrity. Every one of these looks at what HAPPENED
+    # after a decision, so a scoring component reading any of them would be
+    # scoring on the future. That is not merely a freeze violation, it is
+    # lookahead: the resulting corpus would be unusable rather than just
+    # mislabeled.
+    "app.analytics.intraday_settlement",
+    "app.analytics.policy_settlement",
+    "app.analytics.cost_stress",
+    "app.analytics.slippage",
 }
 
 

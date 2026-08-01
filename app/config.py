@@ -281,6 +281,9 @@ class Settings(BaseSettings):
     # slippage-fragile, never certified. Liquidity guard rejects an entry-day
     # contract that could not realistically have been filled.
     uw_historic_enabled: bool = False
+    # Per-contract minute bars (/api/option-contract/{id}/intraday). Separate
+    # from the historic flag: different endpoint, independently entitled.
+    uw_intraday_enabled: bool = False
     bt_fill_k_optimistic: float = 0.5
     bt_fill_k_conservative: float = 1.0
     bt_min_oi: int = 250

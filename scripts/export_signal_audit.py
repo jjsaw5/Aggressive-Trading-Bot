@@ -267,24 +267,44 @@ def _signal_row(s, o, cand, sha: str) -> dict:
         ),
         # --- 1E resolved outcome ---
         "outcome": o.result.value,
-        "exit_ts": o.resolved_at.astimezone(_ET).isoformat(),
+        # The MEASURED exit instant when the grade replayed minute bars;
+        # otherwise the moment the grade was computed, which is not the same
+        # thing and must not be read as one.
+        "exit_ts": (o.exit_ts or o.resolved_at).astimezone(_ET).isoformat(),
+        "exit_ts_is_measured": bool(o.exit_ts),
         "exit_price_basis": "actual_fill" if is_live else "modeled_mid",
-        "exit_price": NO_DATA,
+        "exit_price": _f(o.exit_price_per_share, 4) if o.exit_price_per_share is not None else NO_DATA,
         "exit_reason": o.exit_reason or NO_DATA,
         "pnl_usd_net": _f(o.realized_pnl_usd, 2),
         "pnl_usd_gross": _f(o.realized_pnl_gross_usd, 2),
         "costs_usd": _f(o.costs_usd, 2),
         "pnl_pct": NO_DATA,
         "r_multiple": NO_DATA,
-        "mfe": NOT_IMPL,
-        "mae": NOT_IMPL,
+        # Excursion BOUNDS, per share as a fraction of entry. A minute bar's
+        # high and low have no ordering, so these are the best/worst the
+        # structure could have shown, not prices that were certainly available.
+        "mfe": _f(o.mfe_per_share, 4) if o.mfe_per_share is not None else NO_DATA,
+        "mae": _f(o.mae_per_share, 4) if o.mae_per_share is not None else NO_DATA,
+        "mfe_ts": o.mfe_ts.astimezone(_ET).isoformat() if o.mfe_ts else NO_DATA,
+        "mae_ts": o.mae_ts.astimezone(_ET).isoformat() if o.mae_ts else NO_DATA,
+        "bars_observed": o.bars_observed if o.bars_observed else NO_DATA,
         "hold_minutes": NO_DATA,
         "elapsed_days": o.elapsed_days if o.elapsed_days is not None else NO_DATA,
         "outcome_source": o.outcome_source,
         # --- bucket-specific ---
         "session_segment_score": NOT_IMPL,
         "gex_proxy": NOT_IMPL,
-        "pnl_at_1tick_worse": NOT_IMPL,
+        # H4's headline figure (pre-registration sec 5.4/6): expectancy must
+        # survive this before live capital is permitted.
+        "pnl_at_1tick_worse": (
+            _f(o.pnl_at_1tick_worse_usd, 2)
+            if o.pnl_at_1tick_worse_usd is not None else NO_DATA
+        ),
+        "pnl_at_half_spread_worse": (
+            _f(o.pnl_at_half_spread_worse_usd, 2)
+            if o.pnl_at_half_spread_worse_usd is not None else NO_DATA
+        ),
+        "cost_stress_source": o.cost_stress_source or NO_DATA,
         # Structure-level theta/vega, summed from the MODELED per-leg Greeks (see
         # greeks_source). Sum is None-safe by construction: net_theta/net_vega
         # report NO_DATA unless every leg priced.
@@ -302,9 +322,14 @@ def _signal_row(s, o, cand, sha: str) -> dict:
 
     # hold_minutes: only elapsed DAYS were stored, so minutes are recoverable
     # exactly for same-session resolutions and not at all otherwise.
-    span = (o.resolved_at - s.generated_at).total_seconds() / 60.0
-    if span >= 0:
-        row["hold_minutes"] = round(span)
+    # A measured hold beats a derived one: exit_ts is when the position actually
+    # closed, resolved_at is merely when the grader ran.
+    if o.hold_minutes is not None:
+        row["hold_minutes"] = o.hold_minutes
+    else:
+        span = ((o.exit_ts or o.resolved_at) - s.generated_at).total_seconds() / 60.0
+        if span >= 0:
+            row["hold_minutes"] = round(span)
 
     # --- component breakdown, where a scorecard survives ---
     factors = (cand.scorecard.factors if cand and cand.scorecard else None) or []

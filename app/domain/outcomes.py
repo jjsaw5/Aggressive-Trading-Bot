@@ -136,4 +136,32 @@ class DecisionOutcome(BaseModel):
     # "profit_target" | "stop_loss" | "time_stop" | "expiry". Empty for grades
     # that never simulated a path (e.g. hold-to-expiry settlement).
     exit_reason: str = ""
+
+    # --- Phase 2: what the exit actually was, not merely that one happened ---
+    # The audited corpus recorded a P&L with no exit price and no exit time, so
+    # a grade could not be checked against the tape it claimed to come from.
+    exit_price_per_share: float | None = None  # signed structure net at exit
+    exit_ts: datetime | None = None  # to the minute, when replayed intraday
+    hold_minutes: int | None = None
+
+    # --- Phase 2: excursion (item 2.3) ---
+    # BOUNDS, not realised prices: a minute bar's high and low have no ordering,
+    # so the structure's best and worst values within it need not have been
+    # simultaneously available. Reported per share, as a fraction of entry.
+    mfe_per_share: float | None = None
+    mae_per_share: float | None = None
+    mfe_ts: datetime | None = None
+    mae_ts: datetime | None = None
+    bars_observed: int = 0  # priced bars the replay actually saw
+
+    # --- Phase 2: cost stress (item 2.4) ---
+    # P&L had the round trip been one tick worse on entry AND exit. The
+    # pre-registration's H4 headline figure.
+    pnl_at_1tick_worse_usd: float | None = None
+    pnl_at_half_spread_worse_usd: float | None = None
+    # How the stress spread was sourced: "effective_from_side_volume" (derived
+    # from executions) or "nbbo" (a real quoted book). Never blank when a stress
+    # figure is present — the two are not interchangeable.
+    cost_stress_source: str = ""
+
     note: str = ""

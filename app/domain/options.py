@@ -103,6 +103,74 @@ class OptionMarkPoint(BaseModel):
     source: str = "unknown"
 
 
+class OptionMinuteBar(BaseModel):
+    """One minute of a single option contract's trading (Phase 2).
+
+    From UW `/api/option-contract/{id}/intraday`. Bars exist only for minutes
+    that actually traded, so a session is sparse: ~123 bars over a 390-minute
+    session is normal. A gap means "no print", which the replay holds through —
+    it never interpolates a mark it did not observe.
+
+    `open/high/low/close` are TRADE prices, not quotes. The bid/ask split here is
+    a classification of where each trade printed relative to the book, not an
+    NBBO. `effective_bid`/`effective_ask` derive a realistic round-trip cost from
+    what actually transacted; they are labeled distinctly from NBBO for exactly
+    that reason.
+    """
+
+    option_symbol: str
+    start_time: datetime  # bar open, UTC, left-edge labeled
+    open: float
+    high: float
+    low: float
+    close: float
+    avg_price: float | None = None
+    iv_high: float | None = None
+    iv_low: float | None = None
+
+    # Trade-side classification. Premium is total dollars, volume is contracts.
+    volume_bid_side: int = 0
+    volume_ask_side: int = 0
+    volume_mid_side: int = 0
+    premium_bid_side: float = 0.0
+    premium_ask_side: float = 0.0
+    premium_mid_side: float = 0.0
+
+    source: str = "unusual_whales"
+
+    @property
+    def volume(self) -> int:
+        return self.volume_bid_side + self.volume_ask_side + self.volume_mid_side
+
+    @property
+    def effective_ask(self) -> float | None:
+        """Mean per-share price paid by buyers lifting the offer, this minute.
+
+        None when nothing traded at the ask — absence of aggressive buying is not
+        a price of zero.
+        """
+        if self.volume_ask_side <= 0:
+            return None
+        return round(self.premium_ask_side / (self.volume_ask_side * 100.0), 4)
+
+    @property
+    def effective_bid(self) -> float | None:
+        """Mean per-share price received by sellers hitting the bid, this minute."""
+        if self.volume_bid_side <= 0:
+            return None
+        return round(self.premium_bid_side / (self.volume_bid_side * 100.0), 4)
+
+    @property
+    def effective_spread(self) -> float | None:
+        """Realised round-trip cost this minute, from executions rather than
+        quotes. None unless BOTH sides traded — a one-sided minute cannot price
+        a spread, and half of one is not an estimate of the whole."""
+        a, b = self.effective_ask, self.effective_bid
+        if a is None or b is None or a < b:
+            return None
+        return round(a - b, 4)
+
+
 class IVHistoryPoint(BaseModel):
     ts: datetime
     iv: float  # ATM / 30-day implied volatility for that day

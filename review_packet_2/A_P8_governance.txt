@@ -1,0 +1,53 @@
+P8 — Governance committed; the session log exists
+=================================================
+Committed 88b3092 (PR #50).
+
+  CLAUDE.md                  130 lines, repository root
+  docs/audit/SESSION_LOG.md  139 lines
+  docs/FREEZE_POINT.md        57 lines
+
+ROOT CAUSE, DETERMINED RATHER THAN GUESSED (Ruling 3 asked which of three)
+--------------------------------------------------------------------------
+  $ git log --all --oneline -- CLAUDE.md .claude/CLAUDE.md
+  (no output — zero commits in any branch have ever touched it)
+  $ ls .claude/
+  (no such directory)
+  $ grep -rl "SESSION_LOG" --include=*.md --include=*.py .
+  (no match anywhere in the repository)
+
+CLAUDE.md had NEVER existed in this repository. Not stale, not mis-located, not
+ignored. The governance block requiring a session log lived only in session
+context, which is ephemeral and invisible to a checkout. No session could have
+read it, because there was nothing to read.
+
+This is a governance ESCAPE, not a compliance failure. The same absence explains
+why the never-auto-trade rule, the secret-handling discipline and the freeze
+rules were also uncommitted — every one of them was being carried in
+conversation. CLAUDE.md now opens by saying exactly this: "a rule with no durable
+home is not a rule."
+
+WHAT CLAUDE.md NOW BINDS
+-------------------------
+  section 1  what the product is (calculator, not picker); never place, cancel
+             or modify a live order; brokerage access read-only
+  section 2  the freeze, the three enforcing tests, and the explicit statement
+             that the freeze is about BEHAVIOUR not about which files you edited,
+             with FINDING_01 named as the proof
+  section 3  the session log requirement, including a DEVIATIONS section that
+             must write "None" explicitly so its absence is a claim
+  section 4  the five honesty rules (absent stays absent; modeled is labeled;
+             sentinels never blanks; report gaps don't approximate them; bounds
+             are named as bounds; ambiguity resolves against the strategy)
+  section 5  hard risk limits ($100/trade, $300 heat, 4 concurrent, 20 contracts)
+  section 6  secrets live only in gitignored .env; secret-scan every staged diff
+  section 9  a KNOWN ISSUES section recording that docs/RISK_POLICY.md
+             contradicts itself, left uncorrected because it is a governing
+             document and the correction is not mine to make unilaterally
+
+SESSION_LOG.md
+--------------
+Entry 0 is explicitly labelled RECONSTRUCTION and says so in its first line:
+"This entry is retrospective ... It is not a contemporaneous record and should
+not be read as one." It carries a DEVIATIONS section listing five deviations,
+all of which were self-reported before the reviewer asked.
+Entry 1 is contemporaneous.

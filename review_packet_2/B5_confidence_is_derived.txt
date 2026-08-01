@@ -1,0 +1,94 @@
+B5 — `confidence` is not an independent reading
+==============================================================
+
+The 1-5DTE board renders, per row:
+
+    tradability <strong>NN</strong>/100  ·  confidence NN%  ·  data quality NN%
+    (app/web/dashboard.html:1111-1112)
+
+Three numbers, presented as three readings. They are two.
+
+  app/shortduration/scoring/engine.py:108
+      overall = round(normalized * (0.6 + 0.4 * data_quality), 4)
+
+`confidence` is `score` shrunk by a linear function of `data_quality`. It is a
+monotone transform of two numbers already on the same line. Reproduced below
+from the live API response, with no other input:
+
+sym      score  data_q  confidence   score*(0.6+0.4*dq)   verdict
+--------------------------------------------------------------
+JPM      0.772   0.833      0.7204               0.7204   exact
+SNAP     0.764   0.833      0.7129               0.7129   exact
+SMH      0.749   0.833      0.6989               0.6989   exact
+JPM      0.737   0.833      0.6878               0.6878   exact
+RIVN     0.733   0.833      0.6841               0.6841   exact
+QQQ      0.731   0.833      0.6819               0.6819   exact
+XLK      0.730   0.833      0.6813               0.6813   exact
+SPY      0.730   0.833      0.6809               0.6809   exact
+SNAP     0.729   0.833      0.6802               0.6802   exact
+SMH      0.714   0.833      0.6662               0.6662   exact
+RIVN     0.698   0.833      0.6515               0.6515   exact
+QQQ      0.696   0.833      0.6492               0.6492   exact
+XLK      0.695   0.833      0.6487               0.6487   exact
+SPY      0.695   0.833      0.6482               0.6482   exact
+BABA     0.677   0.833      0.6318               0.6318   exact
+MARA     0.664   0.833      0.6201               0.6201   exact
+INTC     0.662   0.833      0.6175               0.6175   exact
+BABA     0.642   0.833      0.5991               0.5991   exact
+AAPL     0.638   0.833      0.5953               0.5953   exact
+MARA     0.629   0.833      0.5874               0.5874   exact
+INTC     0.627   0.833      0.5848               0.5848   exact
+AVGO     0.625   0.833      0.5831               0.5831   exact
+AAPL     0.603   0.833      0.5626               0.5626   exact
+PFE      0.595   0.833      0.5549               0.5549   exact
+AVGO     0.590   0.833      0.5504               0.5504   exact
+NVDA     0.589   0.833      0.5498               0.5498   exact
+UBER     0.579   0.833      0.5407               0.5407   exact
+COIN     0.560   0.833      0.5227               0.5227   exact
+PFE      0.560   0.833      0.5222               0.5222   exact
+DIS      0.557   0.833      0.5195               0.5195   exact
+XLE      0.555   0.833      0.5183               0.5183   exact
+GOOGL    0.555   0.833      0.5177               0.5177   exact
+NVDA     0.554   0.833      0.5172               0.5172   exact
+AMZN     0.549   0.833      0.5127               0.5127   exact
+DIA      0.546   0.833      0.5092               0.5092   exact
+UBER     0.544   0.833      0.5080               0.5080   exact
+F        0.542   0.833      0.5060               0.5060   exact
+BAC      0.540   0.833      0.5043               0.5043   exact
+AAL      0.538   0.833      0.5024               0.5024   exact
+PLTR     0.536   0.833      0.5003               0.5003   exact
+PYPL     0.535   0.833      0.4994               0.4994   exact
+COIN     0.525   0.833      0.4900               0.4900   exact
+DIS      0.522   0.833      0.4869               0.4869   exact
+NIO      0.522   0.833      0.4869               0.4869   exact
+XLF      0.521   0.833      0.4861               0.4861   exact
+XLE      0.520   0.833      0.4856               0.4856   exact
+GOOGL    0.520   0.833      0.4851               0.4851   exact
+AMZN     0.514   0.833      0.4800               0.4800   exact
+DIA      0.511   0.833      0.4765               0.4765   exact
+BAC      0.510   0.833      0.4760               0.4760   exact
+F        0.507   0.833      0.4733               0.4733   exact
+AAL      0.503   0.833      0.4698               0.4698   exact
+PLTR     0.501   0.833      0.4676               0.4676   exact
+PYPL     0.500   0.833      0.4668               0.4668   exact
+NFLX     0.495   0.833      0.4617               0.4617   exact
+NIO      0.487   0.833      0.4542               0.4542   exact
+XLF      0.486   0.833      0.4534               0.4534   exact
+NFLX     0.460   0.833      0.4290               0.4290   exact
+--------------------------------------------------------------
+58/58 rows reproduce EXACTLY. Residual: 0.
+
+Finding. Rank order by `confidence` is identical to rank order by `score`
+wherever data_quality is constant, and near-identical otherwise. A reader
+comparing "tradability 77" against "confidence 72%" believes a second,
+corroborating instrument agrees with the first. There is no second instrument.
+
+This is not a false number — the arithmetic is correct and `data_quality` is
+real. It is a false IMPLICATION, produced by presentation: two derived
+quantities laid out as peers. The honest rendering states the dependence, e.g.
+"tradability 77/100 (data quality 83%)" with no separate confidence figure, or
+labels it "score x data quality".
+
+Severity: this is the one display element on the board that manufactures
+corroboration. Everything else on the row understates rather than overstates.
+

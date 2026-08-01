@@ -252,5 +252,98 @@ with mandatory quality columns and rejected for 0DTE; 1.11 rejected and rebuilt.
   (set `UW_INTRADAY_ENABLED=true`), **P11** first-session verification, **P12**
   declare window start. **P9** (direction instrumentation 3.1–3.3) is
   non-gating and may land early-window.
+## Entry 2 — 2026-08-01 — Review Packet #2: pre-flight closure + front-end display honesty
+
+**Contemporaneous.**
+
+### What changed
+
+| Change | Why |
+|---|---|
+| `alembic/versions/0006_daily_regimes.py` — import sort | ruff I001. Found only because I linted `.` rather than CI's `app/ scripts/ tests/`. No behaviour change; migrations are outside the guarded scoring paths. |
+| `review_packet_2/` — 37 files | The requested review packet. |
+
+No source behaviour changed this session. The freeze controls were run and pass:
+20 golden, 9 provider-contract, all freeze-import. Full suite **853 passed**.
+
+### PRs
+
+- **#52 opened and closed unmerged** (`claude/ci-pathguard-demo`, `9af9d12`). A
+  deliberate throwaway: a comment-only edit to
+  `app/shortduration/scoring/components.py` with no version bump and no
+  amendment, to demonstrate the freeze path guard failing a PR. CI run
+  `30715994614` concluded `failure`; job `tests` passed and only `freeze-guard`
+  failed, printing the guarded path and `scoring_model_version bumped : 0`. The
+  verbatim log is `review_packet_2/A_P3_ci_pathguard.txt` — the P3 evidence.
+
+### Decisions taken
+
+1. **The guard demonstration was run on a comment-only change, on purpose.** A
+   comment alters no behaviour, so the guard failing it proves the guard gates on
+   PATH and demands a human declaration rather than trying to judge semantics.
+   That is the FINDING_01 lesson encoded: a behaviour change can arrive through a
+   file no static check can reason about.
+2. **P9 belongs before P10, not after.** Both are the user's actions and both are
+   open. Stated in the packet: once production redeploys the window opens, and
+   from that moment an undeclared scoring change contaminates a live corpus
+   rather than an empty one — which is exactly when an advisory-only guard stops
+   being sufficient.
+3. **The ruff error was fixed rather than argued away, and reported rather than
+   quietly corrected.** The interesting part is not the import order; it is that
+   "CI is green" and "the repository is clean" were not the same statement, and
+   `alembic/` sat in the gap.
+4. **Front-end review reported two findings as stance violations and the rest as
+   recommendations.** The two — `PICK #N` badges and the standalone
+   `confidence %` — are the only elements where the UI asserts something the
+   product stance denies. Everything else (timezones, colour thresholds,
+   double-gate prose) is a real improvement but not a contradiction, and is
+   labelled as such rather than inflated to match.
+5. **No front-end change was made.** The request was a review. Changing the UI
+   during it would have meant reviewing my own edit.
+
+### Findings worth carrying forward
+
+- **`confidence` is not an independent reading.** `engine.py:108` computes
+  `overall = normalized * (0.6 + 0.4 * data_quality)`. The board renders
+  `tradability`, `confidence` and `data quality` as three peer numbers; they are
+  two. Reproduced exactly on 58 of 58 live rows, residual 0. The arithmetic is
+  right; the *implication* of corroboration is false.
+- **`PICK #1` badges** carry a recommendation in three registers (word, ordinal,
+  row highlight) about sixty lines from the banner stating the product does not
+  recommend.
+- **11 timestamps render browser-local**, with `timeZone` pinned exactly once in
+  the file. On a same-session-expiry product this is a correctness hazard.
+- **The honest parts of the UI are the parts the server computed.** The
+  UNCALIBRATED stamp, the abstain reason and the conviction note are all built in
+  `engine.py` and relayed. The three problems are all things the browser decided
+  for itself.
+
+### DEVIATIONS
+
+**Not None.** Three:
+
+1. **The demo branch `claude/ci-pathguard-demo` could not be deleted.** PR #52 is
+   closed, but `git push origin --delete` fails with `the remote end hung up
+   unexpectedly` — the same credential scoping that blocked the P4 tag push. The
+   branch still exists at `9af9d12`. It is unmerged, closed, and harmless, but it
+   is residue and it is not cleaned up. Deletion needs the GitHub UI.
+2. **Section B screenshots are mock-derived.** The local instance ran with all
+   providers mocked against a temporary SQLite file. The layout, labelling,
+   colour and claim text are exactly what the code renders; no price on those
+   screens is real. Production could not be screenshotted regardless — it runs
+   `7afa098`, a different front end.
+3. **P9, P10 and P11 are open and were not attempted.** P9 needs repository
+   settings; P10 needs the Docker host. Neither is reachable from this session.
+   P11 is verified blocked at zero rows rather than assumed blocked.
+
+### State at entry close
+
+- Production still `7afa098`. Capture window still **not started**, zero signals.
+- Model `sd-scoring-2026.08-v3.1`; freeze point `80eb42c`.
+- 853 tests passing; ruff clean across the whole repository, not just CI's scope.
+- `daily_regimes`: 395 rows, 2025-01-02 .. 2026-07-31, 49 `unknown` (contiguous
+  SMA warmup, labelled rather than back-filled).
+- **Outstanding, and now overdue:** rotate the UW API key and both Turso tokens.
+  All three were exposed in a session transcript and all three are still live.
 
 ---

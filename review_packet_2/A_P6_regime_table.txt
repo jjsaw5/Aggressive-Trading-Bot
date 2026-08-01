@@ -1,0 +1,66 @@
+P6 — Daily market-regime table, built and applied
+=================================================
+Ruling 2 rejected the per-signal vol x tape tag as a substitute for item 1.11's
+daily VIX/SPX regime table. The table now exists and is populated.
+
+CODE
+----
+app/domain/regime.py            DailyRegime; VIX_PCTL_LOW=0.33, VIX_PCTL_HIGH=0.67
+app/analytics/daily_regime.py   percentile_of_last, realized_vol, vs_sma,
+                                classify, build_regime_series, regime_as_of,
+                                fetch_regime_inputs
+alembic/versions/0006_daily_regimes.py
+scripts/build_regime_table.py
+
+LIVE TABLE (production Turso, queried 2026-08-01)
+--------------------------------------------------
+  rows                : 395
+  session range       : 2025-01-02 .. 2026-07-31
+  source              : fmp
+  schema              : session, vix_close, vix_percentile_20d,
+                        spx_realized_vol_20d, spx_vs_50d_sma,
+                        regime_class, vol_state, trend_state, source,
+                        created_at, updated_at
+
+  regime_class distribution
+    lowvol_above    110
+    highvol_above    76
+    midvol_above     76
+    highvol_below    50
+    unknown          49
+    midvol_below     20
+    lowvol_below     14
+
+  The 49 `unknown` rows span 2025-01-02 .. 2025-03-14 CONTIGUOUSLY — the
+  50-session SMA and 21-session realized-vol warmup. They are labelled `unknown`
+  rather than back-filled or dropped: the concept exists, the reading does not.
+  Absent stays absent.
+
+  newest sessions
+    2026-07-31  vix 15.99  pctl 0.25  lowvol_above
+    2026-07-30  vix 17.09  pctl 0.60  midvol_below
+    2026-07-29  vix 20.66  pctl 1.00  highvol_below
+    2026-07-28  vix 18.21  pctl 0.75  highvol_below
+    2026-07-27  vix 18.67  pctl 0.90  highvol_below
+
+NO LOOKAHEAD
+------------
+`regime_as_of(rows, when)` returns the most recent session STRICTLY BEFORE
+`when` (app/analytics/daily_regime.py:148, docstring at line 11). A signal
+generated on session D is grouped by the regime known at the close of D-1. Using
+D's own close would leak the session's outcome into its own regime label.
+
+EXISTING ROWS ARE NEVER REWRITTEN
+----------------------------------
+build_regime_table.py leaves existing sessions alone. A regime row describes a
+closed session and never legitimately changes; a vendor revision is a decision
+for a human, not a silent rewrite of rows other analyses have already grouped by.
+
+WHAT THE TABLE IMMEDIATELY SHOWED
+----------------------------------
+The audited scanner sessions clustered into effectively one regime
+(highvol_below, highvol_below, midvol_below, lowvol_above across 07-28..07-31,
+with the two highvol_below sessions carrying the bulk of the signals). That is
+the quantitative confirmation of what the audit could only assert: the corpus
+could not distinguish a bad model from a bad week. It is also the reason the
+capture window needs a regime spread before any per-regime claim is made.

@@ -1,0 +1,63 @@
+P2 — FINDING_01 closed: term_structure_slope populated, v3 -> v3.1
+==================================================================
+
+THE DEFECT
+----------
+app/shortduration/scoring/components.py:137 has read
+`IVContext.term_structure_slope` since v3, applying a 0.85 multiplier to the
+volatility component when the structure is backwardated (front IV richer than
+back = IV-crush risk for a debit buyer).
+
+No live provider ever populated the field. The mock provider did.
+
+Consequence: the penalty fired in every test run and had never once fired in
+production. The tested model and the shipped model were different models, for
+the entire life of v3. This is the canonical instance of "the freeze is about
+BEHAVIOUR, not about which files you edited" — the fix touches no file under
+app/shortduration/scoring/ and is nonetheless a model change.
+
+THE FIX
+-------
+app/providers/unusual_whales/client.py:339  `_term_structure_slope()`
+  source: GET /api/stock/{ticker}/volatility/term-structure
+
+    points.sort()
+    front_dte, front_iv = points[0]
+    back = next((p for p in points if p[0] >= 30), points[-1])
+    return round(back[1] - front_iv, 6)
+
+  DTE 0 is EXCLUDED from the front leg. The expiration-day ATM IV solve is
+  unstable — measured on SPY: 0.24 at dte=0 against 0.08 at dte=3. Anchoring
+  there would manufacture backwardation on every 0DTE-listed name, i.e. would
+  have made the fix worse than the bug.
+
+  Failure returns None, never 0.0 (honesty rule: absent stays absent). A flat
+  structure and an unmeasurable one are not the same and do not score the same:
+  test_a_null_term_slope_scores_the_same_as_a_flat_one pins the deadband
+  behaviour explicitly; test_an_empty_or_malformed_response_yields_none_not_zero
+  pins the provider side.
+
+  client.py:402  term_structure_slope=await self._term_structure_slope(symbol)
+
+DECLARED, in the same PR (#49), as the freeze requires
+------------------------------------------------------
+1. app/config.py:204   scoring_model_version = "sd-scoring-2026.08-v3.1"
+2. docs/CAPTURE_WINDOW_PREREGISTRATION.md section 8, Amendment 1, dated
+   2026-08-01, which states in terms: "Weights, components and thresholds are
+   byte-identical to v3 ... that penalty had never once fired in production ...
+   The tested model and the shipped model were not the same model."
+3. Golden file — regenerated to no change (see A_P1 status line).
+
+WHY IT WAS FIXED BEFORE THE WINDOW RATHER THAN DEFERRED (Ruling 1)
+-------------------------------------------------------------------
+Zero signals had been captured. There was no corpus to split, so no result could
+be contaminated by the change. Deferring would have meant opening the window on a
+model known to differ from the tested one.
+
+CONTROL ADDED SO IT CANNOT RECUR
+---------------------------------
+tests/test_provider_scoring_contract.py pins the exact set of provider fields the
+scorer reads:
+    SCORED_IV_FIELDS = {"iv_rank","iv_percentile","term_structure_slope","iv_rank_source"}
+and greps components.py so the set cannot silently drift out of sync with the
+scorer. 9 tests; 8 of them failed before this fix.

@@ -1,0 +1,48 @@
+P5 — Data dictionary covers every exported column
+=================================================
+audit_export/signals_data_dictionary.md — 313 lines, 90 documented column
+entries covering the 86 columns the exporter emits (the surplus entries are the
+sentinel-vocabulary and provenance rows, documented in the same table format).
+
+Rewritten this session: sections 1C and 1E were previously placeholder headings.
+Committed 4108f62 (PR #51).
+
+Every column carries, at minimum: what it is, its unit, whether it is MEASURED
+or MODELED, and which sentinel appears when it is absent.
+
+THE AWKWARD ONES — the entries that exist because the number can mislead:
+
+  mfe_per_share / mae_per_share
+    Documented as BOUNDS, not achieved prices. A minute bar's high and low have
+    no ordering within the bar, so the structure's best and worst values need
+    not have been simultaneously available. Naming them "best fill achieved"
+    would be a fabrication.
+
+  mark_coverage_pct / max_gap_minutes / grade_confidence
+    Documented as travelling WITH the grade, not as metadata. An exit that
+    triggered and reversed inside a gap is MISSED, not mispriced — so the error
+    is DIRECTIONAL: trades look longer-held than they were and stop-outs are
+    under-reported. The dictionary says this in those words.
+
+  greeks_source / cost_stress_source / iv_rank_source / pop_source / chain_source
+    Every modeled quantity names its derivation. Greeks are Black-Scholes
+    because no provider supplies them. cost_stress_source distinguishes
+    "effective_from_side_volume" (derived from executions) from "nbbo" (a real
+    quoted book) — never blank when a stress figure is present, because the two
+    are not interchangeable.
+
+  entry_spot
+    Documented as nullable, with the reason: it was a required float, builders
+    wrote `or 0.0`, and 67 of 67 audited scanner rows reported a spot of zero.
+
+  NA_not_implemented vs NA_no_data vs NA_unresolved
+    The distinction is load-bearing and is spelled out: the first means no such
+    concept exists for this row, the second means the concept exists and this
+    row lacks it, the third means resolution was attempted and did not conclude.
+    Collapsing the first two would hide which gaps are buildable.
+
+VERIFICATION
+------------
+Coverage was checked programmatically against the exporter's own column list
+rather than by reading — the check is that no column the exporter emits is
+absent from the dictionary, and it passes.

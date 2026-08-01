@@ -1,0 +1,1 @@
+{"enabled":false,"trading_mode":"research","live_trading_enabled":false,"universe":["SPY","QQQ","IWM","AAPL","MSFT","NVDA","AMD","META","AMZN","GOOGL","TSLA","NFLX"],"providers":{"intraday":"mock","news":"mock","econ_calendar":"mock","options_chain":"mock","options_flow":"mock"},"note":"Research/paper only. Live trading is disabled for this module."}

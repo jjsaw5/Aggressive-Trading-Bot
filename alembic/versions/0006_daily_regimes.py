@@ -11,6 +11,7 @@ Revises: 0005_entry_spot_nullable
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0006_daily_regimes"

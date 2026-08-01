@@ -1,0 +1,19 @@
+Test suite and lint, run at packet time
+=======================================
+$ python -m pytest -o addopts="" -q
+853 passed, 1 warning in 194.36s
+
+$ python -m ruff check app/ scripts/ tests/     # the exact command CI runs
+All checks passed!
+
+$ python -m ruff check .                        # WIDER than CI
+Found 1 error.
+  I001 alembic/versions/0006_daily_regimes.py:11 — import block un-sorted
+
+STATUS LINE ON THAT ERROR. CI lints `app/ scripts/ tests/` and does not lint
+`alembic/`. The error is in a migration I wrote this session (P6), so my earlier
+"ruff clean" claim was true of CI's scope and not of the repository. Fixed in
+this session's commit (import sort only; no behaviour change; migrations are
+outside the guarded scoring paths). Reported rather than quietly corrected
+because the mismatch between "CI is green" and "the repo is clean" is itself
+worth knowing: CI's lint scope has a hole in it, and alembic/ is in the hole.

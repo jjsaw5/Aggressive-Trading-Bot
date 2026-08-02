@@ -1,0 +1,44 @@
+# Secret scanning — Reviewer Rulings #2, R4 step 4.
+#
+# Three credentials (an Unusual Whales API key and both Turso tokens) were
+# exposed in a session transcript and were caught by an audit rather than by a
+# build. This file exists so the next one fails CI instead.
+#
+# Extends the upstream default ruleset rather than replacing it — the generic
+# detectors (AWS, GitHub, Slack, generic high-entropy) stay on, and the rules
+# below add the credential shapes THIS project actually handles.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "turso-database-url"
+description = "Turso/libSQL database URL (identifies the production warehouse)"
+regex = '''libsql://[a-zA-Z0-9._-]+\.turso\.io'''
+tags = ["turso", "database", "hostname"]
+
+[[rules]]
+id = "turso-auth-token"
+description = "Turso auth token (JWT, EdDSA-signed)"
+regex = '''eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'''
+tags = ["turso", "jwt", "token"]
+
+[[rules]]
+id = "unusual-whales-api-key"
+description = "Unusual Whales API key (bare UUIDv4 assigned to a UW variable)"
+# Anchored on the variable name: a bare UUID is not a secret, and matching every
+# UUID in the repository would train people to add allowlist entries — which is
+# how a scanner stops being read.
+regex = '''(?i)(uw|unusual[_-]?whales)[a-z0-9_-]*(key|token|secret)["'\s:=]{1,10}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+tags = ["unusual-whales", "api-key"]
+
+[allowlist]
+description = "Paths that legitimately contain credential-SHAPED strings"
+paths = [
+  # The example env file ships placeholders on purpose; it is the documented
+  # place to learn which variables exist. It must never contain a real value —
+  # that is a review responsibility, not something a regex can settle.
+  '''\.env\.example$''',
+  # This file names the patterns it hunts for.
+  '''\.gitleaks\.toml$''',
+]

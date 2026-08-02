@@ -347,3 +347,82 @@ No source behaviour changed this session. The freeze controls were run and pass:
   All three were exposed in a session transcript and all three are still live.
 
 ---
+
+## Entry 3 — 2026-08-02 — Reviewer Rulings #2: the three pixel-level contradictions removed
+
+**Contemporaneous.**
+
+### What changed
+
+| Ruling | Change |
+|---|---|
+| R1 | `docs/FREEZE_POINT.md` — the trio documented: which control catches which class of change, and why the golden file structurally cannot catch a provider change. Ruling 1 step 2 amended in place. |
+| R2 | `CLAUDE.md` §4 — secret handling promoted into the honesty rules, where the live escape belongs. |
+| R3.1 | `PICK #N` removed: badge, ordinal and `pickrow` highlight together, plus the CSS. `engine_pick`/`pick_rank`/`pick_reason` stay in the payload and warehouse. |
+| R3.2 | Standalone `confidence` removed from the candidate detail. Not relabelled, not re-derived. |
+| R3.3 | One ET formatter (`etDateTime`/`etTime`/`etDate`) replaces 11 bare `toLocale*` calls; `tests/test_dashboard_timezone.py` fails the build on any future bare call. |
+| R3.4 | Colour bands served from `app/config.py` via `/config/runtime`, versioned `sd-display-2026.08-v1`, duplicated literals removed. |
+| R3.5 | Execution prose rewritten to describe the build. |
+| R3.6 | CI lints `.` instead of three directories. |
+| R4.4 | `secret-scan` job (gitleaks) + `.gitleaks.toml`. |
+
+860 tests pass. `ruff check .` clean. Freeze controls unchanged and passing.
+
+### Decisions taken
+
+1. **Three quantities are named `confidence`; only one was removed.** The regime
+   engine's own read and `CatalystEvent.confidence` ("reliability of the
+   CLASSIFICATION, not a trade signal") are independent measurements that happen
+   to share a word. Checked the domain models before editing rather than
+   grepping for the string and deleting every hit. The scorecard's
+   `news_confidence`/`flow_confidence` component labels also stay — those are
+   component names, not the derived scalar.
+2. **The neutral-colour fallback is permanent, not interim.** The ruling allowed
+   neutral colours until served thresholds existed. I built the served
+   thresholds, and kept neutral as the behaviour when they fail to load: a
+   colour is a claim, and a claim whose threshold we could not load must not be
+   made. Boot now awaits config before the first paint, so a number cannot
+   render one colour and be corrected under the reader.
+3. **The gitleaks UW rule is anchored on the variable name, not on UUID shape.**
+   Matching every UUID in the repository would produce noise, and a scanner that
+   cries wolf trains people to add allowlist entries — which is how a scanner
+   stops being read.
+4. **Display bands live in `app/config.py` beside the model version.** The file
+   is outside the freeze guard's guarded paths and nothing there reaches the
+   scorer; the three freeze controls pass unchanged. Versioning them makes a
+   change to "what counts as good odds" a dated, visible event.
+5. **`docs/FREEZE_POINT.md` documents why the golden file is blind to providers
+   rather than treating that blindness as a gap.** Hand-built fixtures cannot
+   move when a provider changes — that is what makes the file a clean
+   measurement of the arithmetic alone. The provider-contract test covers the
+   other direction. Written down so the next reader does not repeat Ruling 1's
+   mistaken prediction.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **My first post-fix verification reported a false failure.** I regexed
+   `page.content()` for `PICK #` and got `true`, which would have meant the
+   removal failed. It was matching my own explanatory comment in the served
+   `<script>` block. Re-run against `innerText` of the rendered view — 0 badge
+   elements, no `PICK #` text, across 50 rows of which 3 carried
+   `engine_pick=true`. Recording it because the first result was the kind that
+   gets reported as a defect.
+2. **`claude/ci-pathguard-demo` still exists on the remote.** PR #52 is closed;
+   `git push --delete` fails with the ref-scoping that also blocked the P4 tag
+   push. Needs the GitHub UI.
+
+### State at entry close
+
+- Production still `7afa098`. Window still **not started**, zero signals.
+- Model `sd-scoring-2026.08-v3.1`; freeze point `80eb42c`; display bands
+  `sd-display-2026.08-v1`.
+- 860 tests passing; ruff clean repository-wide.
+- **R4 sequence: steps 1 and 2 (credential rotation, then branch protection) are
+  Justin's and are the gate on everything after.** Step 3 (R3.1–3.3) is done,
+  step 4 (CI secret scanning) is done. Steps 5–7 wait on 1 and 2.
+- **Outstanding, overdue, and now the top of the reviewer's own ordering:**
+  rotate the UW API key and both Turso tokens.
+
+---

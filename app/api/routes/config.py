@@ -31,6 +31,11 @@ class RuntimeConfig(BaseModel):
     automation_armed: bool
     universe: list[str]
     risk_policy: dict
+    # Where the board turns a number green or red. Served rather than hardcoded
+    # in the template so the threshold is versioned and stated once — colour is
+    # an endorsement, and an endorsement invented in a stylesheet is not
+    # auditable. Presentation only; never an input to scoring.
+    display_bands: dict
 
 
 @router.get("/runtime", response_model=RuntimeConfig)
@@ -46,6 +51,13 @@ async def runtime_config() -> RuntimeConfig:
             "max_trade_risk_usd": policy.max_trade_risk_usd,
             "max_account_risk_usd": policy.max_account_risk_usd,
             "max_concurrent_positions": policy.max_concurrent_positions,
+        },
+        display_bands={
+            "version": settings.display_bands_version,
+            "pop_bad": settings.display_pop_bad,
+            "pop_ok": settings.display_pop_ok,
+            "cost_drag_good": settings.display_cost_drag_good,
+            "cost_drag_bad": settings.display_cost_drag_bad,
         },
     )
 

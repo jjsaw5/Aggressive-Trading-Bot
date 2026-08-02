@@ -51,10 +51,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" || pip install -e .
           pip install pytest pytest-asyncio ruff
+      # Lints the WHOLE repository, not a list of directories. The previous
+      # `app/ scripts/ tests/` form left alembic/ unlinted, so "CI is green" and
+      # "the repository is clean" were different statements and a real error sat
+      # in the gap. Reviewer Rulings #2, R3.6.
       - name: Lint
-        run: python -m ruff check app/ scripts/ tests/
+        run: python -m ruff check .
       - name: Full test suite
         run: python -m pytest -o addopts="" -q
+
+  # Reviewer Rulings #2, R4 step 4. Three credentials were exposed in a session
+  # transcript and were found by an audit, not by a build. A secret reaching the
+  # repository must fail here instead of surfacing weeks later in a packet.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks scans history, not just the tip
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   freeze-guard:
     # THE job FINDING_01 argued for. Fails a PR that changes scoring behaviour

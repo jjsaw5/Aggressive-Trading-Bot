@@ -1,0 +1,79 @@
+P3 — CI, and the freeze path guard demonstrated failing
+=======================================================
+Generated 2026-08-01.
+
+WORKFLOW FILE
+-------------
+.github/workflows/ci.yml  (added in PR #50, commit 1ccfc16)
+Two jobs: `tests` (ruff + full pytest) and `freeze-guard` (pull_request only).
+
+--- 1. A PASSING RUN ON MAIN -------------------------------------------------
+Run 30707827884 — push to main, head 34d0bad (merge of PR #51)
+https://github.com/jjsaw5/Aggressive-Trading-Bot/actions/runs/30707827884
+  conclusion: success
+  job `tests`        : success   (Install / Lint / Full test suite all green)
+  job `freeze-guard` : skipped
+
+Prior passing run on main: 30705967432, head 1ccfc16 (merge of PR #50) — success.
+
+HONEST NOTE ON THE `skipped` ABOVE. freeze-guard is `if: github.event_name ==
+'pull_request'`. It has no base..head range to diff on a push, so it cannot run
+there and is skipped rather than passing vacuously. The guard's protection is
+therefore on the PR, which is where changes are actually reviewed and where
+branch protection can require it. A direct push to main bypasses it — that is a
+real limitation of the control, stated rather than papered over. Closing it
+requires branch protection making `freeze-guard` a required status check (P9,
+NOT_STARTED — see A_P9).
+
+--- 2. THE GUARD FAILING A PR THAT TOUCHES SCORING UNDECLARED ----------------
+PR #52 "DEMO — do not merge: freeze path-guard must fail this"
+https://github.com/jjsaw5/Aggressive-Trading-Bot/pull/52
+  branch  : claude/ci-pathguard-demo
+  head    : 9af9d120cec4667c177c7247f58c358bc1c8fb8d
+  base    : 34d0badf4b32138d88f569e45ab8c0aa413736ac
+  diff    : a comment-only edit to app/shortduration/scoring/components.py
+            NO scoring_model_version bump, NO pre-registration amendment.
+  run     : 30715994614  -> conclusion: FAILURE
+  https://github.com/jjsaw5/Aggressive-Trading-Bot/actions/runs/30715994614
+
+Verbatim job log, job `freeze-guard` (id 91411526410):
+
+  BASE: 34d0badf4b32138d88f569e45ab8c0aa413736ac
+  HEAD: 9af9d120cec4667c177c7247f58c358bc1c8fb8d
+
+  Guarded paths touched:
+    app/shortduration/scoring/components.py
+
+  FREEZE VIOLATION
+  This PR touches a path whose behaviour is the frozen scoring model,
+  without declaring a model change.
+
+    scoring_model_version bumped : 0
+    pre-registration amended     : 0
+
+  See CAPTURE_WINDOW_PREREGISTRATION.md sections 2 and 8, and
+  docs/FREEZE_POINT.md. A legitimate model change needs, in THIS PR:
+    1. a scoring_model_version bump in app/config.py
+    2. a dated amendment under pre-registration section 8
+    3. a regenerated tests/golden/scoring_v3.json with the delta documented
+
+  If this change does NOT alter scoring behaviour, say so in the PR
+  body and a reviewer can override — do not weaken this job.
+
+  ##[error]Process completed with exit code 1.
+
+Note the job `tests` in the SAME run passed. Only the guard failed, and it
+failed on a change that alters no behaviour at all (a comment) — the guard is
+deliberately conservative: it gates on PATH, and clearing it requires a human
+statement, not a code property. That is the FINDING_01 lesson encoded: a
+behaviour change can arrive through a file the guard cannot semantically judge,
+so it demands a declaration instead of guessing.
+
+PR #52 was closed unmerged and its branch deleted. It exists only as this
+evidence.
+
+--- 3. NO FALSE POSITIVE (validated against real history) --------------------
+The guard was replayed against two real merged ranges before being trusted:
+  3e292b2..46e3738 (Ruling 1, a genuine model change) -> TRIPS, passes only
+                     because the version bump + amendment are present
+  104ce41..7b8fb06 (Phase 2, no scoring touch)        -> does not trip

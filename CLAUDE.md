@@ -89,6 +89,17 @@ shipping nothing.
   ordering within the bar; they are not achieved prices.
 - **Ambiguity resolves against the strategy.** A minute bar that traded through
   both the stop and the target books as a loss.
+- **A credential never appears anywhere but a secret store.** Not in a commit,
+  a log line, a comment, a prose document, a PR body, an exported artifact, a
+  screenshot, or a chat transcript. Secrets live in `.env` (gitignored) or the
+  deployment's secret manager, and reach code only through the environment.
+  This sits in the honesty rules rather than in §6 because it is the same
+  failure and it is the live one: three credentials were pasted into a session
+  transcript, and they were found by an audit weeks later rather than by any
+  control. **A key that has been written down anywhere else is already
+  compromised — rotate it, do not reason about who might have seen it.**
+  Secret-scan every staged diff before committing; CI runs gitleaks
+  (`.gitleaks.toml`), and that job is a backstop, not the first line.
 
 ## 5. Risk limits — hard
 

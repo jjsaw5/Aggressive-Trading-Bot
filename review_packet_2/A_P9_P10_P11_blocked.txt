@@ -1,0 +1,71 @@
+P9, P10, P11 — NOT DONE. Status lines, not silence.
+===================================================
+Per the packaging rule: where an item is not done it is included with a status
+line rather than omitted.
+
+--------------------------------------------------------------------------
+P9 — BRANCH PROTECTION                                   STATUS: NOT_STARTED
+--------------------------------------------------------------------------
+Nothing has been done. No branch-protection rule exists on `main`.
+
+WHAT THIS MEANS RIGHT NOW. The freeze-guard job runs only on pull_request (it
+has no base..head range to diff on a push, so it is `skipped` on main — see
+A_P3_ci_pathguard.txt section 1). Nothing currently REQUIRES it to pass before a
+merge, and nothing prevents a direct push to main from bypassing it entirely.
+The control is real and demonstrated (PR #52 failed on it), but it is advisory
+until it is a required status check.
+
+WHY IT IS NOT DONE. Branch protection is configured in repository settings by
+the repository owner. The session credential is scoped to refs and cannot set
+it — this is the same scoping that blocked the tag push under P4.
+
+WHAT THE USER MUST DO (5 minutes, GitHub web UI):
+  Settings -> Branches -> Add branch protection rule
+    Branch name pattern:            main
+    [x] Require a pull request before merging
+    [x] Require status checks to pass before merging
+        Required checks:  tests
+                          freeze-guard
+    [x] Do not allow bypassing the above settings   <- without this, the
+                                                        owner can still push
+                                                        past the guard
+
+--------------------------------------------------------------------------
+P10 — REDEPLOY PRODUCTION                                 STATUS: NOT_DONE
+--------------------------------------------------------------------------
+Production is still running build `7afa098`.
+
+Everything in Phases 0, 1 and 2 and every pre-flight item P1-P8 exists only in
+the repository. None of it is running. No deployed signal has ever carried
+capture gates, market context, or intraday grading.
+
+This is the user's action: it requires access to the Docker host, which this
+session does not have.
+
+--------------------------------------------------------------------------
+P11 — VERIFY PRODUCTION BEHAVED                    STATUS: BLOCKED (on P10)
+--------------------------------------------------------------------------
+The reviewer's note on this item was: "P11 is the step that converts 'the
+pipeline works' into 'production behaved'." It is the gating item, and it cannot
+start.
+
+VERIFIED BLOCKED, against the live production warehouse, 2026-08-01:
+
+  total decision snapshots          : 40154
+  under sd-scoring-2026.08-v3.1     : 0
+  market_context PRESENT (object)   : 0
+  market_context explicitly null    : 0
+
+  newest 3 snapshots in production
+    2026-07-31 21:23:25  QQQ    version='sd-scoring-2026.07-v3'  mktctx=None
+    2026-07-31 21:23:25  XLE    version='sd-scoring-2026.07-v3'  mktctx=None
+    2026-07-31 21:23:25  NVDA   version='sd-scoring-2026.07-v3'  mktctx=None
+
+Zero rows under the current model. Zero rows carrying market context. The
+capture window has not started and cannot start until P10 lands.
+
+ORDER OF OPERATIONS. P9 should land BEFORE P10, not after. Once production is
+redeployed the window opens, and from that moment an undeclared scoring change
+contaminates a live corpus rather than an empty one — which is precisely the
+situation the guard exists for and precisely when an advisory-only guard stops
+being good enough.

@@ -46,6 +46,52 @@ Full coverage is the path diff **plus** the three behavioural controls:
 | `tests/test_provider_scoring_contract.py` | changes to which provider fields reach the scorer |
 | `tests/test_scoring_freeze.py` | capture-only imports; a silent version bump |
 
+## The trio, and which class of change each one catches
+
+Reviewer Rulings #2, R1. Ruling 1 originally predicted the golden file would
+break on the FINDING_01 fix. It did not and could not — and understanding *why*
+is what makes the set of controls legible, so it is written down here rather
+than left as a footnote in a session log.
+
+A scoring change can arrive from exactly two directions: the arithmetic can
+change, or the inputs to the arithmetic can change. One test guards each
+direction, and CI forces the declaration when either fires.
+
+**1. `tests/test_scoring_golden.py` — pins the scorer's MATH on fixed inputs.**
+It constructs `IVContext` fixtures by hand and asserts the composite and every
+component against `tests/golden/scoring_v3.json`. It is blind to providers by
+construction: hand-built inputs cannot move when a provider changes. That
+blindness is the design, not a defect — it is what makes the file a clean
+measurement of the arithmetic alone. If a weight, threshold or component
+formula moves, this fails.
+
+**2. `tests/test_provider_scoring_contract.py` — pins WHAT THE SCORER RECEIVES.**
+It fixes `SCORED_IV_FIELDS` and greps `components.py` so the declared set cannot
+drift out of sync with what the scorer actually reads, then exercises the live
+provider's derivation of each field. This is the control that covers FINDING_01's
+class of defect, and it is the one that demonstrated efficacy across the fix:
+**8 of 9 failing before, 9 of 9 passing after.** A field the scorer reads and no
+provider populates fails here.
+
+**3. `.github/workflows/ci.yml` job `freeze-guard` — forces the DECLARATION.**
+Neither test above can tell whether a change is legitimate; that is a human
+judgement. The guard diffs the PR against the base for edits to guarded paths —
+including the provider files, because FINDING_01 proved a provider edit is a
+model change — and fails unless the same PR carries a `scoring_model_version`
+bump and a dated §8 amendment. It gates on PATH and deliberately does not try to
+judge semantics: it failed a comment-only edit in the PR #52 demonstration,
+which is correct behaviour, not a false positive.
+
+Between them: (1) catches the math moving, (2) catches the inputs moving, (3)
+makes either one impossible to ship silently. A change that evades all three
+would have to alter neither the arithmetic, nor the field set, nor any guarded
+file — in which case it is not a scoring change.
+
+**Ruling 1 step 2 is amended to match this.** The prediction that the golden file
+would break was mistaken about which control covers a provider change; the
+substitute proof (control 2's 8→9, plus control 3 catching the version bump
+independently) is the stronger evidence and stands in its place.
+
 ## Restoring the tag
 
 If the tag is absent from a clone or a remote:

@@ -1,0 +1,65 @@
+P1 — The golden file, and the failure log that does not exist
+=============================================================
+
+ARTIFACT
+--------
+tests/golden/scoring_v3.json  — 8 pinned cases
+tests/test_scoring_golden.py  — 20 tests
+Committed in 46e3738 (PR #49), BEFORE the term_slope fix in the same PR.
+
+Case names (each pins the composite AND every component):
+  baseline_bullish_no_term_slope
+  bearish_direction
+  hv_proxy_rank_is_discounted
+  rich_iv_crush_risk
+  term_structure_backwardated
+  term_structure_contango
+  term_structure_flat_within_deadband
+  very_low_iv
+
+Current run: see A_P1_freeze_controls_verbose.txt — 20/20 golden, 9/9 contract,
+all freeze-import tests pass.
+
+STATUS LINE: the requested failure log DOES NOT EXIST
+-----------------------------------------------------
+The review asked for "the PR where it FAILED on the term_slope change before
+regeneration — that failure log is the proof the test works."
+
+There is no such log, and there could not have been one. This was reported as
+Deviation 4 in the PR #49 body, in the commit message, and in SESSION_LOG.md
+Entry 0 before this review asked.
+
+WHY. The golden file scores fixed `IVContext` fixtures constructed inside the
+test. The term_slope fix changed the UNUSUAL WHALES PROVIDER — what it puts into
+an `IVContext` at runtime. A provider change cannot move a number the test
+computes from a hand-built object. Regenerating the file would have produced a
+byte-identical file. Ruling 1 step 2 predicted a break that is structurally
+impossible for this test design.
+
+I did not contort the design to manufacture the predicted failure. I reported
+that the prediction was wrong.
+
+THE EQUIVALENT PROOF, which does exist
+---------------------------------------
+Two independent controls did fail-then-pass across that change:
+
+1. tests/test_provider_scoring_contract.py — 8 of 9 FAILING before the fix,
+   9 of 9 passing after. Captured at the time in
+   review_packet/evidence_R1_proof_of_efficacy.txt. This is the test that
+   actually covers the thing that changed.
+
+2. The freeze path guard — 1 failed, 811 passed on the pre-declaration run;
+   it caught the version bump independently.
+
+DOES THE GOLDEN FILE ACTUALLY WORK, THEN?
+------------------------------------------
+It is proven against the change it CAN see. Two tests in the same file exist
+specifically to prove the backwardation path is live rather than dead code:
+
+  test_the_backwardation_penalty_is_actually_wired   PASSED
+  test_a_null_term_slope_scores_the_same_as_a_flat_one  PASSED
+
+The first asserts the 0.85 multiplier moves the composite for a backwardated
+fixture. If components.py stopped reading term_structure_slope, that test fails.
+That IS the golden file catching a scorer change — it just is not the change
+Ruling 1 named.

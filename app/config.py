@@ -203,6 +203,28 @@ class Settings(BaseSettings):
     # See FINDING_01 and CAPTURE_WINDOW_PREREGISTRATION.md §8.
     scoring_model_version: str = "sd-scoring-2026.08-v3.1"
     risk_policy_version: str = "sd-risk-2026.07-v1"
+
+    # --- Display bands (presentation only — NOT scoring inputs) ---------------
+    # Where a number turns green or red on the board. These lived as unnamed
+    # literals inside dashboard.html, duplicated across two views, unversioned
+    # and undocumented: colour is read faster than text, so "POP is good at
+    # >=55%" was an endorsement being made in a stylesheet on a quantity the
+    # same screen labels UNCALIBRATED. Reviewer Rulings #2, R3.4.
+    #
+    # NOTHING here reaches the scorer. `tests/test_scoring_freeze.py` and
+    # `tests/test_provider_scoring_contract.py` both still pass unchanged; these
+    # values are served to the browser and used for CSS class selection only.
+    # They carry a version so a change to what counts as "good odds" is a dated,
+    # visible event rather than a silent diff in a template literal.
+    display_bands_version: str = "sd-display-2026.08-v1"
+    # Probability of profit: below `bad` renders negative, below `ok` cautionary,
+    # at or above `ok` positive.
+    display_pop_bad: float = 0.40
+    display_pop_ok: float = 0.55
+    # Cost drag (round-trip spread tax as a fraction of defined max loss). Lower
+    # is better, so the polarity is inverted relative to POP.
+    display_cost_drag_good: float = 0.15
+    display_cost_drag_bad: float = 0.30
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {
             "price_structure": 22, "market_alignment": 15, "relvol_momentum": 15,

@@ -1,0 +1,72 @@
+P7 — Mark quality travels with the grade; the 0DTE bar is quantitative
+======================================================================
+Ruling 2 accepted item 1.4's divergence for 1-5DTE WITH mandatory mark-quality
+columns, and REJECTED it for 0DTE pending a quantitative re-enable bar.
+
+CODE
+----
+app/analytics/mark_quality.py
+  LOW_CONFIDENCE_GAP_MINUTES = 15
+  ZERO_DTE_MIN_COVERAGE_PCT  = 0.80
+  ZERO_DTE_MAX_GAP_MINUTES   = 5
+  assess(marks, start, end) -> MarkQuality
+  meets_zero_dte_bar(q) -> (bool, reason)
+
+tests/test_mark_quality.py — 20 tests, all passing.
+
+THE COLUMNS TRAVEL WITH THE GRADE, NOT IN A MEMO
+-------------------------------------------------
+app/domain/outcomes.py, DecisionOutcome:
+    mark_coverage_pct: float | None    # priced minutes / RTH minutes
+    max_gap_minutes:   int | None      # largest unobserved run
+    grade_confidence:  str             # high | low | unknown
+
+Comment in situ: "These travel WITH the grade so the caveat cannot be separated
+from the number."
+
+MEASUREMENT DISCIPLINE THE TESTS PIN
+-------------------------------------
+  consecutive minutes are a ZERO-minute gap, not a one-minute gap
+      (a gap is UNOBSERVED time; adjacent bars are continuous)
+  the LARGEST gap is reported, never the average
+      (averaging hides one long hole behind dense stretches)
+  a single mark yields max_gap = None and confidence = "unknown"
+      (reporting 0 would claim perfect coverage from one observation)
+  no marks at all -> coverage None, not 0%
+      (0/0 is not 0%; a Saturday window cannot produce a coverage figure)
+  coverage is capped at 1.0
+      (extended-hours prints must not read >100%)
+  an overnight window counts only RTH minutes
+
+THE 0DTE BAR
+------------
+Both conditions required; either alone sinks it:
+    coverage >= 80% of RTH  AND  max gap <= 5 minutes
+
+Unmeasurable quality FAILS rather than passes — the bar exists to DEMONSTRATE
+coverage, and "we could not tell" is not a demonstration
+(test_unmeasurable_quality_fails_rather_than_passes).
+
+WIRED INTO THE GATE, WITH NUMBERS
+----------------------------------
+app/shortduration/capture_gates.py, bucket_suspended(DTECategory.ZERO_DTE)
+returns a rejection whose detail string contains "80%", "5min" AND "52min" —
+the threshold, the threshold, and the MEASURED value that failed it. Asserted by
+test_the_0dte_rejection_states_the_quantitative_bar. The memo problem is closed:
+a reader of the rejection sees why, in numbers, without leaving the rejection.
+
+CORRECTION CARRIED FROM THE PRIOR PACKET
+-----------------------------------------
+The audit reported "53-minute maximum gap". The precise figure is 52 UNOBSERVED
+minutes — consecutive bars are a 0-minute gap, so the run between a mark at t
+and a mark at t+53 is 52 unobserved minutes. The gate message and the tests both
+now say 52. The docstring of tests/test_mark_quality.py still refers to the
+audit's "53-minute" figure by name, deliberately, so the two can be reconciled.
+
+THE BIAS IS DIRECTIONAL, AND SAID SO
+-------------------------------------
+"An exit that triggered and reversed inside a gap is MISSED, not mispriced."
+Consequence, stated in the module docstring, the domain model and the dictionary:
+trades look longer-held than they were, and stop-outs are under-reported. A grade
+with a 52-minute hole and a grade with full coverage are not the same
+measurement, and the schema now refuses to present them as if they were.

@@ -128,9 +128,12 @@
     .mv-new { color: var(--accent); font-weight: 700; letter-spacing: .04em; }
     .mv-up { color: var(--green); }
     .mv-down { color: var(--red); }
-    /* Engine picks: the app on the record about what it would take. */
-    .badge.pick { background: var(--accent); color: #fff; font-weight: 700; letter-spacing: .03em; }
-    tr.pickrow td { box-shadow: inset 2px 0 0 var(--accent); }
+    /* No engine-pick styling. `engine_pick` / `pick_rank` / `pick_reason` are still
+       captured and warehoused so the window can grade whether the flag means
+       anything, but they render nothing: a blue "PICK #1" badge is a
+       recommendation, and no feature has cleared the net-of-cost validation gate.
+       If a gate ever turns GREEN with discrimination demonstrated, this can earn
+       its way back. Reviewer Rulings #2, R3.1. */
     .agree-yes { color: var(--green); } .agree-no { color: var(--red); }
     /* App shell: grouped sidebar + independently scrolling content pane. */
     .shell { display: flex; align-items: stretch; height: calc(100vh - 58px); }
@@ -230,6 +233,47 @@
       return r.json();
     };
     const showErr = (e) => { $("#err").textContent = e ? ("Error: " + e.message) : ""; };
+
+    // --- Time: ALWAYS exchange time, never the viewer's ------------------------
+    // Every timestamp in this product describes a market event — a session
+    // boundary, an expiry, a quote age, an RTH coverage window. Rendering those
+    // in the browser's zone meant "09:31" silently denoted different instants in
+    // Denver and in London, on a product whose whole subject is same-session
+    // expiry. Reviewer Rulings #2, R3.3: one formatter, pinned to the exchange,
+    // labelled so the reader knows which clock they are on.
+    //
+    // tests/test_dashboard_timezone.py fails the build on any bare
+    // `toLocaleString(` / `toLocaleTimeString(` / `toLocaleDateString(` added
+    // below without an explicit timeZone. Use these helpers instead.
+    const ET = "America/New_York";
+    const etDateTime = (v) => v == null ? "—"
+      : new Date(v).toLocaleString(undefined, { timeZone: ET }) + " ET";
+    const etTime = (v) => new Date(v == null ? Date.now() : v)
+      .toLocaleTimeString(undefined, { timeZone: ET }) + " ET";
+    const etDate = (v) => v == null ? "—"
+      : new Date(v).toLocaleDateString(undefined, { timeZone: ET });
+
+    // --- Display bands: where a number turns green or red ---------------------
+    // Served from app/config.py, versioned, stated once. These were unnamed
+    // literals written twice (POP in two views) — colour is read faster than
+    // text, so "good odds at >=55%" was an endorsement made in a stylesheet on a
+    // quantity the same screen labels UNCALIBRATED. Reviewer Rulings #2, R3.4.
+    //
+    // Until the server answers, bands are null and BOTH helpers return "" — the
+    // neutral, non-signalling class. A colour is a claim, and a claim whose
+    // threshold we have not yet loaded must not be made. This is the interim
+    // behaviour the ruling permitted, kept as the permanent failure mode.
+    let DISPLAY_BANDS = null;
+    const popCls = (p) => {
+      if (p == null || !DISPLAY_BANDS) return "";
+      return p < DISPLAY_BANDS.pop_bad ? "neg" : p < DISPLAY_BANDS.pop_ok ? "warn" : "pos";
+    };
+    const dragCls = (d) => {
+      if (d == null || !DISPLAY_BANDS) return "";
+      return d < DISPLAY_BANDS.cost_drag_good ? "pos"
+           : d < DISPLAY_BANDS.cost_drag_bad ? "warn" : "neg";
+    };
+
     const fmt = (v, d = 2) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
@@ -285,6 +329,10 @@
     async function loadConfig() {
       try {
         const c = await api("GET", "/config/runtime");
+        // Colour bands arrive with the config so the board never invents its own.
+        // Left null on failure — popCls/dragCls then return the neutral class,
+        // because a colour we cannot justify is one we must not paint.
+        DISPLAY_BANDS = c.display_bands || null;
         const rp = c.risk_policy;
         $("#cfg").innerHTML =
           `<span class="badge">mode: ${c.trading_mode}</span> ` +
@@ -434,8 +482,10 @@
       const intro = `<div class="banner"><h2>Proposals — the human-approval gate</h2>
         <div class="sub">A proposal is a fully-specified order ticket the scanner built from a candidate,
         held here for <b>your</b> review. Nothing is sent to a broker automatically. The flow is:
-        <b>Candidate → Propose → Approve → Execute</b>. <b>Execute is double-gated</b> — it stays denied by
-        default (research mode) and only ever routes an order when live trading is explicitly armed, which it is not.</div></div>`;
+        <b>Candidate → Propose → Approve → Execute</b>. <b>There is no broker path in this build.</b>
+        Execute calls the ExecutionGuard and renders its answer — today, always a denial and the reason for it.
+        No code in this platform places, cancels or modifies an order, and brokerage access is read-only.
+        The button exists to make the gate observable and testable, not to arm anything.</div></div>`;
       if (!ps.length)
         return intro + `<div class="empty" style="margin-top:10px">No proposals yet. Open a candidate and press <b>Propose</b> to draft one.</div>`;
       const cards = ps.map(p => {
@@ -443,7 +493,7 @@
         const cls = PROP_STATUS[p.status] || "muted";
         const risk = pl.risk ? `$${fmt(pl.risk.max_loss_usd, 0)}` : "—";
         const rr = pl.risk && pl.risk.reward_to_risk != null ? ` · R:R ${pl.risk.reward_to_risk} : 1` : "";
-        const expires = p.expires_at ? new Date(p.expires_at).toLocaleString() : "—";
+        const expires = etDateTime(p.expires_at);
         // Actions reflect the lifecycle: approve/reject while pending, execute once approved.
         const pending = p.status === "pending_approval" || p.status === "draft";
         const acts = p.status === "approved"
@@ -654,9 +704,8 @@
       const earn = p.earnings_date
         ? `<div>Earnings</div><div class="${p.earnings_before_expiry ? "neg" : ""}">${p.earnings_date}${p.earnings_before_expiry ? " ⚠ before expiry" : " (after expiry)"}</div>`
         : "";
-      const popCls = p.probability_of_profit == null ? "" : p.probability_of_profit < 0.4 ? "neg" : p.probability_of_profit < 0.55 ? "warn" : "pos";
       const popRow = p.probability_of_profit == null ? "" :
-        `<div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div><span class="${popCls}">${(p.probability_of_profit*100).toFixed(0)}%</span></div>`;
+        `<div>Chance of profit <span class="muted" style="font-size:11px">(implied)</span></div><div><span class="${popCls(p.probability_of_profit)}">${(p.probability_of_profit*100).toFixed(0)}%</span></div>`;
       const summary = `<div class="kv">
         <div>Entry (net)</div><div>$${fmt(p.entry_net)}${p.current_net != null ? ` → now $${fmt(p.current_net)}` : ""}</div>
         <div>Max loss / profit</div><div>$${fmt(p.max_loss_usd, 0)} / ${p.max_profit_usd == null ? "uncapped" : "$" + fmt(p.max_profit_usd, 0)}</div>
@@ -760,7 +809,7 @@
     async function renderPositions() {
       const ps = await api("GET", "/positions");
       const toolbar = `<div style="margin-bottom:10px">
-        <span class="badge" style="color:#3fb950">● marks as of ${new Date().toLocaleTimeString()}</span>
+        <span class="badge" style="color:#3fb950">● marks as of ${etTime()}</span>
         <button data-act="pos-add-show">+ Add position</button>
         <button class="ghost" data-act="pos-refresh">Refresh</button>
         <button class="ghost" data-act="pos-engine-view" title="Stamp the engine's current read + a structural invalidation level onto positions that have none">Stamp engine view</button>
@@ -793,7 +842,7 @@
       const wins = hs.filter(h => (h.realized_pnl_usd || 0) > 0).length;
       const decided = hs.filter(h => h.realized_pnl_usd != null).length;
       const rows = hs.map(h => `<tr>
-        <td>${h.closed_at ? new Date(h.closed_at).toLocaleDateString() : "—"}</td>
+        <td>${etDate(h.closed_at)}</td>
         <td><strong>${h.symbol}</strong></td><td>${stratLabel(h.strategy)} <span class="muted">x${h.contracts}</span></td>
         <td class="num">${fmt(h.entry_net)} → ${h.exit_net == null ? "—" : fmt(h.exit_net)}</td>
         <td class="num ${cls(h.realized_pnl_usd)}">${h.realized_pnl_usd == null ? "—" : (h.realized_pnl_usd >= 0 ? "+" : "") + "$" + fmt(h.realized_pnl_usd, 0)}</td>
@@ -814,7 +863,7 @@
 
       const badges =
         `<div style="margin-bottom:12px">
-          <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+          <span class="badge" style="color:#3fb950">● live · ${etTime()}</span>
           <span class="badge">cache ${c.hit_rate == null ? "—" : (c.hit_rate * 100).toFixed(0) + "%"} hit</span>
           <span class="badge">cache hits ${c.hits ?? 0}/${(c.hits ?? 0) + (c.misses ?? 0)}</span>
           <span class="badge">rate-limit ${rl.enabled ? "on" : "off"}</span>
@@ -967,13 +1016,15 @@
       const swingPill = hz
         ? ` <span class="pill warn" title="${hz.note.replace(/"/g, "&quot;")}">SWING · ${hz.dte}d</span>`
         : "";
-      // The engine on the record: a setup it would actually take this scan.
-      const pick = c.engine_pick
-        ? ` <span class="badge pick" title="${(c.pick_reason || "").replace(/"/g, "&quot;")}">PICK #${c.pick_rank || ""}</span>`
-        : "";
-      return `<tr class="clickable ${c.engine_pick ? "pickrow" : ""}" data-cid="${c.id}">
+      // `c.engine_pick` / `pick_rank` / `pick_reason` are deliberately NOT rendered.
+      // They remain in the payload and the warehouse so the capture window can grade
+      // whether the engine's would-take flag predicts anything. Displaying it as
+      // "PICK #1" asserted a recommendation no validated feature supports, on the
+      // same screen as a banner saying the product does not recommend. Reviewer
+      // Rulings #2, R3.1: captured data, invisible on the board.
+      return `<tr class="clickable" data-cid="${c.id}">
         <td class="rank">${rank == null ? "" : rank}</td>
-        <td><strong>${c.symbol}</strong>${pick}${mvBadge(mv)}</td>
+        <td><strong>${c.symbol}</strong>${mvBadge(mv)}</td>
         <td><span class="pill">${c.dte_category}</span>${swingPill}</td>
         <td>${c.direction}${rrBadge}</td>
         <td>${c.strategy || "—"}${why}</td>
@@ -1019,12 +1070,10 @@
         `<tr><td>${l.action.replace(/_/g," ")}</td><td><strong>${l.strike}${l.option_type[0].toUpperCase()}</strong></td>
          <td>${l.expiration}</td><td class="num">${l.quantity}</td></tr>`).join("");
       // Market-implied odds: a low, capped-payoff bet reads honestly here.
-      const popCls = c.probability_of_profit == null ? "" : c.probability_of_profit < 0.4 ? "neg" : c.probability_of_profit < 0.55 ? "warn" : "pos";
-      const popTxt = c.probability_of_profit == null ? "—" : `<span class="${popCls}">${(c.probability_of_profit*100).toFixed(0)}%</span>`;
-      // Cost-drag: round-trip spread tax as a % of defined max-loss. <15% cheap, ≥30% expensive.
+      const popTxt = c.probability_of_profit == null ? "—" : `<span class="${popCls(c.probability_of_profit)}">${(c.probability_of_profit*100).toFixed(0)}%</span>`;
+      // Cost-drag: round-trip spread tax as a % of defined max-loss. Bands served.
       const drag = rec.cost_drag_ratio;
-      const dragCls = drag == null ? "" : drag < 0.15 ? "pos" : drag < 0.30 ? "warn" : "neg";
-      const dragTxt = drag == null ? "—" : `<span class="${dragCls}">${(drag*100).toFixed(0)}%</span>${rec.cost_drag_note?` <span class="muted" style="font-size:11px">${rec.cost_drag_note}</span>`:""}`;
+      const dragTxt = drag == null ? "—" : `<span class="${dragCls(drag)}">${(drag*100).toFixed(0)}%</span>${rec.cost_drag_note?` <span class="muted" style="font-size:11px">${rec.cost_drag_note}</span>`:""}`;
       const contract = `<div class="card" style="margin-top:10px"><h3>Contract & risk</h3>
         <div class="kv">
           <div>Structure</div><div>${rec.description||"—"}</div>
@@ -1109,7 +1158,7 @@
       const head = `<div class="banner" style="margin-top:10px"><h2>${c.symbol}
         <span class="muted" style="font-size:14px">${c.strategy || ""} · ${c.direction} · ${c.dte_category}</span></h2>
         <div class="sub">State <span class="pill">${c.state}</span> · <span class="muted">tradability</span> <strong>${(c.score*100).toFixed(0)}</strong>/100
-          · confidence ${(c.confidence*100).toFixed(0)}% · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
+          · data quality ${c.data_quality_score==null?"—":(c.data_quality_score*100).toFixed(0)+"%"}
           ${c.freshness ? "· quote " + (c.freshness.ok ? '<span class="pos">' : '<span class="neg">') + (c.freshness.quote_age_s==null?"n/a":c.freshness.quote_age_s+"s") + "</span> <span class=\"muted\">(≤" + c.freshness.threshold_s + "s " + c.freshness.use_case + ")</span>" : ""}
           ${c.scoring_model_version ? '· model <code>'+c.scoring_model_version+'</code>' : ""}</div>
         <div style="margin-top:6px"><b>Entry:</b> ${c.entry_trigger||"—"}</div>
@@ -1182,7 +1231,7 @@
       const cands = await api("GET", "/short-duration/0dte/candidates?limit=20");
       const news = await api("GET", "/short-duration/news?limit=6");
       const toolbar = `<div style="margin-bottom:10px">
-        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <span class="badge" style="color:#3fb950">● live · ${etTime()}</span>
         <button class="ghost" data-act="sd-scan-0dte">Run 0DTE scan</button>
         <span class="muted">Setup-first: ORB + VWAP continuation, gated by regime & event risk. Refreshes every 5s.</span></div>`;
       const levelRows = (r.levels || []).map(l => `<tr>
@@ -1217,7 +1266,7 @@
         <button class="ghost" data-act="sd-scan-1-5dte">Run 1–5DTE scan</button>
         <span class="muted">Trend + catalyst continuation. Each candidate carries a sized defined-risk structure (single leg and vertical), cost-drag, POP, and an exit plan. Every row here expires within 5 days — setups the scanner horizon-matched to a weeks-out expiry are filed under <b>Medium Duration</b>. Research only — no orders.</span></div>`;
       const evRows = (events || []).slice(0, 8).map(e => `<tr><td>${e.name}</td>
-        <td>${(e.impact || "—")}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td></tr>`).join("");
+        <td>${(e.impact || "—")}</td><td>${etDateTime(e.scheduled_at)}</td></tr>`).join("");
       return toolbar + sdTruthBanner() + `<div class="card"><h3>1–5DTE candidates <span class="muted" style="font-size:12px">(≤5 DTE only)</span></h3>${sdCandTable(cands, "sd:1-5dte")}</div>
         <div class="card" style="margin-top:14px"><h3>Event-risk calendar</h3>
         <table><thead><tr><th>Event</th><th>Impact</th><th>When</th></tr></thead>
@@ -1249,7 +1298,7 @@
       if (!news.length) return `<div class="empty">No news items.</div>`;
       const rows = news.map(n => `<tr><td>${n.symbol || "—"}</td><td>${n.headline}</td>
         <td>${n.source}</td>
-        <td>${n.source_ts ? new Date(n.source_ts).toLocaleTimeString() : "—"}</td>
+        <td>${n.source_ts ? etTime(n.source_ts) : "—"}</td>
         <td class="num">${n.end_to_end_latency_s == null ? "—" : Math.round(n.end_to_end_latency_s) + "s"}</td></tr>`).join("");
       // Structured catalysts (Phase 5): classify the symbols present in the feed.
       let catCard = "";
@@ -1283,7 +1332,7 @@
       const rows = events.map(e => {
         const mins = Math.round((new Date(e.scheduled_at).getTime() - now) / 60000);
         return `<tr><td><strong>${e.name}</strong></td><td>${e.category || "—"}</td>
-          <td>${e.impact || "—"}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td>
+          <td>${e.impact || "—"}</td><td>${etDateTime(e.scheduled_at)}</td>
           <td class="num">${mins < 0 ? "released" : mins + "m"}</td>
           <td class="num">${e.consensus == null ? "—" : e.consensus}</td>
           <td class="num">${e.actual == null ? "—" : e.actual}</td></tr>`;
@@ -1296,7 +1345,7 @@
     async function renderSdPositions() {
       const ps = await api("GET", "/short-duration/positions?status=open");
       const toolbar = `<div style="margin-bottom:10px">
-        <span class="badge" style="color:#3fb950">● live · ${new Date().toLocaleTimeString()}</span>
+        <span class="badge" style="color:#3fb950">● live · ${etTime()}</span>
         <button class="ghost" data-act="sd-monitor">Mark &amp; check exits</button>
         <span class="muted">Open short-duration paper positions. Intraday time-stops apply. Refreshes every 5s.</span></div>`;
       if (!ps.length) return toolbar + `<div class="empty">No open short-duration paper positions. Open one from a candidate's detail.</div>`;
@@ -1458,7 +1507,7 @@
       const errNote = Object.keys(r.errors || {}).length ? `<div class="muted" style="margin:6px 0">Some sections unavailable: ${Object.keys(r.errors).join(", ")}.</div>` : "";
       return `<div style="margin-bottom:10px"><button class="ghost" data-act="search-close">← Back</button>
         <button class="ghost" data-act="search-refresh" data-sym="${r.symbol}">Refresh</button>
-        <span class="muted">Live research · ${new Date().toLocaleTimeString()} · setups from the engines, not the news</span></div>
+        <span class="muted">Live research · ${etTime()} · setups from the engines, not the news</span></div>
         ${head}${errNote}
         <div style="height:14px"></div>${sdCard}
         <div style="height:14px"></div><div class="autogrid">${swingCard}${flowCard}${newsCard}${catCard}</div>`;
@@ -1678,7 +1727,7 @@
         .map(p => `<tr><td><strong>${p.symbol}</strong> earnings</td><td>${p.earnings_date}</td>
           <td>${p.earnings_before_expiry ? '<span class="warn">before your expiry — IV crush risk</span>' : '<span class="muted">after expiry</span>'}</td></tr>`);
       const evRows = (events || []).slice(0, 5).map(e =>
-        `<tr><td>${e.name}</td><td>${new Date(e.scheduled_at).toLocaleString()}</td><td class="muted">${e.impact || ""}</td></tr>`);
+        `<tr><td>${e.name}</td><td>${etDateTime(e.scheduled_at)}</td><td class="muted">${e.impact || ""}</td></tr>`);
       const eventsCard = `<div class="card"><h3>Event risk</h3>
         ${posEarnings.length || evRows.length
           ? `<table class="today-list"><tbody>${posEarnings.join("")}${evRows.join("")}</tbody></table>`
@@ -1705,7 +1754,7 @@
 
       return `<div style="margin-bottom:10px">
           <button class="ghost" data-act="pos-refresh">Refresh</button>
-          <span class="muted">Snapshot at ${new Date().toLocaleTimeString()} — everything here is a shortcut into the full boards.</span>
+          <span class="muted">Snapshot at ${etTime()} — everything here is a shortcut into the full boards.</span>
         </div>` + tiles + attnCard +
         `<div class="autogrid">${topCard("0DTE board — top setups", zero, "sd/command")}
           ${topCard("1–5DTE board — top setups", short, "sd/scanner")}
@@ -2019,9 +2068,15 @@
       }
     });
 
-    loadConfig();
-    // Land on the hash if present, else the last-used view, else Today.
-    setView(location.hash.slice(1) || localStorage.getItem("lastview") || "today", { fromHash: true });
+    // Config first, THEN the first paint: the display bands decide whether a POP
+    // renders green or neutral, so painting before they land would show one
+    // colour and then correct it. A number that changes colour under the reader
+    // is worse than one that was never coloured.
+    (async () => {
+      await loadConfig();
+      // Land on the hash if present, else the last-used view, else Today.
+      setView(location.hash.slice(1) || localStorage.getItem("lastview") || "today", { fromHash: true });
+    })();
   </script>
 </body>
 </html>

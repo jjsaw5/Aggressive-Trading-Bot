@@ -38,6 +38,7 @@ from app.providers import registry
 from app.shortduration import service
 from app.shortduration.breadth import WatchlistParticipation
 from app.shortduration.detection import run_detection
+from app.shortduration.risk import apply_live_timing
 
 router = APIRouter(prefix="/short-duration", tags=["short-duration"])
 
@@ -247,18 +248,30 @@ async def events() -> list[EconomicEvent]:
 
 
 # --- Candidates + state machine ---------------------------------------------
+async def _board(dte_category: str, limit: int) -> list[ShortDurationCandidate]:
+    """Load a board and bring its TIMING gate up to the reading clock.
+
+    The rest of the gate verdict stays frozen at scan time, which is correct —
+    liquidity and sizing are properties of the setup. Timing is a property of the
+    clock, and freezing it meant a row scanned at 09:31 still read BLOCKED at
+    09:54, while a 0DTE row scanned at 14:00 would still read ALLOWED at 15:30.
+    The second direction is the dangerous one, so this recomputes rather than
+    merely clearing. See app/shortduration/risk.py: refresh_timing_gate.
+    """
+    rows = await run_in_threadpool(
+        repository.list_short_duration_candidates, dte_category=dte_category, limit=limit
+    )
+    return apply_live_timing(rows)
+
+
 @router.get("/0dte/candidates", response_model=list[ShortDurationCandidate])
 async def zero_dte_candidates(limit: int = 100) -> list[ShortDurationCandidate]:
-    return await run_in_threadpool(
-        repository.list_short_duration_candidates, dte_category="0dte", limit=limit
-    )
+    return await _board("0dte", limit)
 
 
 @router.get("/1-5dte/candidates", response_model=list[ShortDurationCandidate])
 async def short_dte_candidates(limit: int = 100) -> list[ShortDurationCandidate]:
-    return await run_in_threadpool(
-        repository.list_short_duration_candidates, dte_category="1-5dte", limit=limit
-    )
+    return await _board("1-5dte", limit)
 
 
 @router.get("/medium/candidates", response_model=list[ShortDurationCandidate])
@@ -268,9 +281,7 @@ async def medium_dte_candidates(limit: int = 100) -> list[ShortDurationCandidate
     Filed here rather than on the 1-5DTE board, where they had become 65% of the
     rows and made that label meaningless. The scan lineage is unchanged; only the
     board follows the contract's real horizon."""
-    return await run_in_threadpool(
-        repository.list_short_duration_candidates, dte_category="medium", limit=limit
-    )
+    return await _board("medium", limit)
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
@@ -278,6 +289,7 @@ async def candidate_detail(candidate_id: str) -> CandidateDetail:
     cand = await run_in_threadpool(repository.get_short_duration_candidate, candidate_id)
     if cand is None:
         raise HTTPException(404, "Candidate not found.")
+    apply_live_timing([cand])
     transitions = await run_in_threadpool(
         repository.list_candidate_transitions, candidate_id
     )

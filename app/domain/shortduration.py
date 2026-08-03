@@ -410,6 +410,15 @@ class ShortDurationCandidate(BaseModel):
     entry_allowed: bool | None = None
     entry_notes: list[str] = Field(default_factory=list)
     reject_reasons: list[str] = Field(default_factory=list)
+    # When the NON-timing entry gates were evaluated. Timing is recomputed on
+    # every read (app/shortduration/risk.py: refresh_timing_gate) because it is a
+    # property of the clock rather than of the setup; everything else here is as
+    # old as this timestamp. Surfaced so the board can show a stale verdict AS
+    # stale instead of passing a scan-time decision off as a current one.
+    entry_gates_evaluated_at: datetime | None = None
+    # True when `time_of_day_blocked` reflects the clock at READ time. Lets the
+    # UI distinguish "blocked right now" from "was blocked when scanned".
+    entry_timing_is_live: bool = False
     freshness: dict | None = None  # data-freshness result at scoring (state/track-aware)
     reward_to_risk: float | None = None
     # The actionable sized structure (source of truth for opening a paper trade).

@@ -426,3 +426,112 @@ No source behaviour changed this session. The freeze controls were run and pass:
   rotate the UW API key and both Turso tokens.
 
 ---
+
+## Entry 4 — 2026-08-03 — Entry-gate timing recomputed on read
+
+**Contemporaneous.**
+
+### The report
+
+At 09:54 ET every row on the board read `time_of_day_blocked`. The question was
+whether this was the market-settle window about to clear on its own.
+
+It was not. The settle window is **5 minutes**
+(`short_duration_no_entry_first_minutes = 5`), so it had cleared at 09:35.
+
+### What was actually wrong
+
+`evaluate_entry_gates` runs once, at scan time, and its verdict is frozen onto
+the candidate (`detection.py:350/353`). Nothing re-evaluated it on read. A row
+scanned pre-market or inside the opening window therefore carried
+`time_of_day_blocked` for the rest of the session.
+
+Production data, decoded from `short_duration_candidates.payload`:
+
+| scan (UTC) | ET | rows | entry_allowed | time_of_day_blocked |
+|---|---|---|---|---|
+| 12:15:42 | 08:15 | 7 | 0 | 7 (pre-market) |
+| 13:31:21 | 09:31 | 7 | 0 | 7 (opening window) |
+| 13:46:33 | 09:46 | 7 | **7** | 0 |
+| 13:52:54 | 09:52 | 7 | **7** | 0 |
+
+The gate itself was behaving correctly at every instant. The board was showing a
+09:31 verdict at 09:54.
+
+### The fix
+
+`app/shortduration/risk.py`
+  - `timing_gate_now(dte, now)` — the clock rule alone; no market data, no I/O
+  - `refresh_timing_gate(...)` — recompute timing, preserve everything else
+  - `apply_live_timing(candidates)` — applied on the read path
+  - `GATE_REJECTS` — the reject reasons `evaluate_entry_gates` can emit, so
+    contract-level reasons are not mistaken for gate blocks
+
+Wired into all four read endpoints (`0dte`, `1-5dte`, `medium`, detail).
+
+`app/domain/shortduration.py` — `entry_gates_evaluated_at`, `entry_timing_is_live`.
+`app/web/dashboard.html` — `gateAsOf()`; the ENTRY cell now reads
+`ALLOWED (non-timing gates as of 4:01 PM ET, 1d ago)`.
+
+`tests/test_entry_gate_timing_refresh.py` — 19 tests.
+
+### Decisions taken
+
+1. **Recompute, do not merely un-block.** The stale-permissive direction is the
+   dangerous one: a 0DTE row scanned at 14:00 would have kept ALLOWED past the
+   15:00 cutoff. Clearing stale blocks alone would have fixed the visible
+   symptom and left the hazard. Two tests pin the re-blocking direction.
+2. **Only timing is recomputed.** Liquidity, sizing, portfolio limits and regime
+   describe the setup and the account at scan time; this function has neither
+   the chain nor the account state to re-derive them, and guessing would be
+   worse than freezing. They stay frozen and are labelled as frozen.
+3. **`entry_allowed` keeps its scan-time semantics** — the GATE verdict alone.
+   Contract rejects (`illiquid_option`) remain in `reject_reasons` and do not
+   block entry, matching production rows that carry both `illiquid_option` and
+   `entry_allowed=true`.
+4. **A contract test ties `GATE_REJECTS` to the source of
+   `evaluate_entry_gates`.** If that function grows a new reject reason, the
+   test fails rather than the new reason being silently downgraded to advisory.
+   Same technique as the provider-scoring contract test.
+5. **The as-of label is always shown, not only when stale.** The reader should
+   not have to know a threshold to know what they are looking at; the age suffix
+   appears past 15 minutes.
+
+### Freeze status
+
+No scoring change. `app/shortduration/risk.py` is not a guarded path and the
+scorer neither reads nor is read by the entry gate. Golden, provider-contract and
+freeze-import tests unchanged and passing.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **Credential rotation remains incomplete, by the owner's explicit decision.**
+   The pre-rotation Turso token still authenticates against production (verified:
+   40,154 snapshots readable). New tokens were minted; the old ones were never
+   invalidated. Raised twice, the owner judged it non-blocking for app function —
+   which is correct — and deferred it. Recorded here because a governance
+   deviation agreed in conversation is not recorded anywhere a future session
+   can see it. The invalidating command is
+   `turso db tokens invalidate <database>`.
+2. **The stale-gate defect reached production and was found by a user, not by a
+   test.** No test asserted that a gate verdict is current when displayed. That
+   gap is now closed for timing, but the same freeze-and-display pattern applies
+   to `freshness` (which has its own on-demand endpoint) and to
+   `market_context`; neither was audited this session.
+
+### State at entry close
+
+- `main` at `eb1f6de` (PR #53 merged). **Production redeploy still not
+  confirmed** — see the note below on why it may never have taken.
+- **`docker compose up -d` without `--build` does not pick up code changes.**
+  The Dockerfile does `COPY . .` and the compose file mounts no volumes, so the
+  running container serves the image as built. Compose only builds when the named
+  image is absent. This is the likely reason production stayed on `7afa098`
+  across several "deploys". The correct command is
+  `docker compose up -d --build`.
+- 879 tests passing; ruff clean repository-wide.
+- Model `sd-scoring-2026.08-v3.1`; freeze point `80eb42c`.
+
+---

@@ -274,6 +274,24 @@
            : d < DISPLAY_BANDS.cost_drag_bad ? "warn" : "neg";
     };
 
+    // --- Entry gates: which half of the verdict is current --------------------
+    // The server recomputes the TIMING gate on every read, because it is a
+    // property of the clock rather than of the setup. Every other gate —
+    // liquidity, sizing, portfolio limits, regime — is frozen at scan time.
+    // A verdict that mixes a live component with a stale one must say so, or a
+    // reader takes the whole thing as current. That was the actual defect: a row
+    // scanned at 09:31 still read BLOCKED at 09:54.
+    const gateAsOf = (c) => {
+      if (!c.entry_gates_evaluated_at) return "";
+      const age = Math.floor((Date.now() - new Date(c.entry_gates_evaluated_at)) / 60000);
+      const stale = age >= 15;
+      const ago = age < 60 ? `${age}m`
+        : age < 1440 ? `${Math.floor(age / 60)}h`
+        : `${Math.floor(age / 1440)}d`;
+      return ` <span class="muted" style="font-size:11px"${stale ? ' title="Only the timing gate is current. Liquidity, sizing, portfolio and regime gates were last evaluated at this time."' : ''}>`
+        + `(non-timing gates as of ${etTime(c.entry_gates_evaluated_at)}${stale ? `, ${ago} ago` : ""})</span>`;
+    };
+
     const fmt = (v, d = 2) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
@@ -999,8 +1017,12 @@
     function sdRow(c, rank, mv) {
       const rr = c.reward_to_risk == null ? "—" : c.reward_to_risk.toFixed(2);
       const risk = c.max_risk_usd == null ? "—" : "$" + Math.round(c.max_risk_usd);
-      const entry = c.entry_allowed
-        ? '<span class="pos">ALLOWED</span>' : '<span class="neg">BLOCKED</span>';
+      // Timing is recomputed server-side on every read; every OTHER gate is as
+      // old as entry_gates_evaluated_at. Say which, rather than presenting a
+      // scan-time verdict as a current one.
+      const entry = (c.entry_allowed
+        ? '<span class="pos">ALLOWED</span>' : '<span class="neg">BLOCKED</span>')
+        + gateAsOf(c);
       const why = (c.reject_reasons && c.reject_reasons.length)
         ? `<div class="muted" style="font-size:11px">${c.reject_reasons.slice(0, 3).join(", ")}</div>` : "";
       const acts = sdBucket(c) === 5 ? "" :
@@ -1063,6 +1085,7 @@
       const gate = c.entry_allowed == null ? "" :
         `<div class="banner ${gateCls}" style="margin-top:8px"><b>Entry gates:</b>
          ${c.entry_allowed ? '<span class="pos">CLEAR</span>' : '<span class="warn">BLOCKED</span>'}
+         ${c.entry_timing_is_live ? '<span class="muted" style="font-size:11px">timing re-checked just now</span>' : ""}${gateAsOf(c)}
          <span class="muted">${(c.entry_notes||[]).join(" · ")}</span>
          ${(c.reject_reasons||[]).length ? `<div class="warn" style="margin-top:4px">rejected: ${c.reject_reasons.join(", ")}</div>` : ""}</div>`;
       const rec = c.contract || {};

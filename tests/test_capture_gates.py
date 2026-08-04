@@ -58,7 +58,22 @@ def test_the_gate_can_be_configured_off(monkeypatch) -> None:
 
 
 # --- Suspended buckets --------------------------------------------------------
-def test_zero_dte_is_suspended_by_default() -> None:
+def test_zero_dte_is_no_longer_suspended() -> None:
+    """Amendment 3 moved it to OBSERVATION-ONLY: captured and paper-traded so the
+    logic can be developed, quarantined out of calibration, never armed. Suspension
+    dropped the setup before scoring, so no record existed at all."""
+    assert bucket_suspended(DTECategory.ZERO_DTE) is None
+
+
+def test_zero_dte_is_observation_only() -> None:
+    from app.shortduration.capture_gates import is_observation_only
+
+    assert is_observation_only(DTECategory.ZERO_DTE) is True
+
+
+def test_suspension_still_works_when_a_bucket_is_configured(monkeypatch) -> None:
+    """The mechanism is intact; only 0DTE's membership changed."""
+    monkeypatch.setattr(settings, "capture_suspended_buckets", "0dte")
     r = bucket_suspended(DTECategory.ZERO_DTE)
     assert r is not None and r.reason == RejectReason.BUCKET_SUSPENDED
 
@@ -81,12 +96,22 @@ def test_an_empty_suspension_list_suspends_nothing(monkeypatch) -> None:
 
 # --- Combined evaluation ------------------------------------------------------
 def test_suspension_is_reported_before_earnings(monkeypatch) -> None:
-    # Both apply; the bucket rule is the broader statement, so it wins.
+    # Both apply; the bucket rule is the broader statement, so it wins. 0DTE is no
+    # longer suspended by default (Amendment 3), so the precedence is asserted with
+    # suspension explicitly configured rather than relying on the default.
+    monkeypatch.setattr(settings, "capture_suspended_buckets", "0dte")
     r = evaluate_capture_gates(
         dte=DTECategory.ZERO_DTE, symbol="AAPL",
         next_earnings=date(2026, 8, 5), expiration=_EXP,
     )
     assert r.reason == RejectReason.BUCKET_SUSPENDED
+
+
+def test_an_observation_only_bucket_is_not_blocked_pre_scoring() -> None:
+    """THE point of Amendment 3: the row must reach the record."""
+    assert evaluate_capture_gates(
+        dte=DTECategory.ZERO_DTE, symbol="SPY", next_earnings=None, expiration=_EXP,
+    ) is None
 
 
 def test_the_aapl_case_cannot_reach_a_candidate(monkeypatch) -> None:

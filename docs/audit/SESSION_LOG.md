@@ -723,3 +723,98 @@ Reassurance from a check that is not looking is worse than no check.
 - Credential rotation still incomplete (owner deferral, Entry 4).
 
 ---
+
+## Entry 7 — 2026-08-04 — Amendment 3: 0DTE captured as observation-only
+
+**Contemporaneous.** Model `sd-scoring-2026.08-v4.0` → **`sd-scoring-2026.08-v4.1`**.
+
+### Request
+
+"I want to enable 0DTE options, while we may not be taking them I think having
+the data populate for paper trading to zero in on our logic is the right thing
+to do."
+
+### What was in the way, and what actually needed building
+
+Suspension dropped 0DTE setups **before scoring** (`detection.py:477` `continue`),
+so no record existed at all. Ruling 2 imposed that because 0DTE **grades** are
+uninterpretable — 31% session coverage, 52-minute maximum gap.
+
+Investigating before changing anything found the real gap: **`calibration.py`
+filtered on `scoring_model_version` alone.** P7 attached `mark_coverage_pct`,
+`max_gap_minutes` and `grade_confidence` to every outcome and **nothing consumed
+them**. So the suspension was a blunt instrument standing in for a quarantine
+that did not exist — and simply flipping the flag would have done exactly the
+harm Ruling 2 was preventing.
+
+### What changed
+
+| | |
+|---|---|
+| `calibration.gradeable_outcomes()` | drops outcomes with `grade_confidence` low/unknown |
+| `calibration._drop_observation_only()` | drops decisions whose `dte_bucket` is observation-only |
+| `DecisionSnapshot.dte_bucket` | new field; the bucket is RECORDED, not inferred |
+| `capture_observation_only_buckets` | new config; `0dte` moves here from suspended |
+| `capture_gates.is_observation_only()` / `observation_only_note()` | state + a reason in numbers |
+| `detection` arm block | generalised from a 0DTE special case to the config |
+| `_SD_VERSION_RE` | fixed: dotted versions were unparseable since v3.1 |
+
+Both exclusions are counted and surfaced as scorecard warnings.
+
+### Decisions taken
+
+1. **The bucket is recorded, not inferred.** `dte_at_entry` cannot identify a
+   bucket: the 0DTE selector admits dte 0 OR 1 and the 1-5DTE selector starts at
+   1, so filtering on the integer would silently drop legitimate 1-5DTE rows. A
+   test pins that exact case.
+2. **Two independent quarantines, deliberately.** A 0DTE decision graded from
+   DAILY marks carries the pre-P7 empty confidence string and passes the
+   confidence filter while being precisely the uninterpretable case. The bucket
+   filter is what catches it; a test asserts each catches what the other misses.
+3. **Empty `grade_confidence` is treated as gradeable.** It is the pre-P7 default
+   — unknown-but-not-known-bad. Excluding it would silently discard the entire
+   corpus predating the measurement.
+4. **The quantitative bar is untouched.** It now governs PROMOTION out of
+   observation-only rather than whether the bucket exists. This is why the change
+   is not read as overturning Ruling 2.
+5. **A declared "Pending freeze point" section** was added to
+   `docs/FREEZE_POINT.md`. `test_freeze_guard_config.py` requires the header to
+   name the configured version, but a freeze point's SHA is its merge commit and
+   cannot exist in the PR that creates it. The pending block makes that gap a
+   declared state rather than a test to weaken, and deliberately contains no
+   `freeze/` string and no 40-hex SHA so the machine-read parse still resolves
+   v4.0.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **I repeated a known incident: an ad-hoc `run_detection` warehoused 12 rows to
+   the live corpus.** Verifying that 0DTE now produces candidates, I ran detection
+   without blanking Turso. Unlike the earlier 84-row case these were REAL
+   (`chain_source=unusual_whales`), not mock — but they were produced by an
+   unmerged working tree and stamped `v4.1`, which would have made the first rows
+   of the new model's corpus a test artifact.
+   **Purged**: 12 snapshots, 12 candidates, 36 transitions; verified 0 remaining.
+   `scripts/purge_mock_signals.py` gained a `--model-versions` discriminator,
+   because its existing `chain_source=mock` key did not match this class and the
+   next occurrence should not need a one-off script.
+   **The standing lesson is unlearned so far**: `run_detection` persists
+   unconditionally, and nothing prevents a developer invoking it against the
+   production warehouse. That is a real control gap, not merely my mistake — it
+   has now caused two incidents. Not fixed in this change; flagged.
+2. **Five existing tests asserted the old behaviour and were rewritten**, not
+   deleted: 0DTE suspension by default, gate precedence, the 0DTE rejection
+   message, and two version pins. Where a test existed to prove a MECHANISM (the
+   rejection message states the bar in numbers), suspension is now configured
+   explicitly inside the test so the mechanism stays covered.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1`; freeze point v4.0 at `935160d`, **v4.1 pending
+  its merge commit**.
+- 931 passed. `ruff check .` clean.
+- Production still not confirmed redeployed; capture window not started.
+- Credential rotation still incomplete (owner deferral, Entry 4).
+
+---

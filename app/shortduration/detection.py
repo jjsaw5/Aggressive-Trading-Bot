@@ -722,6 +722,8 @@ def _classify_transitions(
     # so ARM (the "go" tier) is withheld unless the rank is least misleading — POP must
     # be computable, and 0DTE never asserts conviction unless explicitly enabled. A
     # blocked-but-arm-worthy candidate is held at WATCHLIST with the reason recorded.
+    from app.shortduration.capture_gates import is_observation_only
+
     sc = cand.scorecard
     pop_ok = bool(sc.pop_available) if sc is not None else False
     zero_dte = det.dte_category == DTECategory.ZERO_DTE
@@ -730,6 +732,15 @@ def _classify_transitions(
         arm_blocked_reason = "POP uncomputable (no IV) — held at watchlist, not armed."
     elif zero_dte and not settings.zero_dte_conviction:
         arm_blocked_reason = "0DTE asserts no calibrated conviction — held at watchlist, not armed."
+    elif is_observation_only(det.dte_category):
+        # Amendment 3: an observation-only bucket is captured and paper-traded so
+        # the logic can be developed, but it never arms. Driven by the same config
+        # as the calibration quarantine so the two cannot disagree about which
+        # buckets are provisional.
+        arm_blocked_reason = (
+            f"{det.dte_category.value} is OBSERVATION ONLY — captured and "
+            "paper-traded, excluded from calibration, never armed."
+        )
     allow_arm = not arm_blocked_reason
     target = classify_initial_state(
         cand.score, watchlist_at=settings.short_duration_watchlist_score,

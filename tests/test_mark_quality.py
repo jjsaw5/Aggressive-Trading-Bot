@@ -148,10 +148,20 @@ def test_the_thresholds_are_the_ones_the_ruling_set() -> None:
 # --- Wired into the gate ------------------------------------------------------
 def test_the_0dte_rejection_states_the_quantitative_bar() -> None:
     """The rejection must say WHY, in numbers — the memo problem again."""
+    from app.config import settings
     from app.domain.enums import DTECategory
     from app.shortduration.capture_gates import bucket_suspended
 
-    r = bucket_suspended(DTECategory.ZERO_DTE)
+    # Amendment 3 moved 0DTE to observation-only, so it is not suspended by
+    # default. The rejection MESSAGE is what this test is about — that it states
+    # the bar in numbers rather than gesturing at a memo — so suspension is
+    # configured explicitly here.
+    original = settings.capture_suspended_buckets
+    settings.capture_suspended_buckets = "0dte"
+    try:
+        r = bucket_suspended(DTECategory.ZERO_DTE)
+    finally:
+        settings.capture_suspended_buckets = original
     assert r is not None
     assert "80%" in r.detail and "5min" in r.detail
     assert "52min" in r.detail  # the measured value that failed it

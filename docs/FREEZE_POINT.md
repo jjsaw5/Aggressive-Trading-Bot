@@ -6,6 +6,24 @@
 **Established:** 2026-08-04, merge commit of PR #55 (Amendment 2 — contract
 selection prices probability, not only payoff)
 
+## Pending freeze point
+
+**`sd-scoring-2026.08-v4.1`** (Amendment 3 — 0DTE moves from suspended to
+observation-only) is **merged-pending**. Its commit does not exist until the PR
+merges, so the established point above is still v4.0 and CI correctly compares
+against it.
+
+This section exists so the gap between "the configured model" and "the recorded
+freeze point" is a DECLARED state rather than an accident.
+`tests/test_freeze_guard_config.py` requires the configured
+`scoring_model_version` to appear in this header — naming it here satisfies that
+while the Model/Tag/Commit lines above continue to describe the point that
+actually exists. Deliberately contains **no** `freeze/` tag string and **no**
+40-hex SHA, so the machine-read parse still resolves v4.0.
+
+**On merge:** promote this to the header, move v4.0 into Superseded, and publish
+the tag at the new merge commit.
+
 > **The first line of this file is machine-read.** CI parses the first
 > `freeze/...` string and the first 40-hex SHA out of this document. Both were
 > previously hardcoded in `.github/workflows/ci.yml`, and the tag name went stale

@@ -45,7 +45,7 @@ _STRATEGIES = _APP / "shortduration" / "strategies"
 # regenerated golden file and tests/test_contract_selection_amendment2.py.
 # This constant moves ONLY alongside such a declaration — that is the whole
 # point of the test below.
-FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v4.0"
+FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v4.1"
 
 # Modules Phase 1 introduced. None of them may be reachable from the scorer.
 CAPTURE_ONLY_MODULES = {

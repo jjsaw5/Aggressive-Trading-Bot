@@ -76,6 +76,10 @@ provider populates fails here.
 **3. `.github/workflows/ci.yml` job `freeze-guard` — forces the DECLARATION.**
 Neither test above can tell whether a change is legitimate; that is a human
 judgement. The guard diffs the PR against the base for edits to guarded paths —
+including contract selection, added 2026-08-03 after the same gap was found a
+second time: `scoring/components.py:181` reads `reward_to_risk` off the SELECTED
+plan, so changing which structure the selector returns changes a scored component
+and therefore the shipped model, with no diff under `scoring/` at all —
 including the provider files, because FINDING_01 proved a provider edit is a
 model change — and fails unless the same PR carries a `scoring_model_version`
 bump and a dated §8 amendment. It gates on PATH and deliberately does not try to

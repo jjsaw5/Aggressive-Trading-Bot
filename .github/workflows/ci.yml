@@ -115,7 +115,15 @@ jobs:
           # Paths whose behaviour IS the frozen model. The provider files are
           # included deliberately: FINDING_01 changed the shipped model from
           # unusual_whales/client.py, with no diff under scoring/ at all.
-          GUARDED='^(app/shortduration/scoring/|app/shortduration/strategies/|app/providers/unusual_whales/client\.py|app/providers/mock/provider\.py|app/engine/iv_context\.py)'
+          #
+          # contract_selection.py and contracts.py were added 2026-08-03 after the
+          # same gap was found a second time. scoring/components.py:181 reads
+          # `plan.risk.reward_to_risk` OFF THE SELECTED PLAN, so changing which
+          # structure the selector returns changes a scored component, hence the
+          # composite, hence the shipped model — with no diff under scoring/ at
+          # all. That is FINDING_01's shape in a new file, and the guard could not
+          # see it. See docs/PROPOSED_AMENDMENT_2_CONTRACT_SELECTION.md section 5.
+          GUARDED='^(app/shortduration/scoring/|app/shortduration/strategies/|app/shortduration/contracts\.py|app/providers/unusual_whales/client\.py|app/providers/mock/provider\.py|app/engine/iv_context\.py|app/engine/contract_selection\.py)'
 
           CHANGED="$(git diff --name-only "$BASE" "$HEAD")"
           TOUCHED="$(echo "$CHANGED" | grep -E "$GUARDED" || true)"

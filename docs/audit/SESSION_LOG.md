@@ -649,3 +649,77 @@ now-widened path guard.
   was ever captured under v3.1.
 
 ---
+
+## Entry 6 — 2026-08-04 — Freeze point advanced to v4.0; the guarded set given one home
+
+**Contemporaneous.** Follow-up to Entry 5, flagged there and done here.
+
+### What was wrong
+
+After Amendment 2 merged (`935160d`), `docs/FREEZE_POINT.md` still named
+`sd-scoring-2026.08-v3.1` at `80eb42c`. Two consequences, both worse than a stale
+doc:
+
+1. **CI hardcoded the tag name** (`REF="freeze/sd-scoring-2026.08-v3.1"`), so the
+   informational step compared current work against a *superseded* baseline.
+2. **That step diffed two directories** — `scoring/` and `strategies/` — while the
+   blocking path guard had been widened to seven paths. So on PR #55, the run
+   that correctly blocked on `contract_selection.py` **also printed "Empty —
+   scoring paths unchanged since the freeze"**, about paths it was not looking at.
+
+Reassurance from a check that is not looking is worse than no check.
+
+### What changed
+
+- **Freeze point advanced**: model `sd-scoring-2026.08-v4.0`, tag
+  `freeze/sd-scoring-2026.08-v4.0`, commit `935160d`. Prior points kept in a
+  **Superseded** table so an old `scoring_model_version` stamp stays traceable.
+- **One home for the guarded set**: `GUARDED_RE` and `GUARDED_PATHS` at the top of
+  the `freeze-guard` job. Both steps read them; neither redefines them.
+- **CI reads the tag name and SHA from the doc**, so the baseline cannot go stale
+  independently of the record.
+- **`tests/test_freeze_guard_config.py`** — 12 tests asserting the regex, the path
+  list and the documented hand-check describe the same set; that every guarded
+  path still exists; that the doc header names the configured model version; and
+  that the first SHA/tag in the doc are the header's, not a superseded row's.
+
+### Decisions taken
+
+1. **Document ordering is now a correctness property, and is tested.** CI takes
+   the *first* 40-hex SHA and *first* `freeze/` string from the file. Adding a
+   superseded-points table introduced a way to break that silently, so two tests
+   assert the first of each falls above the `## Superseded` heading.
+2. **The negative control was run before trusting the new test.** I reintroduced
+   the exact drift — removed `contract_selection.py` from `GUARDED_PATHS` only —
+   and confirmed 2 tests fail, then restored. A sync test that has never been
+   shown to fail is an assumption.
+3. **Superseded freeze points are kept, not deleted.** A row stamped v3.1 must
+   remain traceable to the code that produced it; the table says explicitly that
+   they are history, not baselines.
+4. **The `## Scope` section now says the path list is a lagging indicator.** It
+   has grown twice, each time *after* a model change slipped past it. Stating that
+   is more useful than implying the list is complete.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **The tag itself is not pushed.** `freeze/sd-scoring-2026.08-v4.0` needs
+   publishing via the GitHub Releases UI — the session credential is scoped to
+   `refs/heads/*`. This is the same limitation the document was written to
+   survive: the SHA is the authority and CI falls back to it, so the check works
+   in the meantime and says so in its output.
+2. **The stale baseline was live for one merge.** PR #55 merged while the
+   informational step still pointed at v3.1. Nothing was mis-gated — the blocking
+   path guard was correct throughout — but the run printed a reassuring line that
+   was not evidence of anything.
+
+### State at entry close
+
+- Freeze point `sd-scoring-2026.08-v4.0` at `935160d`; tag pending publication.
+- 907 passed, 1 skipped. `ruff check .` clean.
+- Production still not confirmed redeployed. Capture window restarts from zero
+  under v4.0.
+- Credential rotation still incomplete (owner deferral, Entry 4).
+
+---

@@ -1,10 +1,26 @@
 # Freeze point — signal-only capture window
 
-**Model:** `sd-scoring-2026.08-v3.1`
-**Tag:** `freeze/sd-scoring-2026.08-v3.1`
-**Commit:** `80eb42c36541a72a7eb30b9699639b5f10ef5414`
-**Established:** 2026-08-01, merge commit of PR #49 (reviewer Ruling 1 /
-FINDING_01 closure)
+**Model:** `sd-scoring-2026.08-v4.0`
+**Tag:** `freeze/sd-scoring-2026.08-v4.0`
+**Commit:** `935160d4735716150414d0b1c610f5cbfc5530cc`
+**Established:** 2026-08-04, merge commit of PR #55 (Amendment 2 — contract
+selection prices probability, not only payoff)
+
+> **The first line of this file is machine-read.** CI parses the first
+> `freeze/...` string and the first 40-hex SHA out of this document. Both were
+> previously hardcoded in `.github/workflows/ci.yml`, and the tag name went stale
+> the moment the model moved — so the informational diff compared against a
+> superseded baseline while printing reassurance. Keep the header format.
+
+## Superseded freeze points
+
+Kept so a row stamped with an older `scoring_model_version` can still be traced
+to the code that produced it. **They are history, not baselines** — never diff
+current work against them.
+
+| Model | Tag | Commit | Established | Superseded by |
+|---|---|---|---|---|
+| `sd-scoring-2026.08-v3.1` | `freeze/sd-scoring-2026.08-v3.1` | `80eb42c36541a72a7eb30b9699639b5f10ef5414` | 2026-08-01, PR #49 (Ruling 1 / FINDING_01) | Amendment 2 |
 
 ## Why the SHA is recorded here and not only in the tag
 
@@ -21,8 +37,14 @@ SHA**, and fails loudly if neither is reachable.
 ## The check
 
 ```sh
-git diff 80eb42c36541a72a7eb30b9699639b5f10ef5414 -- \
-    app/shortduration/scoring/ app/shortduration/strategies/
+git diff 935160d4735716150414d0b1c610f5cbfc5530cc -- \
+    app/shortduration/scoring/ \
+    app/shortduration/strategies/ \
+    app/shortduration/contracts.py \
+    app/providers/unusual_whales/client.py \
+    app/providers/mock/provider.py \
+    app/engine/iv_context.py \
+    app/engine/contract_selection.py
 ```
 
 Expected **empty** for the duration of the capture window. A non-empty diff means
@@ -30,12 +52,22 @@ the frozen model changed and requires, in the same commit: a
 `scoring_model_version` bump, a dated amendment under
 `docs/CAPTURE_WINDOW_PREREGISTRATION.md` §8, and a regenerated golden file.
 
+**That path list is the guarded set, and it lives in exactly one place**:
+`GUARDED_RE` / `GUARDED_PATHS` at the top of the `freeze-guard` job in
+`.github/workflows/ci.yml`. `tests/test_freeze_guard_config.py` asserts the two
+forms describe the same set and that this document's copy matches. They drifted
+once — the guard was widened to cover contract selection while the informational
+diff still looked at two directories, so CI reported "unchanged since the freeze"
+about paths it was not looking at.
+
 ## Scope — what the freeze actually covers
 
 The path diff above is necessary and **not sufficient**. FINDING_01 changed the
-shipped model's behaviour without touching a single file under those two paths,
-by populating a provider field the scorer had always read and nobody had ever
-supplied.
+shipped model's behaviour without touching a single file under the two paths the
+list originally held, by populating a provider field the scorer had always read
+and nobody had ever supplied. Amendment 2 then did the same thing again through
+contract selection. Both files are now in the list; the lesson is that the list
+is a lagging indicator of a truth the behavioural controls catch first.
 
 Full coverage is the path diff **plus** the three behavioural controls:
 
@@ -75,16 +107,30 @@ provider populates fails here.
 
 **3. `.github/workflows/ci.yml` job `freeze-guard` — forces the DECLARATION.**
 Neither test above can tell whether a change is legitimate; that is a human
-judgement. The guard diffs the PR against the base for edits to guarded paths —
-including contract selection, added 2026-08-03 after the same gap was found a
-second time: `scoring/components.py:181` reads `reward_to_risk` off the SELECTED
-plan, so changing which structure the selector returns changes a scored component
-and therefore the shipped model, with no diff under `scoring/` at all —
-including the provider files, because FINDING_01 proved a provider edit is a
-model change — and fails unless the same PR carries a `scoring_model_version`
-bump and a dated §8 amendment. It gates on PATH and deliberately does not try to
-judge semantics: it failed a comment-only edit in the PR #52 demonstration,
-which is correct behaviour, not a false positive.
+judgement. The guard diffs the PR against its base for edits to any guarded path
+and fails unless the same PR carries a `scoring_model_version` bump and a dated
+§8 amendment.
+
+The guarded set has grown twice, each time after a model change slipped past it:
+
+- **the provider files**, after FINDING_01 changed the shipped model from
+  `unusual_whales/client.py` with no diff under `scoring/`;
+- **contract selection**, after Amendment 2 — `scoring/components.py:181` reads
+  `reward_to_risk` off the SELECTED plan, so changing which structure the
+  selector returns changes a scored component, again with no diff under
+  `scoring/`.
+
+It gates on PATH and deliberately does not judge semantics: it failed a
+comment-only edit in the PR #52 demonstration, which is correct behaviour rather
+than a false positive. It passed Amendment 2 (PR #55) only because the version
+bump and the §8 amendment were both present — verbatim from that run:
+
+```
+Guarded paths touched:
+  app/engine/contract_selection.py
+  app/shortduration/contracts.py
+Declared: scoring_model_version bumped AND pre-registration amended.
+```
 
 Between them: (1) catches the math moving, (2) catches the inputs moving, (3)
 makes either one impossible to ship silently. A change that evades all three
@@ -101,7 +147,7 @@ independently) is the stronger evidence and stands in its place.
 If the tag is absent from a clone or a remote:
 
 ```sh
-git tag -a freeze/sd-scoring-2026.08-v3.1 80eb42c36541a72a7eb30b9699639b5f10ef5414 \
-  -m "Freeze point for the signal-only capture window."
-git push origin refs/tags/freeze/sd-scoring-2026.08-v3.1
+git tag -a freeze/sd-scoring-2026.08-v4.0 935160d4735716150414d0b1c610f5cbfc5530cc \
+  -m "Freeze point for the signal-only capture window (Amendment 2)."
+git push origin refs/tags/freeze/sd-scoring-2026.08-v4.0
 ```

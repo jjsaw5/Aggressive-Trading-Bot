@@ -41,6 +41,12 @@ def _chain(spot: float = 100.0, lo: int = 60, hi: int = 140) -> OptionChain:
                     symbol="AAA", expiration=EXP, strike=float(k), option_type=ot,
                     bid=round(px - 0.02, 2), ask=round(px + 0.02, 2), mark=round(px, 2),
                     volume=500, open_interest=2000,
+                    # The chain is Black-Scholes-priced at VOL, so VOL *is* its
+                    # implied vol. Recording it keeps the fixture self-consistent
+                    # and lets selection model probability of profit (Amendment 2)
+                    # — without it every structure fails the POP floor, because
+                    # odds that cannot be modelled must not clear it.
+                    implied_volatility=VOL,
                     greeks=Greeks(delta=round(dlt, 3)), as_of=NOW,
                 )
             )

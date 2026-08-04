@@ -201,7 +201,11 @@ class Settings(BaseSettings):
     # is now populated by the live provider, so the backwardation penalty at
     # scoring/components.py:137 can fire in production for the first time.
     # See FINDING_01 and CAPTURE_WINDOW_PREREGISTRATION.md §8.
-    scoring_model_version: str = "sd-scoring-2026.08-v3.1"
+    # Amendment 2 (2026-08-03): contract selection now prices probability, not
+    # only payoff. A MAJOR bump, not a point release — this changes which
+    # instrument a signal is expressed in, not a coefficient. See
+    # CAPTURE_WINDOW_PREREGISTRATION.md section 8, Amendment 2.
+    scoring_model_version: str = "sd-scoring-2026.08-v4.0"
     risk_policy_version: str = "sd-risk-2026.07-v1"
 
     # --- Display bands (presentation only — NOT scoring inputs) ---------------

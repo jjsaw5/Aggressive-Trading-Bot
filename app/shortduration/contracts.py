@@ -12,6 +12,7 @@ the setup is REJECTED with a reason — never forced.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -65,6 +66,33 @@ _SWING_LIQ = OptionLiquidityConfig(
 def is_swing(strategy) -> bool:
     """Does this strategy's thesis need a swing (weeks) horizon rather than 0-5DTE?"""
     return strategy in _SWING_STRATEGIES
+
+
+def short_horizon_viable(
+    *, distance_to_invalidation_pct: float | None, iv: float | None, days: int = 5,
+) -> bool:
+    """Can this thesis plausibly RESOLVE inside the short window?
+
+    Amendment 2 (C4). Item 1.11 fixed a real defect — a daily-trend thesis was
+    being forced into a ~4-DTE contract that expired before the thesis could
+    resolve — but it fixed it on the STRATEGY LABEL, so *every* trend signal went
+    weeks out and a three-day expression became unreachable even where it was the
+    right instrument.
+
+    The horizon question is about the thesis, not its label: how far is price from
+    the level that settles the argument, against how far the market expects it to
+    travel in the window? If the market's own expected move over `days` covers the
+    distance to invalidation, the question gets answered inside the window and a
+    short-dated contract is a legitimate expression of it.
+
+    Returns False when either input is missing — absent stays absent, and an
+    unanswerable horizon question keeps the conservative weeks-out default.
+    """
+    if distance_to_invalidation_pct is None or iv is None or iv <= 0 or days <= 0:
+        return False
+    # Expected 1-sigma move over the window, as a percentage of spot.
+    expected_move_pct = iv * math.sqrt(days / 365.0) * 100.0
+    return abs(distance_to_invalidation_pct) <= expected_move_pct
 
 
 def _configs(dte: DTECategory, swing: bool) -> tuple[SelectionConfig, OptionLiquidityConfig]:
@@ -174,6 +202,28 @@ def _spread_expression(
         plan, "Defined-risk debit vertical.", swing=swing, as_of=as_of), [])
 
 
+def _blocked_only_by_pop_floor(
+    chain: OptionChain, direction: Direction, dte: DTECategory,
+    policy: RiskPolicy, as_of: date, swing: bool,
+) -> bool:
+    """Would a structure have been offered if the POP floor were lifted?
+
+    Used ONLY on the rejection path, to tell "we found nothing" apart from "we
+    found only long shots". Re-runs selection with the floor disabled; the cost
+    is paid only when a symbol produces no candidate, which is the rare case.
+    """
+    from dataclasses import replace
+
+    sel, liq = _configs(dte, swing)
+    if sel.min_pop is None:
+        return False
+    spread = select_vertical_spread(
+        chain, direction, as_of, max_debit_usd=policy.max_trade_risk_usd,
+        sel=replace(sel, min_pop=None), liq=liq,
+    )
+    return spread is not None
+
+
 def select_short_duration_contracts(
     chain: OptionChain,
     direction: Direction,
@@ -210,6 +260,18 @@ def select_short_duration_contracts(
     if not _any_liquid(chain, direction, dte, as_of, swing):
         reasons = [RejectReason.ILLIQUID_OPTION]
         why = "No liquid contract in the DTE/delta window (spread/OI/volume gates)."
+    elif _blocked_only_by_pop_floor(chain, direction, dte, policy, as_of, swing):
+        # Amendment 2: a sized, liquid structure DID exist and was refused on its
+        # odds. Reporting the cap or liquidity here would be false, and the
+        # distinction is the whole point of the floor — "we found nothing" and
+        # "we found only long shots" are different facts about the tape.
+        reasons = [RejectReason.POP_BELOW_FLOOR]
+        floor = _SEL[dte].min_pop if dte in _SEL else 0.25
+        why = (
+            f"Structures exist but every one is below the {floor:.0%} "
+            "probability-of-profit floor (or its odds could not be modelled). "
+            "Refused on odds, not on cost."
+        )
     else:
         reasons = [RejectReason.RISK_UNMANAGEABLE]
         why = f"No defined-risk structure fits the ${policy.max_trade_risk_usd:g} per-trade cap."

@@ -113,6 +113,11 @@ class RejectReason(str, Enum):
     # Bucket suspended pending its data-capture dependencies (NBBO + intraday
     # marks). Rows without them are uninterpretable and pollute the sample.
     BUCKET_SUSPENDED = "bucket_suspended"
+    # Amendment 2: every structure the chain could express was below the modelled
+    # probability floor, or its odds could not be modelled at all. Distinct from
+    # RISK_UNMANAGEABLE (fits no cap) and ILLIQUID_OPTION (no tradeable leg) —
+    # here a sized, liquid structure existed and was refused on its ODDS.
+    POP_BELOW_FLOOR = "pop_below_floor"
 
 
 class DTECategory(str, Enum):

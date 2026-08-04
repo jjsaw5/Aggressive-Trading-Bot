@@ -40,7 +40,12 @@ _STRATEGIES = _APP / "shortduration" / "strategies"
 # `test_the_frozen_scoring_version_is_still_the_configured_one` the moment
 # config changed, which is precisely the intended behaviour. Updating it is only
 # legitimate alongside a dated amendment — never on its own.
-FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v3.1"
+# Amendment 2 (2026-08-03): v3.1 -> v4.0. Contract selection now prices
+# probability, not only payoff. Declared with a dated amendment under §8, a
+# regenerated golden file and tests/test_contract_selection_amendment2.py.
+# This constant moves ONLY alongside such a declaration — that is the whole
+# point of the test below.
+FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v4.0"
 
 # Modules Phase 1 introduced. None of them may be reachable from the scorer.
 CAPTURE_ONLY_MODULES = {

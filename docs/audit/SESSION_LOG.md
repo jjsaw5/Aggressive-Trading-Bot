@@ -535,3 +535,117 @@ freeze-import tests unchanged and passing.
 - Model `sd-scoring-2026.08-v3.1`; freeze point `80eb42c`.
 
 ---
+
+## Entry 5 — 2026-08-03 — Amendment 2 approved: selection prices probability
+
+**Contemporaneous.** Model `sd-scoring-2026.08-v3.1` → **`sd-scoring-2026.08-v4.0`**.
+
+### Origin
+
+A user question — "why do we not see the app surface plays like this? Where it's
+reasonable to enter 87 dollars and short duration on something like SPY?" — with a
+screenshot of a SPY 759/761 3-DTE spread at $0.87.
+
+### What was wrong
+
+The selector's fit function was `0.7 x reward-to-risk + 0.3 x width`. Probability
+appeared nowhere, and both terms rise as a structure moves out of the money, so
+its maximum was by construction the cheapest far-OTM spread the chain allowed.
+
+Its own record of the SPY structure it chose: `POP 0.1044, R:R 26.62, "SPY must
+rise 4.4% to $790.90 by expiry (28d) just to break even."` It computed that
+number, stored it, displayed it, and did not use it to choose.
+
+Systemic: 64 structures priced 2026-08-03, median POP **0.287**, median R:R
+**7.79:1**, **45% below POP 0.25**.
+
+### Approved and shipped (C1–C4 in full)
+
+| | |
+|---|---|
+| C1 | `fit = 0.45*POP + 0.35*min(1, rr/2) + 0.20*width_term` |
+| C2 | hard POP floor 0.25 — REJECTS; unmodellable odds cannot clear it |
+| C3 | short-leg delta floor 0.15 |
+| C4 | horizon by thesis (`short_horizon_viable`), not by strategy label |
+
+Plus the §5 guard fix, landed **first and separately** so this change had to clear
+it.
+
+### The mechanism found mid-implementation, which was the real culprit
+
+C1–C3 were written against the fit function. Building the regression test showed
+the fit function was not what put a 0.10-delta leg on the board.
+
+`_leg_ok` in `select_vertical_spread` fell through to the moneyness fallback
+**whenever the delta band check failed** — not only when delta was missing or
+degenerate, which is what `_moneyness_fit`'s own docstring promises and what
+`select_long_contract` actually implements (`money = ... if not by_delta`). So a
+leg with a perfectly good provider delta *outside* the band was re-admitted on
+strike proximity alone.
+
+That is exactly how SPY 790 (delta **0.1035**, 4.4% from spot, inside the 6% swing
+moneyness band) became a long leg under a 0.30 delta floor. Fixed to match the
+docstring and the sibling function.
+
+### Decisions taken
+
+1. **The POP floor rejects rather than down-ranks, and `None` cannot clear it.**
+   A probability we could not compute is not evidence of a good one. Two tests
+   pin this, including one proving the rejection is the FLOOR and not a crash in
+   pricing.
+2. **A new reject reason, `POP_BELOW_FLOOR`, with a truthful message.** Without it
+   a floor rejection would have rendered as "No defined-risk structure fits the
+   $98.15 per-trade cap" — false, and precisely the class of lie this product
+   exists to avoid. `_blocked_only_by_pop_floor` re-runs selection with the floor
+   lifted to tell "we found nothing" from "we found only long shots"; the cost is
+   paid only on the rejection path.
+3. **A MAJOR version, not a point release.** v3→v3.1 changed whether a coefficient
+   could fire; this changes which instrument a signal is expressed in. A v3.1 row
+   and a v4.0 row on the same symbol and minute are different trades and must
+   never pool.
+4. **The test fixture now records `implied_volatility=VOL`.** The chain was
+   already Black-Scholes-priced at VOL, so this makes the fixture self-consistent
+   rather than accommodating the new floor — without it POP is unmodellable and
+   every structure is correctly rejected.
+5. **A test asserting the amendment barely changes a well-behaved chain.** The fix
+   is targeted at the fallback path; its failure would mean over-reach.
+
+### Golden-file delta
+
+Regenerated: **only the `model_version` string changed — 9 leaves, no computed
+value moved.** Same structural limitation as Amendment 1 — the golden file scores
+fixed `IVContext` fixtures and passes no trade plan, so a *selection* change
+cannot move its numbers. Reported, not worked around. The controls that do cover
+this class are `tests/test_contract_selection_amendment2.py` (17 tests) and the
+now-widened path guard.
+
+### DEVIATIONS
+
+**Not None.** Three:
+
+1. **My first two regression tests asserted a premise the fixture did not
+   produce**, and failed. The synthetic chain has clean in-band deltas, so the
+   legacy rule picked a sane structure there and the "amendment improves odds"
+   comparison was vacuous. Rewritten against a SPY-shaped fixture that reproduces
+   the real inputs (spot 756.37, IV 0.13, 28 DTE), with a guard test asserting the
+   fixture really does place a ~0.10-delta strike inside the moneyness band.
+   Recorded because the first version would have passed for the wrong reason had
+   I chosen a looser assertion.
+2. **The proposal predicted the golden file might move. It did not, and could
+   not.** The prediction was repeated from Amendment 1's ruling without
+   re-checking that the same structural limitation applied. It does.
+3. **Credential rotation still incomplete** (owner's deferral, Entry 4). The
+   pre-rotation Turso token still authenticates against production.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.0`. Freeze point `80eb42c` still names v3.1 and is
+  now historical rather than current — **`docs/FREEZE_POINT.md` needs a new tag
+  and SHA once this merges.** Not done in this commit; flagged.
+- 895 passed, 1 skipped. `ruff check .` clean.
+- Production still not confirmed redeployed; `docker compose up -d` without
+  `--build` does not pick up code changes.
+- The capture window restarts from zero under v4.0. Nothing was lost — no signal
+  was ever captured under v3.1.
+
+---

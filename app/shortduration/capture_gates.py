@@ -104,6 +104,45 @@ def bucket_suspended(dte: DTECategory) -> CaptureRejection | None:
     return None
 
 
+def is_observation_only(dte: DTECategory) -> bool:
+    """Is this bucket captured for research but never gradeable and never armable?
+
+    Amendment 3. Distinct from `bucket_suspended`, which drops the setup before it
+    is scored so no record exists at all. Observation-only rows DO exist: they are
+    scored, boarded and paper-tradeable, so the logic can be developed against real
+    tape — but their outcomes are quarantined out of the calibration corpus by
+    `analytics.calibration.gradeable_outcomes`, and they are never armed.
+
+    0DTE sits here because its grades are uninterpretable (31% session coverage,
+    52-minute maximum gap on trade-driven minute bars), not because its signals are
+    uninteresting. Ruling 2's quantitative bar still governs promotion OUT of this
+    state; it no longer governs whether the bucket produces anything.
+    """
+    buckets = {
+        s.strip() for s in settings.capture_observation_only_buckets.split(",") if s.strip()
+    }
+    return dte.value in buckets
+
+
+def observation_only_note(dte: DTECategory) -> str:
+    """Why this bucket is observation-only, in numbers, for display and logs."""
+    if not is_observation_only(dte):
+        return ""
+    from app.analytics.mark_quality import (
+        ZERO_DTE_MAX_GAP_MINUTES,
+        ZERO_DTE_MIN_COVERAGE_PCT,
+    )
+
+    return (
+        f"OBSERVATION ONLY — {dte.value} is captured and paper-traded so the logic "
+        f"can be developed, but its grades are EXCLUDED from calibration and it is "
+        f"never armed. Measured mark quality (31% RTH coverage, 52min max gap) is "
+        f"below the re-enable bar of {ZERO_DTE_MIN_COVERAGE_PCT:.0%} coverage with "
+        f"a max gap of {ZERO_DTE_MAX_GAP_MINUTES}min. A same-session trade cannot "
+        f"be graded through a 52-minute blind spot."
+    )
+
+
 def evaluate_capture_gates(
     *, dte: DTECategory, symbol: str, next_earnings: date | None, expiration: date | None
 ) -> CaptureRejection | None:

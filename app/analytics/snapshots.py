@@ -181,6 +181,7 @@ def snapshot_from_short_duration(cand) -> DecisionSnapshot | None:
     )
     return DecisionSnapshot(
         decision_id=f"sd:{cand.id}",
+        dte_bucket=getattr(cand.dte_category, "value", "") or "",
         scan_id=f"sd:{cand.id}",
         symbol=cand.symbol.upper(),
         source=DecisionSource.SCAN,

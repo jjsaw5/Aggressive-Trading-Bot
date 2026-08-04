@@ -35,16 +35,32 @@ from app.db.session import SessionLocal
 MOCK_SOURCES = {"mock"}
 
 
-def _mock_decision_ids(session, sources: set[str]) -> list[str]:
-    """Decision ids whose frozen market context names a non-real chain provider.
+def _mock_decision_ids(
+    session, sources: set[str], model_versions: set[str] | None = None
+) -> list[str]:
+    """Decision ids warehoused by a run that should not have persisted.
+
+    Two independent discriminators, either of which matches:
+
+    * `chain_source` in `sources` — the original case: a mock-provider run whose
+      84 rows reached the live corpus because `run_detection` persists
+      unconditionally.
+    * `scoring_model_version` in `model_versions` — the second case (2026-08-04):
+      a verification run of REAL provider data on an UNMERGED branch, which
+      stamped rows with a model version production was not running. The data is
+      genuine; its provenance is a developer's working tree, and leaving it makes
+      the first rows of a new model's corpus a test artifact.
 
     Rows predating Phase 1 have no market_context at all; they are left alone.
     Absence of provenance is not evidence of mockery.
     """
     out = []
     for row in session.execute(select(m.DecisionSnapshotRow)).scalars():
-        mc = (row.payload or {}).get("market_context") or {}
+        payload = row.payload or {}
+        mc = payload.get("market_context") or {}
         if mc.get("chain_source") in sources:
+            out.append(row.decision_id)
+        elif model_versions and payload.get("scoring_model_version") in model_versions:
             out.append(row.decision_id)
     return out
 
@@ -56,13 +72,18 @@ def main() -> int:
                     help="abort unless exactly this many snapshots match")
     ap.add_argument("--sources", default="mock",
                     help="comma-separated chain_source values to purge")
+    ap.add_argument("--model-versions", default="",
+                    help="comma-separated scoring_model_version values to purge — for "
+                         "rows warehoused by a non-production run of a real provider")
     args = ap.parse_args()
     sources = {s.strip() for s in args.sources.split(",") if s.strip()}
+    versions = {s.strip() for s in args.model_versions.split(",") if s.strip()}
 
     with SessionLocal() as session:
-        ids = _mock_decision_ids(session, sources)
+        ids = _mock_decision_ids(session, sources, versions)
         cand_ids = [i.split(":", 1)[1] for i in ids if ":" in i]
-        print(f"snapshots with chain_source in {sorted(sources)}: {len(ids)}")
+        print(f"snapshots matching chain_source {sorted(sources)} "
+              f"or model_version {sorted(versions) or '(none)'}: {len(ids)}")
 
         if not ids:
             print("nothing to do")

@@ -80,6 +80,15 @@ jobs:
     # of it in a provider.
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    env:
+      # SINGLE SOURCE OF TRUTH for what the freeze covers. Both forms below
+      # describe the SAME set and are asserted equal by
+      # tests/test_freeze_guard_config.py — they drifted once already: the path
+      # guard was widened to cover contract selection while the informational
+      # diff still looked at two directories, so it kept reporting "unchanged
+      # since the freeze" about paths it was not looking at.
+      GUARDED_RE: '^(app/shortduration/scoring/|app/shortduration/strategies/|app/shortduration/contracts\.py|app/providers/unusual_whales/client\.py|app/providers/mock/provider\.py|app/engine/iv_context\.py|app/engine/contract_selection\.py)'
+      GUARDED_PATHS: 'app/shortduration/scoring/ app/shortduration/strategies/ app/shortduration/contracts.py app/providers/unusual_whales/client.py app/providers/mock/provider.py app/engine/iv_context.py app/engine/contract_selection.py'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,18 +121,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Paths whose behaviour IS the frozen model. The provider files are
-          # included deliberately: FINDING_01 changed the shipped model from
-          # unusual_whales/client.py, with no diff under scoring/ at all.
-          #
-          # contract_selection.py and contracts.py were added 2026-08-03 after the
-          # same gap was found a second time. scoring/components.py:181 reads
-          # `plan.risk.reward_to_risk` OFF THE SELECTED PLAN, so changing which
-          # structure the selector returns changes a scored component, hence the
-          # composite, hence the shipped model — with no diff under scoring/ at
-          # all. That is FINDING_01's shape in a new file, and the guard could not
-          # see it. See docs/PROPOSED_AMENDMENT_2_CONTRACT_SELECTION.md section 5.
-          GUARDED='^(app/shortduration/scoring/|app/shortduration/strategies/|app/shortduration/contracts\.py|app/providers/unusual_whales/client\.py|app/providers/mock/provider\.py|app/engine/iv_context\.py|app/engine/contract_selection\.py)'
+          # Paths whose behaviour IS the frozen model — from the job-level
+          # GUARDED_RE so this and the informational diff below cannot disagree.
+          # The provider files are included deliberately (FINDING_01 changed the
+          # shipped model from unusual_whales/client.py with no diff under
+          # scoring/); contract selection was added 2026-08-03 when the same gap
+          # appeared a second time, because scoring/components.py:181 reads
+          # `plan.risk.reward_to_risk` off the SELECTED PLAN.
+          GUARDED="$GUARDED_RE"
 
           CHANGED="$(git diff --name-only "$BASE" "$HEAD")"
           TOUCHED="$(echo "$CHANGED" | grep -E "$GUARDED" || true)"
@@ -177,7 +182,10 @@ jobs:
         run: |
           set -uo pipefail
           SHA="$(grep -oE '[0-9a-f]{40}' docs/FREEZE_POINT.md | head -1)"
-          REF="freeze/sd-scoring-2026.08-v3.1"
+          # Read the tag NAME from the doc too. It was hardcoded here and went
+          # stale the moment the model moved to v4.0, so this step compared
+          # against a superseded baseline while reporting reassurance.
+          REF="$(grep -oE 'freeze/[A-Za-z0-9._-]+' docs/FREEZE_POINT.md | head -1)"
           if git rev-parse -q --verify "refs/tags/$REF" >/dev/null; then
             POINT="$REF"
           elif git cat-file -e "$SHA^{commit}" 2>/dev/null; then
@@ -187,9 +195,9 @@ jobs:
             echo "ERROR: neither the freeze tag nor its recorded SHA is reachable."
             exit 1
           fi
-          echo "Diff of scoring paths since the freeze point ($POINT):"
-          git diff "$POINT" -- app/shortduration/scoring/ app/shortduration/strategies/ \
-            | tee /tmp/freeze.diff
+          echo "Diff of ALL guarded paths since the freeze point ($POINT):"
+          # shellcheck disable=SC2086  # word splitting is intended here
+          git diff "$POINT" -- $GUARDED_PATHS | tee /tmp/freeze.diff
           test -s /tmp/freeze.diff \
             && echo "NON-EMPTY — expected only if an amendment covers it." \
             || echo "Empty — scoring paths unchanged since the freeze."

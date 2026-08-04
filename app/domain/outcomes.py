@@ -87,6 +87,14 @@ class DecisionSnapshot(BaseModel):
     contracts: int = Field(ge=1)
     expiration: date | None = None
     dte_at_entry: int | None = None
+    # The BUCKET this decision was scanned under ("0dte" | "1-5dte" | "medium").
+    # Recorded rather than inferred from `dte_at_entry`, which cannot distinguish
+    # them: the 0DTE selector admits dte 0 OR 1 and the 1-5DTE selector starts at
+    # 1, so a 1-DTE row is ambiguous. Amendment 3 needs an exact answer, because it
+    # quarantines observation-only buckets out of the calibration corpus and must
+    # not silently drop legitimate 1-5DTE rows to do it. Empty for pre-Amendment-3
+    # and funnel-lineage decisions.
+    dte_bucket: str = ""
 
     # Scoring model version this decision was produced under. For short-duration
     # decisions this is "sd-scoring-YYYY.MM-vN"; empty for funnel-lineage decisions

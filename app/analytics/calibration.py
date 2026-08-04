@@ -40,7 +40,13 @@ log = get_logger(__name__)
 # calibration corpus rather than trusted. Funnel-lineage decisions (empty or non-"sd-"
 # version) are a different model and are not subject to this boundary.
 _MIN_SD_CALIBRATION_VERSION = 3
-_SD_VERSION_RE = re.compile(r"^sd-scoring-.*-v(\d+)$")
+# Matches the MAJOR version, tolerating a minor suffix. The previous pattern was
+# `-v(\d+)$`, which stopped parsing anything the moment dotted versions arrived at
+# v3.1 — so a hypothetical `sd-scoring-2025.01-v2.5` parsed as "not a short-duration
+# version at all" and was admitted to the corpus as if undegraded. No such version
+# exists today, so nothing was miscounted; the pattern is fixed here rather than
+# left as a trap for the next minor release.
+_SD_VERSION_RE = re.compile(r"^sd-scoring-.*-v(\d+)(?:\.\d+)*$")
 
 
 def _is_degraded_short_duration(version: str) -> bool:
@@ -62,6 +68,83 @@ def eligible_for_calibration(
             kept.append(s)
     if excluded:
         log.warning("calibration_excluded_pre_v3", n_excluded=excluded, n_kept=len(kept))
+    return kept, excluded
+
+
+def _observation_only_buckets() -> set[str]:
+    """Bucket NAMES that are captured but never calibrated. Today: {"0dte"}."""
+    from app.config import settings
+
+    return {
+        s.strip() for s in settings.capture_observation_only_buckets.split(",") if s.strip()
+    }
+
+
+def _drop_observation_only(
+    snapshots: list[DecisionSnapshot],
+) -> tuple[list[DecisionSnapshot], int]:
+    """Remove decisions from observation-only buckets, and return (kept, n).
+
+    Matches on the recorded `dte_bucket`, NOT on `dte_at_entry`. The 0DTE selector
+    admits dte 0 or 1 and the 1-5DTE selector starts at 1, so a 1-DTE row cannot be
+    attributed to a bucket by its integer — filtering on the integer would silently
+    drop legitimate 1-5DTE decisions along with the 0DTE ones.
+
+    Decisions with an empty `dte_bucket` (pre-Amendment-3, and funnel lineage) are
+    KEPT: absent is not evidence of membership.
+    """
+    buckets = _observation_only_buckets()
+    if not buckets:
+        return snapshots, 0
+    kept, excluded = [], 0
+    for s in snapshots:
+        if s.dte_bucket and s.dte_bucket in buckets:
+            excluded += 1
+        else:
+            kept.append(s)
+    if excluded:
+        log.warning(
+            "calibration_excluded_observation_only",
+            n_excluded=excluded, n_kept=len(kept), buckets=sorted(buckets),
+        )
+    return kept, excluded
+
+
+def gradeable_outcomes(
+    outcomes: list[DecisionOutcome],
+) -> tuple[list[DecisionOutcome], int]:
+    """Drop outcomes whose OBSERVATION was too sparse to grade, and return
+    (kept, n_excluded).
+
+    Amendment 3. P7 attached `mark_coverage_pct`, `max_gap_minutes` and
+    `grade_confidence` to every outcome, and then nothing consumed them — so a
+    grade with a 52-minute blind spot pooled with a densely-observed one and the
+    resulting win rate could not be attributed between the signal and the hole in
+    the observation.
+
+    An exit that triggered and reversed inside a gap is MISSED, not mispriced, so
+    the error is DIRECTIONAL: trades look longer-held than they were and stop-outs
+    are under-reported. That bias does not average out with sample size, which is
+    why this excludes rather than down-weights.
+
+    `grade_confidence == "high"` is required. Empty string is the pre-P7 default
+    and is treated as gradeable — those grades predate the measurement and their
+    quality is unknown-but-not-known-bad; excluding them would silently discard
+    the entire pre-P7 corpus. `"low"` and `"unknown"` are both dropped:
+    "we could not tell how well we observed this" is not evidence of good
+    observation.
+    """
+    kept, excluded = [], 0
+    for o in outcomes:
+        if o.grade_confidence in ("low", "unknown"):
+            excluded += 1
+        else:
+            kept.append(o)
+    if excluded:
+        log.warning(
+            "calibration_excluded_low_confidence_grades",
+            n_excluded=excluded, n_kept=len(kept),
+        )
     return kept, excluded
 
 # Outcome fidelity for de-duplication: a closed paper trade (realized fill) and a
@@ -150,6 +233,13 @@ class Scorecard(BaseModel):
     n_resolved: int
     n_decisive: int  # wins + losses (excludes scratch/unknown)
     n_excluded_pre_v3: int = 0  # degraded pre-v3 short-duration decisions hard-filtered
+    # Outcomes dropped because the session was too sparsely observed to grade
+    # (grade_confidence low/unknown). Amendment 3 — reported, never silent: a
+    # corpus that shrank is a fact about the data, not a detail.
+    n_excluded_low_confidence: int = 0
+    # Decisions from observation-only buckets (0DTE) — captured and paper-traded
+    # for logic development, never calibrated. Amendment 3.
+    n_excluded_observation_only: int = 0
     win_rate: float | None = None
     direction_accuracy: float | None = None
     avg_predicted_pop: float | None = None
@@ -355,6 +445,17 @@ def build_scorecard(
 ) -> Scorecard:
     # Hard boundary: degraded pre-v3 short-duration decisions never enter the corpus.
     snapshots, n_excluded_pre_v3 = eligible_for_calibration(snapshots)
+    # Third hard boundary (Amendment 3): observation-only buckets are captured and
+    # paper-traded, never calibrated. Filtered by BUCKET rather than only by
+    # grade_confidence, because a 0DTE decision graded from DAILY marks carries the
+    # pre-P7 empty confidence string and would otherwise pass the confidence filter
+    # while being exactly the uninterpretable case the quarantine exists for.
+    snapshots, n_excluded_observation_only = _drop_observation_only(snapshots)
+    # Second hard boundary (Amendment 3): grades whose observation was too sparse
+    # to trust never enter it either. Applied BEFORE outcome selection so a
+    # low-confidence grade cannot win the fidelity tie-break and displace a
+    # gradeable one.
+    outcomes, n_excluded_low_confidence = gradeable_outcomes(outcomes)
     by_id = {s.decision_id: s for s in snapshots}
     chosen = select_scoring_outcomes(outcomes)
     pairs = [(by_id[i], o) for i, o in chosen.items() if i in by_id]
@@ -505,12 +606,27 @@ def build_scorecard(
             f"{n_excluded_pre_v3} pre-v3 short-duration decision(s) excluded as degraded "
             "(IV-rank bug); calibration is over eligible decisions only."
         )
+    if n_excluded_observation_only:
+        warnings.append(
+            f"{n_excluded_observation_only} decision(s) excluded — from an "
+            "OBSERVATION-ONLY bucket (0DTE), captured and paper-traded for logic "
+            "development but never calibrated until its mark-quality bar is met."
+        )
+    if n_excluded_low_confidence:
+        warnings.append(
+            f"{n_excluded_low_confidence} grade(s) excluded — the session was too "
+            "sparsely observed to grade (mark coverage / gap). An exit inside a gap "
+            "is MISSED, not mispriced, so the bias is directional and does not "
+            "average out with sample size."
+        )
 
     return Scorecard(
         n_decisions=len(snapshots),
         n_resolved=len(pairs),
         n_decisive=len(decisive),
         n_excluded_pre_v3=n_excluded_pre_v3,
+        n_excluded_low_confidence=n_excluded_low_confidence,
+        n_excluded_observation_only=n_excluded_observation_only,
         win_rate=realized,
         direction_accuracy=_rate(dir_correct, len(dir_calls)),
         avg_predicted_pop=avg_pop,

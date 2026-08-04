@@ -125,7 +125,24 @@ class Settings(BaseSettings):
     # NBBO persistence and intraday marks land: all 38 audited 0DTE signals
     # resolved `expiry` because daily marks cannot see an intraday exit, so the
     # managed policy they claim to run was never measured.
-    capture_suspended_buckets: str = "0dte"
+    capture_suspended_buckets: str = ""
+    # Amendment 3 (2026-08-04). Buckets that are CAPTURED but never gradeable and
+    # never armable: they generate candidates, score, and paper-trade so the logic
+    # can be developed against real tape, and their outcomes are quarantined out of
+    # the calibration corpus rather than pooled with well-observed ones.
+    #
+    # 0DTE moves here from `capture_suspended_buckets`. Reviewer Ruling 2 suspended
+    # it because its grades are uninterpretable — trade-driven UW minute bars gave
+    # 31% session coverage with a 52-minute maximum gap, and a same-session trade
+    # cannot be graded through a 52-minute blind spot. That reasoning is about
+    # GRADING, and suspension was a blunt instrument standing in for a quarantine
+    # that did not exist. It exists now (`calibration.gradeable_outcomes`), so the
+    # bucket can produce data without its grades meaning anything they should not.
+    #
+    # The quantitative bar (>=80% RTH coverage, max gap <=5min) is unchanged and
+    # still governs PROMOTION out of this state — it just no longer governs whether
+    # the bucket exists at all.
+    capture_observation_only_buckets: str = "0dte"
     # When a daily-trend (swing) thesis fires in the short-duration scanner, express
     # it at a SWING expiry (weeks, not days) so the instrument matches the thesis —
     # the fix for a daily-trend signal landing in a ~4-DTE spread. 21-45 DTE targets
@@ -205,7 +222,7 @@ class Settings(BaseSettings):
     # only payoff. A MAJOR bump, not a point release — this changes which
     # instrument a signal is expressed in, not a coefficient. See
     # CAPTURE_WINDOW_PREREGISTRATION.md section 8, Amendment 2.
-    scoring_model_version: str = "sd-scoring-2026.08-v4.0"
+    scoring_model_version: str = "sd-scoring-2026.08-v4.1"
     risk_policy_version: str = "sd-risk-2026.07-v1"
 
     # --- Display bands (presentation only — NOT scoring inputs) ---------------

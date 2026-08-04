@@ -264,3 +264,80 @@ arriving alongside the fix that would have caught it.
 plays like this?"), written up as
 `docs/PROPOSED_AMENDMENT_2_CONTRACT_SELECTION.md`, approved in full (C1–C4) with
 the guard fix ordered first and independent.
+
+---
+
+### Amendment 3 — 2026-08-04 — `sd-scoring-2026.08-v4.0` → `sd-scoring-2026.08-v4.1`
+
+**Recorded before the first captured signal.** Zero signals captured; production
+not yet redeployed. Nothing chosen after seeing an outcome.
+
+**A MINOR version.** No weight, threshold, component or contract-selection rule
+changes. What changes is **which buckets produce candidates** — §2 freezes "the
+watchlist universe", and adding a DTE bucket changes what the window captures, so
+it is declared here rather than slipped in as config.
+
+#### What changed
+
+0DTE moves from **suspended** to **observation-only**.
+
+| | suspended (before) | observation-only (now) |
+|---|---|---|
+| candidate generated | no — dropped pre-scoring | **yes** |
+| scored / boarded | no | **yes** |
+| paper-tradeable | no | **yes** |
+| armed | no | no |
+| enters calibration corpus | n/a | **no — quarantined** |
+
+Config: `capture_suspended_buckets` → `""`,
+`capture_observation_only_buckets` → `"0dte"`.
+
+#### Why this is not a reversal of Ruling 2
+
+Ruling 2 suspended 0DTE because its **grades** are uninterpretable: trade-driven
+UW minute bars gave 31% session coverage with a 52-minute maximum gap, and a
+same-session trade cannot be graded through a 52-minute blind spot. That
+reasoning is about grading, and suspension was a blunt instrument standing in for
+a quarantine that did not exist.
+
+**It exists now.** `analytics/calibration.py` gained two hard boundaries:
+
+1. `gradeable_outcomes()` — drops any outcome whose `grade_confidence` is `low`
+   or `unknown`. P7 attached `mark_coverage_pct`, `max_gap_minutes` and
+   `grade_confidence` to every outcome and **nothing consumed them**; a grade with
+   a 52-minute blind spot pooled with a dense one and the resulting win rate could
+   not be attributed between the signal and the hole in the observation.
+2. `_drop_observation_only()` — drops decisions whose recorded `dte_bucket` is an
+   observation-only bucket. Belt and braces: a 0DTE decision graded from DAILY
+   marks carries the pre-P7 empty confidence string and would pass (1) while being
+   exactly the uninterpretable case.
+
+Both exclusions are counted and surfaced as scorecard warnings — a corpus that
+shrank is a fact about the data, not a detail.
+
+**The quantitative bar is unchanged** (≥80% RTH coverage, max gap ≤5 min, per
+`analytics/mark_quality.py`). It now governs PROMOTION out of observation-only
+rather than whether the bucket exists at all.
+
+#### Sections 3–7 unchanged
+
+Window length, hypotheses, statistics, gate thresholds and falsification criteria
+stand as committed. **0DTE decisions do not enter the corpus those sections
+describe**, so no hypothesis is affected.
+
+#### Incidental fix carried in the same change
+
+`_SD_VERSION_RE` matched `-v(\d+)$`, which stopped parsing anything the moment
+dotted versions arrived at v3.1. A hypothetical `sd-scoring-2025.01-v2.5` would
+have parsed as "not a short-duration version" and been admitted as undegraded. No
+such version exists, so nothing was miscounted — fixed rather than left as a trap.
+
+#### Golden-file delta
+
+Regenerated: **only the `model_version` string changed.** Same structural
+limitation as Amendments 1 and 2 — the golden file scores fixed `IVContext`
+fixtures and cannot see a capture-scope change.
+
+**Origin:** requested by the user on 2026-08-04 — "I want to enable 0DTE options,
+while we may not be taking them I think having the data populate for paper trading
+to zero in on our logic is the right thing to do."

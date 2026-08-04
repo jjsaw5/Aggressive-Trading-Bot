@@ -34,7 +34,12 @@ from app.engine.universe import short_duration_universe
 from app.logging_config import get_logger
 from app.providers import registry
 from app.providers.ratelimit import Priority, use_priority
-from app.shortduration.contracts import ContractResult, is_swing, select_short_duration_contracts
+from app.shortduration.contracts import (
+    ContractResult,
+    is_swing,
+    select_short_duration_contracts,
+    short_horizon_viable,
+)
 from app.shortduration.levels import compute_intraday_levels
 from app.shortduration.risk import (
     EntryGate,
@@ -479,20 +484,32 @@ async def _score_symbol(
         # Offer EVERY viable defined-risk expression (long AND spread) as its own
         # candidate, so the board shows a mix to pick from. Each is scored on its
         # own structure. A rejected setup yields a single non-tradeable candidate.
+        # Built BEFORE contract selection (Amendment 2, C4): the horizon a thesis
+        # needs is a property of the thesis, not of its strategy label, so
+        # selection has to be able to ask it.
+        thesis = build_directional_thesis(ctx, det, news_score=news)
+        # A trend thesis defaults to a weeks-out expression (item 1.11: a daily
+        # trend cannot resolve inside a 4-DTE contract). It is released to the
+        # short window only when the market's own expected move over that window
+        # covers the distance to invalidation — i.e. the argument actually gets
+        # settled inside it. Unanswerable -> keep the conservative default.
+        swing = is_swing(det.strategy) and not short_horizon_viable(
+            distance_to_invalidation_pct=thesis.distance_to_invalidation_pct if thesis else None,
+            iv=(iv.iv30 if iv is not None else None),
+        )
         contracts: list[ContractResult] = [ContractResult(None, ContractRecommendation(description=""))]
         if chain is not None:
             from app.shortduration.strategies.base import dominant_flow_strike
             contracts = select_short_duration_contracts(
                 chain, det.direction, det.dte_category,
                 policy=short_duration_policy(det.dte_category, equity=equity),
-                as_of=now.date(), open_risk_usd=open_risk, swing=is_swing(det.strategy),
+                as_of=now.date(), open_risk_usd=open_risk, swing=swing,
                 prefer_strike=dominant_flow_strike(ctx.flow, det.direction),
             )
         gate = evaluate_entry_gates(
             dte=det.dte_category, direction=det.direction, regime=ctx.regime, now=now,
             quote_stale=stale, daily=daily, equity=equity, symbol=symbol,
         )
-        thesis = build_directional_thesis(ctx, det, news_score=news)
         spot = chain.underlying_price if chain is not None else (ctx.quote.price if ctx.quote else None)
         for contract in contracts:
             card = score_candidate(

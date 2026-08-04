@@ -43,6 +43,18 @@ class SelectionConfig:
     # it if |strike/spot - 1| <= this band, picking the closest-to-ATM strike.
     # None (default) keeps the strict delta-only behavior for the core scanner.
     moneyness_fallback_pct: float | None = None
+    # --- Amendment 2 (2026-08-03): probability enters selection ----------------
+    # The short leg used to be bounded only by liquidity, so the optimiser slid it
+    # as far OTM as the chain allowed — which is exactly the move that maximises
+    # both width and reward-to-risk. A floor on its delta caps width at something
+    # the market prices as plausible.
+    min_short_leg_delta: float = 0.15
+    # Structures below this modelled probability of profit are REJECTED, not
+    # down-ranked. A structure believed to lose three times in four is not a
+    # defined-risk candidate, and ranking it merely relocates the decision to the
+    # reader. `None` disables the floor (used by legacy callers and tests that
+    # predate the amendment).
+    min_pop: float | None = 0.25
 
 
 @dataclass(frozen=True)
@@ -68,6 +80,11 @@ class SpreadChoice:
     max_loss_per_contract: float
     max_profit_per_contract: float
     fit_score: float
+    # Modelled P(profit at expiry) used to SELECT this structure (Amendment 2).
+    # Recorded so the choice can be audited against the number that drove it.
+    # None when spot or IV were unavailable — absent stays absent, and a
+    # structure whose odds could not be modelled cannot clear the POP floor.
+    selection_pop: float | None = None
 
     @property
     def reward_to_risk(self) -> float | None:
@@ -186,8 +203,19 @@ def select_vertical_spread(
         if c.mid is None or gate_option(c, liq):
             return False
         d = abs(c.greeks.delta) if c.greeks.delta is not None else None
-        if d is not None and 0.0 < d < 1.0 and sel.min_delta <= d <= sel.max_delta:
-            return True
+        usable = d is not None and 0.0 < d < 1.0
+        if usable:
+            # Amendment 2: when delta is USABLE it is the answer, full stop. This
+            # previously fell through to the moneyness fallback whenever the band
+            # check failed, so a leg with a perfectly good delta OUTSIDE the band
+            # was re-admitted on strike distance alone. That is how a SPY 790 call
+            # at delta 0.1035 became a long leg under a 0.30 floor: 790/756 is
+            # 4.4%, inside the 6% swing moneyness band. `select_long_contract`
+            # already gates the fallback on `by_delta` (see its `money = ... if
+            # not by_delta`); this is the same rule, and matches what
+            # `_moneyness_fit`'s own docstring has always promised — the fallback
+            # is for delta MISSING OR DEGENERATE, not for delta we dislike.
+            return sel.min_delta <= d <= sel.max_delta
         return _moneyness_fit(c, chain, sel) is not None
 
     legs = [
@@ -217,6 +245,15 @@ def select_vertical_spread(
             if want == OptionType.PUT and short_leg.strike >= long_leg.strike:
                 continue
 
+            # Amendment 2 (C3): the short leg needs its own delta floor. Without
+            # one it is bounded only by liquidity, and sliding it further OTM
+            # raises BOTH terms of the old fit score — so the optimiser's maximum
+            # was, by construction, the cheapest far-OTM spread the chain allowed.
+            sd = abs(short_leg.greeks.delta) if short_leg.greeks.delta is not None else None
+            if sel.min_short_leg_delta and sd is not None and 0.0 < sd < 1.0:
+                if sd < sel.min_short_leg_delta:
+                    continue
+
             width = abs(short_leg.strike - long_leg.strike)
             debit = long_leg.mid - short_leg.mid  # type: ignore[operator]
             if debit <= 0 or width <= 0:
@@ -228,8 +265,29 @@ def select_vertical_spread(
 
             max_profit = round((width - debit) * 100, 2)
             rr = max_profit / max_loss if max_loss > 0 else 0.0
-            # Prefer good reward-to-risk and a width that isn't trivially thin.
-            fit = round(min(1.0, rr / 2.0) * 0.7 + min(1.0, width / long_leg.strike * 20) * 0.3, 4)
+
+            # Amendment 2 (C1/C2): price the ODDS, not only the payoff. A debit
+            # vertical has one break-even — the long strike plus the debit paid
+            # (bull call) or minus it (bear put).
+            pop = _spread_pop(
+                chain=chain, long_leg=long_leg, debit=debit,
+                bullish=(want == OptionType.CALL), as_of=as_of,
+            )
+            # The floor REJECTS. `None` (unmodellable odds) cannot clear it —
+            # a structure whose probability we could not compute is not evidence
+            # of good probability.
+            if sel.min_pop is not None and (pop is None or pop < sel.min_pop):
+                continue
+
+            # POP is the largest single term. Payoff still counts; it can no
+            # longer outvote the odds on its own, which is what produced a board
+            # with a median POP of 0.287 against a median R:R of 7.8:1.
+            fit = round(
+                (pop or 0.0) * 0.45
+                + min(1.0, rr / 2.0) * 0.35
+                + min(1.0, width / long_leg.strike * 20) * 0.20,
+                4,
+            )
 
             if best is None or fit > best.fit_score:
                 best = SpreadChoice(
@@ -240,9 +298,36 @@ def select_vertical_spread(
                     max_loss_per_contract=max_loss,
                     max_profit_per_contract=max_profit,
                     fit_score=fit,
+                    selection_pop=pop,
                 )
 
     return best
+
+
+def _spread_pop(
+    *, chain: OptionChain, long_leg: OptionContract, debit: float,
+    bullish: bool, as_of: date,
+) -> float | None:
+    """Modelled P(profit at expiry) for a debit vertical, at selection time.
+
+    Same estimator the candidate later reports (`app.quant.probability`), so the
+    number that CHOSE the structure and the number displayed beside it cannot
+    disagree. Returns None when spot, IV or DTE are unusable — absent stays
+    absent rather than defaulting to a value that would clear the floor.
+    """
+    from app.quant.probability import probability_of_profit
+
+    spot = chain.underlying_price
+    iv = long_leg.implied_volatility
+    if not spot or spot <= 0 or not iv or iv <= 0:
+        return None
+    days = long_leg.dte(as_of)
+    if days < 0:
+        return None
+    breakeven = long_leg.strike + debit if bullish else long_leg.strike - debit
+    return probability_of_profit(
+        spot=spot, breakeven=breakeven, iv=iv, days=float(days), bullish=bullish
+    )
 
 
 # ---------------------------------------------------------------------------

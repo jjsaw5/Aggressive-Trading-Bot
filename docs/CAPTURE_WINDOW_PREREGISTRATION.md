@@ -170,3 +170,97 @@ detectable rather than found by audit):
 **Origin:** self-reported as FINDING_01 in the audit packet of 2026-08-01, then
 ruled on by the reviewer (Ruling 1). Recorded here per this section's own
 mechanism.
+
+---
+
+### Amendment 2 — 2026-08-03 — `sd-scoring-2026.08-v3.1` → `sd-scoring-2026.08-v4.0`
+
+**Recorded before the first captured signal.** Zero signals had been captured at
+the time of this amendment: production had not been redeployed and the window had
+not started. Nothing here was chosen after seeing an outcome.
+
+**A MAJOR version, not a point release.** v3 → v3.1 changed whether a coefficient
+could fire. This changes *which instrument a signal is expressed in*. A v3.1 row
+and a v4.0 row on the same symbol, same direction, same minute are different
+trades. They must never pool.
+
+#### What changed
+
+Contract selection now prices **probability**, not only payoff.
+
+1. **POP enters the fit function.**
+   `app/engine/contract_selection.py`
+
+   ```
+   before:  fit = min(1, rr/2) * 0.7  +  min(1, width/strike*20) * 0.3
+   after:   fit = pop * 0.45  +  min(1, rr/2) * 0.35  +  min(1, width/strike*20) * 0.20
+   ```
+
+2. **A hard POP floor of 0.25 REJECTS** rather than down-ranks
+   (`SelectionConfig.min_pop`). Odds that cannot be modelled do **not** clear it —
+   an unmodellable probability is not evidence of a good one.
+
+3. **The short leg gets a delta floor of 0.15** (`min_short_leg_delta`).
+
+4. **Horizon is decided by the thesis, not the strategy label**
+   (`contracts.short_horizon_viable`). A trend thesis is released to the 1–5 DTE
+   window only when the market's own expected move over that window covers the
+   distance to invalidation — i.e. the argument is settled inside it. Otherwise
+   the 21–45 DTE default from item 1.11 stands.
+
+#### Why
+
+The selector maximised reward-to-risk, and reward-to-risk is maximised by buying
+the cheapest, furthest-OTM spread the chain allows. Both terms of the old fit
+function rose as the structure moved away from the money, and the short leg was
+bounded only by liquidity, so nothing opposed the drift.
+
+Measured on 2026-08-03, across 64 priced structures: **median POP 0.287, median
+R:R 7.79:1, and 45% of all structures below POP 0.25.**
+
+The system recorded, for the SPY structure it chose:
+
+```
+POP = 0.1044   R:R = 26.62
+"SPY must rise 4.4% to $790.90 by expiry (28d) just to break even."
+```
+
+It computed that probability, stored it, displayed it on the board — and did not
+use it to choose the contract. A window captured under v3.1 would have measured a
+long-shot generator, and a low hit rate would have been unattributable between
+the *signal* and the *contract selector*.
+
+#### Sections 3–7 unchanged
+
+Window length, hypotheses, statistics, gate thresholds and falsification criteria
+all stand exactly as originally committed.
+
+#### Golden-file delta
+
+`tests/golden/scoring_v3.json` regenerated. **The only change is the recorded
+`model_version` string — 9 leaves, no computed value moved.**
+
+This is the same structural limitation reported for Ruling 1 under Amendment 1:
+the golden file scores fixed `IVContext` fixtures and passes no trade plan, so a
+*selection* change cannot move its numbers. It is reported here rather than
+worked around. The controls that DO cover this class are `tests/
+test_contract_selection_amendment2.py` (new, direct) and the freeze path guard,
+which now covers the selection paths — see below.
+
+#### Control added with the change
+
+`app/engine/contract_selection.py` and `app/shortduration/contracts.py` were **not
+in the freeze guard's `GUARDED` regex** when this change was written.
+`scoring/components.py:181` reads `reward_to_risk` off the *selected plan*, so
+changing selection changes a scored component and therefore the shipped model —
+with no diff under `scoring/` at all. That is FINDING_01's shape in a new file,
+and it was found by accident rather than by a control.
+
+Both paths were added to `GUARDED` in a **separate, earlier commit**, deliberately
+landed before this one so that this change had to clear the guard rather than
+arriving alongside the fix that would have caught it.
+
+**Origin:** raised by the user on 2026-08-03 ("why do we not see the app surface
+plays like this?"), written up as
+`docs/PROPOSED_AMENDMENT_2_CONTRACT_SELECTION.md`, approved in full (C1–C4) with
+the guard fix ordered first and independent.

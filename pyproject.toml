@@ -41,6 +41,13 @@ robinhood = [
     "robin-stocks>=3.1",
     "pyotp>=2.9",
 ]
+# Model-backed agents for the multi-agent research subsystem. OPTIONAL: the
+# pipeline runs end to end without it on the deterministic runner, and the whole
+# test suite must pass with this extra absent.
+#   pip install -e ".[llm]"
+llm = [
+    "anthropic>=0.40",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

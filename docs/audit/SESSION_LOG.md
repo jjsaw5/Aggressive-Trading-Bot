@@ -818,3 +818,147 @@ Both exclusions are counted and surfaced as scorecard warnings.
 - Credential rotation still incomplete (owner deferral, Entry 4).
 
 ---
+
+## Entry 8 — 2026-08-07 — Multi-agent options research subsystem (Milestone 1)
+
+### What changed and why
+
+Built a new, additive subsystem: an LLM-agent research funnel that discovers
+catalyst-driven candidates, validates them against live provider data, scores
+them deterministically, and presents a ranked report for human review. Requested
+as a full vertical slice; delivered as Milestone 1.
+
+The repository already had the provider abstraction, domain models, quant, risk
+policy, database and API this needs. What it had **none** of was an agent layer —
+no `.claude/` directory existed, and the existing engine is a deterministic
+scanner over a fixed watchlist rather than a catalyst-driven discovery funnel.
+So the work is agent orchestration plus its own scoring engine, reusing the
+platform's data and risk layers rather than duplicating them.
+
+New: `app/multiagent/` (~6.5k LOC), `.claude/agents/` (4 definitions),
+`config/methodology.yaml`, `docs/multiagent/` (5 documents),
+`app/api/routes/multiagent.py`, `run_market_scan.py`, migration
+`0007_multiagent_research` (18 `ma_*` tables), `tests/multiagent/` (152 tests).
+
+### Decisions taken, with reasoning
+
+1. **`.claude/agents/*.md` are the single source of truth for agent roles**,
+   parsed both by Claude Code as subagents and by the Python runtime as system
+   prompts. A prompt string in Python plus a markdown file describing the same
+   role guarantees drift, and the drift is invisible until an agent behaves
+   differently depending on how it was invoked.
+
+2. **The evidence ledger is the anti-hallucination control.** Python retrieves
+   evidence and mints ids *before* any agent runs; agents may cite only those
+   ids; claims citing anything else are dropped and recorded as
+   `UNREFERENCED_AGENT_CLAIM`. Tested with a runner built to lie
+   (`test_evidence_binding.py`). Measured fields — index prices, VIX, the
+   candidate's reference price — are overwritten from provider data after the
+   agent returns.
+
+3. **Abstention rather than zero-fill.** A scoring rule with no input removes
+   its weight from the denominator instead of scoring zero, and every score
+   reports `input_coverage`. Scoring a missing input as zero makes "could not
+   measure" indistinguishable from "measured and bad" — the failure mode
+   CLAUDE.md §4 exists to prevent. Below 60% coverage the candidate is
+   hard-rejected regardless of score.
+
+4. **Partial credit scales from a floor, not from zero.** Found while reading
+   the first real output: a relative volume of exactly 1.0x — dead average, by
+   definition no signal — was collecting 77% of the "volume is strong" points.
+   Five rules gained explicit floors.
+
+5. **A default deterministic runner, not a mock LLM.** It reads the same ledger,
+   cites the same real ids, and goes through the same Pydantic parsing and
+   evidence binding as a model would, so the validation path is exercised by
+   every test rather than only when a key is set. It is stamped
+   `runner=deterministic` on every artifact so a corpus built with it is never
+   mistaken for a model-authored one. An unknown runner name, or `anthropic`
+   without a key, raises — never a silent fallback.
+
+6. **`UNCALIBRATED` on every score.** The specification asked for
+   "High conviction" classification bands, which sits against
+   `docs/PRODUCT_STANCE.md` — a decision of record stating the product does not
+   assert conviction. Built the bands exactly as specified and stamped every
+   score, report and stored row `UNCALIBRATED`, with the report explaining that
+   a high score means "scores well on the rubric", not "likely to make money".
+   Flagged to the requester rather than resolved unilaterally.
+
+7. **Freeze isolation is mechanical, not asserted.**
+   `tests/multiagent/test_freeze_isolation.py` proves the subsystem does not
+   import the frozen scorer (and vice versa), touches no `GUARDED_RE` path,
+   constructs no `IVContext` (FINDING_01's actual mechanism), and ships a
+   migration that only creates `ma_`-prefixed tables. The richer synthetic news
+   corpus went into `app/multiagent/providers/mock_research.py` specifically
+   because `app/providers/mock/provider.py` is guarded.
+
+### Bugs found and fixed during the build
+
+- **Strike-invariant Greeks taken at face value.** The mock returns constant
+  `gamma=0.01, theta=-0.03, vega=0.1` for every strike, so a vertical's net
+  theta computed to *exactly zero* — silently passing the theta-burden rule and
+  making the excessive-theta hard rule unfireable. Now detected and recomputed
+  from Black-Scholes, relabelled `MODELED`. This is a real-provider hazard, not
+  a mock artifact.
+- **Delta band graded against net delta.** A vertical's net delta is the
+  difference of two same-sign deltas and is small by construction, so a
+  perfectly sensible 0.45/0.30 spread was failing the 0.35–0.65 single-option
+  band. Now reads the long leg, which is what the band is actually asking about.
+- **Absolute-dollar spread widths.** `[2.5, 5.0, 10.0]` silently produces "no
+  debit vertical could be built" on a $20 underlying (short leg at 0.14 delta,
+  below the band) and is barely one strike on a $900 one. Widths now also derive
+  from the chain's own strike increment.
+- **Selector ranked unsizeable structures first**, handing every candidate to
+  the rules engine to reject — a broken selector wearing a correct rejection.
+  Sizeability now dominates the ranking, with a defined-risk spread fallback
+  when a long option exceeds the $100 cap.
+- **Run duration mixed a pinned clock with wall-clock time**, reporting 191,864
+  seconds for an 80ms run. Now measured with a monotonic counter.
+- **The deterministic runner's thesis text asserted the trade ran with the
+  trend unconditionally**, which was false whenever a bearish catalyst was
+  traded against a bullish trend — exactly the case a reader most needs flagged.
+
+### PRs opened or merged
+
+None yet. Work is on `claude/multi-agent-options-research-mrjef2`; no PR
+requested.
+
+### DEVIATIONS
+
+**Not None.** Four:
+
+1. **`alembic/env.py` was modified** to register the `ma_*` models on
+   `Base.metadata`. Not a guarded path and not a behaviour change to any
+   existing table, but it is an edit outside the new subsystem and is named here
+   rather than buried in a diff.
+2. **`app/main.py` was modified** to mount the new router. Same reasoning.
+3. **Autogenerate proposed ~90 `NOT NULL` alterations on pre-existing tables**
+   (a SQLAlchemy server-default artifact under SQLite, unrelated to this change).
+   All were removed by hand and the migration rewritten as `CREATE TABLE` only.
+   If those columns genuinely need tightening it belongs in its own migration
+   with its own review — not as a side effect of adding a subsystem.
+   `test_freeze_isolation.py` now asserts the migration contains no
+   `alter_column`, `drop_column` or `drop_table`.
+4. **`docs/RISK_POLICY.md`'s known contradiction was not touched.** The new
+   subsystem's hard rules mirror the limits *table* ($100/trade, 20 contracts),
+   which matches the code; the stale "Why not 2%?" prose remains as CLAUDE.md §9
+   describes. Not corrected unilaterally — it is a governing document.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1` **unchanged**; freeze point v4.0 at `935160d`.
+  No guarded path touched, asserted by test.
+- New methodology `ma-methodology-2026.08-v1`, distinct from the frozen model
+  version and stored alongside it on every run.
+- 1126 tests: 1125 passed, 1 failed. The failure
+  (`test_trade_management.py::test_quick_add_accepts_an_inline_invalidation`,
+  `dte_regime == 'theta'` vs `'swing'`) is **pre-existing** — verified failing
+  at `f9f98f0` before any change in this session. Not investigated; out of scope
+  and flagged.
+- `ruff check .` clean across the whole repository.
+- Execution remains structurally impossible in this subsystem: no order path, no
+  agent execution tool, `execution_enabled=false` on every persisted run,
+  asserted against the route table.
+- Credential rotation still incomplete (owner deferral, Entry 4).
+
+---

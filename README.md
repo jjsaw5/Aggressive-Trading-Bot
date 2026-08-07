@@ -76,12 +76,41 @@ services/            scan orchestration · paper engine (MFE/MAE) · outcomes ·
 api/                 FastAPI routes (health, config, scans, proposals, outcomes, tiers, metrics)
 db/ alembic/         SQLAlchemy models + migrations (durable backend: Turso/libSQL)
 scheduler/           simple periodic scan OR session-aware tiered scheduler (gated)
+multiagent/          LLM research funnel: evidence ledger → 3 agents → deterministic
+                     scoring → hard rules → ranked report (additive; see below)
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full picture,
 [`docs/OUTCOMES.md`](docs/OUTCOMES.md) for how the platform scores its own
 suggestions over time, and [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's built
 vs. next.
+
+### Multi-agent research subsystem
+
+A separate, additive funnel that uses LLM agents to *generate hypotheses* while
+application code supplies the evidence and does all the scoring:
+
+```
+AGENT 1 market intelligence → AGENT 2 opportunity generator → AGENT 3 validator
+   → deterministic 100-point score → hard rejection rules → ranked report → human
+```
+
+It reuses the provider, domain, quant and risk layers above, adds its own `ma_*`
+tables, and touches none of the freeze-guarded scoring paths — asserted by
+`tests/multiagent/test_freeze_isolation.py`. Agents may only cite evidence ids
+that the collector minted from retrieved data, so an agent can select facts but
+cannot introduce one. Scores display **UNCALIBRATED**.
+
+```bash
+python run_market_scan.py          # no credentials required
+```
+
+Docs: [`docs/multiagent/`](docs/multiagent/README.md) —
+[architecture](docs/multiagent/ARCHITECTURE.md) ·
+[methodology](docs/multiagent/METHODOLOGY.md) ·
+[scoring](docs/multiagent/SCORING.md) ·
+[data sources](docs/multiagent/DATA_SOURCES.md) ·
+[setup](docs/multiagent/SETUP.md).
 
 ## Quick start (no API keys required)
 
@@ -94,6 +123,7 @@ make test             # full suite, all green
 python -m app.cli scan            # ranked candidates in the terminal
 python -m app.cli backtest        # simulated backtest (or --historical)
 python -m app.cli providers       # configured provider status
+python run_market_scan.py         # multi-agent research scan + ranked report
 make run                          # FastAPI + dashboard at http://localhost:8000/
 ```
 

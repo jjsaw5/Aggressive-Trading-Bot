@@ -1,0 +1,259 @@
+# Multi-agent research methodology — the single home for every tunable.
+#
+# CLAUDE.md: "Do not bury methodology constants throughout the code." Nothing in
+# app/multiagent/ may hardcode a threshold that belongs here. tests/multiagent/
+# test_config.py asserts the weights sum to 100 and that every rule referenced by
+# the scoring engine has an entry below.
+#
+# This file does NOT govern the frozen short-duration model
+# (`sd-scoring-2026.08-v4.1`). That model lives in app/shortduration/ and is
+# untouched by this subsystem. See docs/multiagent/SCORING.md.
+
+version: "ma-methodology-2026.08-v1"
+
+run:
+  # Agent 2 emits at most this many candidates per run (spec: "NO MORE THAN 10").
+  max_candidates: 10
+  # Candidates scoring at or above this reach the ranked section of the report.
+  min_score_to_rank: 60.0
+  # Ranked trades shown in the report body. Rejected candidates are ALWAYS
+  # persisted regardless of this number.
+  max_ranked_in_report: 10
+  # Per-symbol wall-clock budget for evidence collection.
+  provider_timeout_seconds: 25.0
+  # Concurrent symbols during validation fan-out.
+  validation_concurrency: 6
+  # Reference symbols used for market-alignment measurement.
+  market_reference_symbols: ["SPY", "QQQ", "IWM"]
+  # Seed universe for macro/market context. Agent 2 may propose tickers outside
+  # this list; they are still validated against live provider data.
+  context_symbols: ["SPY", "QQQ", "IWM", "VIX"]
+  # Discovery universe offered to Agent 2 as the candidate pool.
+  discovery_universe:
+    ["AAPL", "MSFT", "NVDA", "AMD", "GOOGL", "AMZN", "META", "TSLA", "AVGO",
+     "MU", "SMCI", "PLTR", "COIN", "JPM", "BAC", "XOM", "CVX", "LLY", "UNH",
+     "COST", "WMT", "NFLX", "CRM", "ORCL", "INTC", "QCOM", "ARM", "MRVL",
+     "SPY", "QQQ", "IWM", "XLE", "XLF", "XLK", "XLV", "SMH"]
+
+strategies:
+  # Milestone 1 allow-list. Anything absent is rejected by the rules engine even
+  # if an agent proposes it.
+  allowed:
+    - long_call
+    - long_put
+    - bull_call_spread
+    - bear_put_spread
+
+# ---------------------------------------------------------------------------
+# Scoring — 8 categories, 100 points. Weights are the maximum each category can
+# contribute. Individual rule points inside a category must sum to that maximum.
+# ---------------------------------------------------------------------------
+scoring:
+  weights:
+    catalyst_strength: 15
+    market_alignment: 10
+    technical_setup: 20
+    options_flow: 15
+    iv_greeks: 10
+    contract_liquidity: 10
+    risk_reward: 15
+    data_quality: 5
+
+  # A category whose inputs are entirely missing ABSTAINS: its weight leaves the
+  # denominator rather than scoring zero. If total abstained weight exceeds this
+  # fraction of 100, the candidate is hard-rejected for insufficient coverage
+  # (see hard_rules.min_input_coverage).
+  abstain_is_not_zero: true
+
+  catalyst_strength:
+    # points awarded when the catalyst is a confirmed, dated, scheduled event
+    confirmed_scheduled: 5
+    # a catalyst evidenced by a retrieved news item from a reputable source
+    sourced_news: 4
+    # catalyst lands inside the expected holding period
+    timing_within_horizon: 3
+    # importance as classified by the agent AND corroborated by evidence count
+    high_importance: 3
+    # penalties
+    stale_news_penalty: -3        # newest supporting item older than max_age_days
+    already_priced_in_penalty: -4 # underlying already moved > priced_in_move_pct
+    max_news_age_days: 5
+    priced_in_move_pct: 6.0       # % move since the catalyst published
+    corroboration_min_items: 2.0  # independent evidence items for full credit
+
+  market_alignment:
+    spy_aligned: 4
+    qqq_aligned: 2
+    sector_aligned: 2
+    relative_strength: 2
+    fighting_tape_penalty: -4     # direction opposes both SPY and QQQ trend
+    relative_strength_lookback_days: 20
+    # |20d return| below this is treated as "no trend" -> neutral, not aligned
+    trend_flat_threshold_pct: 1.0
+
+  technical_setup:
+    trend_aligned: 5
+    above_below_key_ma: 4         # price on the correct side of the 20/50 SMA
+    relative_volume: 3
+    momentum_confirmation: 3
+    room_to_target: 3             # distance to the nearest opposing level
+    atr_supports_move: 2
+    crowded_level_penalty: -4     # within crowded_level_atr of opposing level
+    extended_penalty: -3          # > extended_atr_multiple ATR from the 20 SMA
+    rel_volume_strong: 1.3
+    momentum_agreement_strong: 0.60   # share of recent closes moving with the thesis
+    momentum_agreement_floor: 0.50    # a coin flip earns nothing
+    atr_pct_min: 1.0                  # below this the daily range is too small to matter
+    atr_pct_max: 8.0                  # above this the tape is disorderly, not tradable
+    momentum_lookback_days: 5
+    crowded_level_atr: 0.5
+    extended_atr_multiple: 2.5
+    atr_period: 14
+
+  options_flow:
+    directional_agreement: 5      # net premium sign matches candidate direction
+    ask_side_aggression: 3
+    sweep_presence: 2
+    size_vs_open_interest: 3      # print size > OI => likely opening
+    concentration: 2              # flow concentrated in coherent strikes/expiries
+    contradiction_penalty: -5     # net premium opposes the candidate direction
+    min_premium_usd: 50000.0      # below this the category abstains (not zero)
+    ask_side_share_strong: 0.60
+    net_premium_ratio_strong: 0.60
+    concentration_strong: 0.50        # top-3 strikes hold a majority of premium
+    concentration_floor: 0.25         # premium spread evenly over strikes earns nothing
+    size_over_oi_ratio: 1.0
+    lookback_hours: 24
+
+  iv_greeks:
+    iv_rank_favorable: 4          # long premium wants LOW iv rank
+    term_structure_ok: 2
+    delta_in_band: 2
+    theta_tolerable: 2
+    iv_elevated_penalty: -4
+    iv_rank_low: 0.35             # favorable for debit strategies
+    iv_rank_high: 0.70            # elevated
+    # daily theta as a share of debit paid, over the expected hold
+    theta_burden_max: 0.35
+
+  contract_liquidity:
+    spread_tight: 4
+    open_interest: 3
+    volume: 3
+    spread_pct_excellent: 0.05
+    spread_pct_good: 0.10
+    open_interest_good: 1000
+    open_interest_ok: 250
+    volume_good: 500
+    volume_ok: 50
+
+  risk_reward:
+    reward_to_risk: 6
+    breakeven_reachable: 4        # breakeven move <= expected move
+    within_risk_budget: 3
+    invalidation_defined: 2
+    rr_excellent: 3.0
+    rr_good: 2.0
+    rr_minimum: 1.5
+    # breakeven move as a fraction of the implied expected move over the hold
+    breakeven_over_expected_move_max: 0.80
+
+  data_quality:
+    providers_agree: 2            # independent price sources within tolerance
+    data_fresh: 2
+    full_coverage: 1
+    price_disagreement_pct: 1.0   # cross-provider tolerance
+    max_quote_age_seconds: 900
+    # below this fraction of scoring rules having inputs, the bonus is withheld
+    coverage_for_bonus: 0.90
+
+classification:
+  # Configurable bands. Labels are display-only; `calibration_status` travels
+  # alongside and reads UNCALIBRATED until a feature clears out-of-sample
+  # validation (docs/PRODUCT_STANCE.md).
+  bands:
+    - { min: 90.0, label: "EXCEPTIONAL",     name: "Exceptional" }
+    - { min: 80.0, label: "HIGH_CONVICTION", name: "High conviction" }
+    - { min: 70.0, label: "GOOD",            name: "Good candidate" }
+    - { min: 60.0, label: "WATCHLIST",       name: "Watchlist / conditional" }
+    - { min: 0.0,  label: "REJECT",          name: "Reject" }
+
+# ---------------------------------------------------------------------------
+# Hard rejection rules. A failure here is terminal: no score in any other
+# category can override it. Evaluated BEFORE and independently of scoring.
+# ---------------------------------------------------------------------------
+hard_rules:
+  max_spread_pct: 0.15            # (ask-bid)/mark on any leg
+  min_open_interest: 100
+  min_volume: 10
+  min_reward_to_risk: 1.2
+  # Hard risk ceiling. Mirrors docs/RISK_POLICY.md ($100 max defined risk per
+  # trade). Never raise this without amending that document.
+  max_defined_risk_usd: 100.0
+  max_contracts: 20
+  # Earnings inside this many days is prohibited unless the candidate's primary
+  # catalyst IS the earnings event and the strategy is defined-risk.
+  earnings_blackout_days: 2
+  earnings_blackout_applies_to_earnings_plays: false
+  # Theta over the expected hold may not exceed this share of the debit paid.
+  max_theta_burden: 0.60
+  # Below this fraction of total scoring weight having live inputs, reject.
+  min_input_coverage: 0.60
+  # Cross-provider underlying price disagreement above this is unreconcilable.
+  max_provider_price_disagreement_pct: 2.0
+  # A candidate whose catalyst cites no verifiable evidence is rejected.
+  require_catalyst_evidence: true
+  # Quotes older than this at scoring time are unusable.
+  max_quote_age_seconds: 1800
+
+# ---------------------------------------------------------------------------
+# Contract selection
+# ---------------------------------------------------------------------------
+contracts:
+  preferred_dte_min: 7
+  preferred_dte_max: 45
+  # Long single options: target delta band.
+  long_delta_min: 0.35
+  long_delta_max: 0.65
+  # Vertical spreads: long-leg delta band, short leg placed by width.
+  spread_long_delta_min: 0.40
+  spread_long_delta_max: 0.70
+  spread_short_delta_min: 0.15
+  spread_short_delta_max: 0.40
+  # Candidate spread widths in ABSOLUTE DOLLARS.
+  spread_widths: [2.5, 5.0, 10.0]
+  # ...supplemented by these multiples of the chain's own strike increment.
+  # Absolute widths alone break at both ends of the price range: $2.50 is a
+  # 12.5% spread on a $20 stock (short leg below the delta band, so no spread is
+  # ever built) and barely one strike on a $900 one. Strike-relative widths
+  # adapt to the grid the underlying actually trades on.
+  spread_width_strike_steps: [1, 2, 4]
+  # Consider at most this many expirations either side of the target DTE.
+  max_expirations_considered: 4
+  # Contracts proposed per candidate (best first).
+  max_proposals_per_candidate: 2
+
+# ---------------------------------------------------------------------------
+# Event-risk windows: candidates overlapping these get a documented warning.
+# ---------------------------------------------------------------------------
+event_risk:
+  high_impact_econ_window_hours: 24
+  fomc_window_hours: 48
+  warn_only_events: ["retail_sales", "consumer_confidence", "ism"]
+  blocking_events: []            # none block outright in Milestone 1
+
+# ---------------------------------------------------------------------------
+# Agent behaviour
+# ---------------------------------------------------------------------------
+agents:
+  # Where the shared role definitions live. These same files are Claude Code
+  # subagent definitions.
+  definitions_dir: ".claude/agents"
+  market_intelligence: "market-intelligence"
+  opportunity_generator: "opportunity-generator"
+  trade_validator: "trade-validator"
+  risk_reviewer: "risk-reviewer"
+  # Hard cap on evidence items handed to an agent, newest/most-important first.
+  max_evidence_items: 120
+  # An agent claim citing an unknown evidence id is DROPPED, not trusted.
+  drop_unreferenced_claims: true

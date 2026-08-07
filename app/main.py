@@ -18,6 +18,7 @@ from app.api.routes import (
     dashboard,
     health,
     metrics,
+    multiagent,
     outcomes,
     paper,
     positions,
@@ -80,4 +81,5 @@ app.include_router(positions.router)
 app.include_router(account.router)
 app.include_router(short_duration.router)
 app.include_router(research.router)
+app.include_router(multiagent.router)
 app.include_router(dashboard.router)

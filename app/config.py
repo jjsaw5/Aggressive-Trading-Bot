@@ -246,6 +246,23 @@ class Settings(BaseSettings):
     # is better, so the polarity is inverted relative to POP.
     display_cost_drag_good: float = 0.15
     display_cost_drag_bad: float = 0.30
+
+    # --- Trade evaluator (on-demand grading of a HUMAN-proposed trade) --------
+    # Its own version, deliberately NOT `scoring_model_version`. The evaluator
+    # calls the frozen scorer's neighbours read-only but produces a different
+    # artifact answering a different question, and borrowing the frozen version
+    # would make a change to the evaluator look like a change to the shipped
+    # scoring model — exactly the confusion the freeze exists to prevent.
+    # Bumping this does NOT end the capture window; the freeze controls in
+    # `tests/test_scoring_freeze.py` and `tests/test_scoring_golden.py` are the
+    # authority on that and are untouched by anything under this heading.
+    trade_eval_version: str = "trade-eval-2026.08-v1"
+    # Persist evaluations to their OWN table for later validation. Never writes
+    # to `decision_snapshots` — the capture corpus has been polluted twice by
+    # code that persisted as a side effect, and `tests/test_trade_evaluator_
+    # isolation.py` pins the separation.
+    trade_eval_persist: bool = True
+
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {
             "price_structure": 22, "market_alignment": 15, "relvol_momentum": 15,

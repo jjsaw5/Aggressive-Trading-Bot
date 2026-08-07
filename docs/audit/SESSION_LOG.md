@@ -818,3 +818,121 @@ Both exclusions are counted and surfaced as scorecard warnings.
 - Credential rotation still incomplete (owner deferral, Entry 4).
 
 ---
+
+## Entry 8 — 2026-08-07 — Trade evaluator: grade a trade the human proposes
+
+### What changed and why
+
+A new surface answering a different question from the scanner. The scanner ranks
+what fits **this account** ($100/trade, $300 heat, 4 positions). The evaluator
+takes a ticker, a structure and a duration — optionally strikes — and grades the
+**trade**, with the account deliberately out of scope.
+
+This is a closer fit to `docs/PRODUCT_STANCE.md` than the scanner is. The stance
+says *"the thesis is the human's; the tool makes it cheaper to evaluate."* That
+is this feature's job description; the scanner generates theses, this evaluates
+the owner's.
+
+| Added | Purpose |
+|---|---|
+| `app/domain/evaluation.py` | request/result models; sentinels; the grade's disclaimer as a field, not a UI string |
+| `app/engine/trade_evaluator.py` | the rubric — six dimensions, horizon resolution, structure pricing, selector contrast |
+| `app/research/evaluate.py` | provider fan-out (chain, IV, earnings, quote), per-section error isolation |
+| `POST /research/evaluate` | the endpoint; the ONLY writer |
+| `trade_evaluations` table + migration `0007` | quarantined persistence |
+| `docs/TRADE_EVALUATOR.md` | the rubric written down, including what it does NOT claim |
+| Dashboard → Evaluate → Trade Evaluator | the screen |
+| `tests/test_trade_evaluator.py` (44), `tests/test_trade_evaluator_isolation.py` (10) | rubric + the control |
+
+**Reuse over rebuild.** The analysis primitives already existed as standalone
+functions (`quant/probability.py`, `quant/analytics.py`, `engine/iv_context.py`,
+`engine/liquidity.py`, `engine/catalysts.py`) and the concurrent per-symbol
+fan-out pattern was already proven in `app/research/symbol.py`. The new code is
+the rubric and the isolation, not the plumbing.
+
+### Decisions taken, with reasoning
+
+1. **The grade is of CONSTRUCTION, not outcome.** The conviction gate is RED, so
+   nothing here may predict profit. What needs no calibration to be true: cost
+   arithmetic, odds at the market's own implied vol, execution cost, IV context,
+   scheduled-event conflicts. `grade_claim` ships as a model field so the caveat
+   travels with the number to every consumer, not just to the one screen that
+   currently renders it.
+2. **Unassessed dimensions score `None`, not 0.0.** A missing feed that silently
+   contributed zero would be indistinguishable from a measured failure — CLAUDE.md
+   §4. The composite renormalizes over assessed dimensions and the report always
+   states the count, because a B over four of six is a different claim from a B
+   over six.
+3. **Any single `fail` caps the grade at D.** The far-OTM lottery ticket is why:
+   verified live, an 800/805 call spread scored **strong** on cost drag (13% of
+   width, 6.5:1 R:R) and **failed** on probability at 12%. That is exactly the
+   trap the pre-Amendment-2 fit function fell into, and a plain average returns a
+   B for it.
+4. **`trade_eval_version`, NOT `scoring_model_version`.** The evaluator calls the
+   frozen scorer's neighbours read-only but produces a different artifact.
+   Borrowing the frozen version would make an evaluator change look like a change
+   to the shipped model. Guarded-path diff against `935160d` is empty and all
+   three freeze controls pass unchanged; **the capture window is unaffected**.
+5. **Persistence is quarantined in its own table.** A user can evaluate the same
+   bad idea forty times; counting those as decisions would move the base rate the
+   conviction gate is measured against. `calibration.py` does not read the table.
+6. **The account limits are removed in two places, one of them non-obvious.**
+   `strategy_selector.py:50` is the visible one. The subtle one is
+   `OptionLiquidityConfig.max_mid_price = 25.0`, commented *"keeps 1-lot
+   affordable for small acct"* — a budget constraint wearing a liquidity costume.
+   Genuine liquidity floors stay.
+7. **The horizon resolves to a LISTED expiry and says which.** "3d" on a Thursday
+   and "3d" on a Monday are different contracts. An unreadable horizon returns a
+   gap with a reason rather than a default, because a default would silently
+   evaluate a different trade from the one asked about.
+
+### DEVIATIONS
+
+**Not None.** One, and it is a repeat:
+
+1. **A third ad-hoc run reached production.** Verifying the endpoint end to end,
+   I started a local server with `DATABASE_URL` pointed at a scratch sqlite file.
+   `.env` is loaded automatically and `TURSO_DATABASE_URL` takes precedence over
+   `DATABASE_URL` in `app/db/session.py`, so the server connected to the
+   production warehouse. `create_all` auto-created `trade_evaluations` there and
+   **6 mock-data evaluations were written**.
+   **Purged**: all 6 by id; verified 0 remaining. `decision_snapshots` (61,331),
+   `short_duration_candidates` (1,629) and `candidate_state_transitions` (5,764)
+   were unchanged — the isolation design contained the blast radius to the one
+   quarantined table, which is the strongest evidence available that the design
+   is right. Correct local invocation is
+   `TURSO_DATABASE_URL= TURSO_AUTH_TOKEN= DATABASE_URL=sqlite:///...`, and the
+   verification was re-run that way with the isolation confirmed behaviourally
+   (2 evaluation rows, 0 in every signal table).
+   **This is the same class as Entry 7's deviation and the 84-row case before
+   it — three incidents from the same root cause.** `.env` silently outranks the
+   override a developer reaches for. That is an environment-safety gap, not three
+   independent mistakes, and it remains **unfixed**. The cheapest real fix is a
+   startup guard that refuses a non-production process against a Turso URL unless
+   an explicit opt-in is set.
+
+**Also fixed, pre-existing and unrelated to this feature:**
+`tests/test_trade_management.py::test_quick_add_accepts_an_inline_invalidation`
+was failing on clean `main` (verified by stashing this work). It asserted a
+weeks-out expiry classifies as `swing` but wrote the expiry as the literal
+`8/21`, which was comfortably swing when authored and became a 14-DTE `theta`
+position as the calendar advanced past `THETA_MAX_DTE = 15`. A date-relative
+assertion pinned to an absolute date fails on a schedule rather than on a defect.
+The expiry is now derived from `date.today()`, so the test asserts the classifier
+instead of the calendar. The product code was correct; only the test moved.
+
+Also noted, not a deviation: two verification steps initially reported false
+passes and were redone — a `node --check` on a process substitution that printed
+"OK" from the shell rather than from node, and a budget-blindness test whose
+fixture contained no contract the affordability cap would have excluded. Both
+were caught by guards written into the checks themselves.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1` **unchanged**; guarded-path diff vs `935160d`
+  empty; freeze controls green. Evaluator ships at `trade-eval-2026.08-v1`.
+- `docs/FREEZE_POINT.md` still carries the declared "Pending freeze point" block:
+  the v4.1 merge commit `f9f98f0` now exists but the tag
+  `freeze/sd-scoring-2026.08-v4.1` is **not published**. Blocked on the owner —
+  the pushing credential is scoped to `refs/heads/*`.
+- Credential rotation still incomplete (owner deferral, Entry 4).

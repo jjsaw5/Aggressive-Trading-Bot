@@ -15,7 +15,7 @@ stance depends on:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -467,3 +467,169 @@ def test_a_bad_proposed_structure_still_returns_the_alternative() -> None:
     assert ev.proposed is None
     assert "no listed" in ev.errors["proposed"]
     assert ev.alternative is not None and ev.graded == "alternative"
+
+
+# --- The two joins the fetch path must not skip ------------------------------
+# Both were found against LIVE data after the feature shipped, so both get a
+# regression test rather than a comment.
+def test_the_horizon_probe_reaches_short_dated_expiries() -> None:
+    """`get_option_chain` centres on 30 DTE, so on a daily-expiry name the near
+    expiries are sorted out of the window entirely — SPY's shortest reachable was
+    7 DTE, which made the evaluator unable to price a 0DTE trade. The probe
+    window must cover the requested horizon, not the 30-day default."""
+    from app.research.evaluate import horizon_probe_dates
+
+    for horizon, want in (("0d", AS_OF), ("3d", AS_OF + timedelta(days=3))):
+        dates = horizon_probe_dates(horizon, as_of=AS_OF)
+        assert dates, f"no probe window for {horizon}"
+        assert want in dates, f"{horizon} probe {dates} misses {want}"
+        assert min(dates) >= AS_OF, "probed an expiry in the past"
+
+
+def test_an_explicit_date_is_probed_directly() -> None:
+    from app.research.evaluate import horizon_probe_dates
+
+    dates = horizon_probe_dates("2026-09-18", as_of=AS_OF)
+    assert date(2026, 9, 18) in dates
+
+
+def test_an_unreadable_horizon_probes_nothing() -> None:
+    """Guessing a window for a horizon nobody asked for would spend a provider
+    request per date on a trade that was never specified."""
+    from app.research.evaluate import horizon_probe_dates
+
+    assert horizon_probe_dates("whenever", as_of=AS_OF) == []
+    assert horizon_probe_dates("", as_of=AS_OF) == []
+
+
+def test_the_probe_window_is_bounded() -> None:
+    """Each candidate date costs a provider request."""
+    from app.research.evaluate import _MAX_PROBE_DATES, horizon_probe_dates
+
+    for h in ("0d", "3d", "45d", "6m"):
+        assert len(horizon_probe_dates(h, as_of=AS_OF)) <= _MAX_PROBE_DATES
+
+
+def test_merging_chains_unions_without_duplicating() -> None:
+    from app.research.evaluate import merge_chains
+
+    primary = _chain()
+    extra = _chain()
+    merged = merge_chains(primary, extra)
+    assert len(merged.contracts) == len(primary.contracts), "identical chains duplicated"
+    assert merged.underlying_price == primary.underlying_price
+
+
+def test_merging_keeps_contracts_the_default_chain_lacks() -> None:
+    """The whole point: the near-dated fetch adds expiries the default cannot see."""
+    from app.research.evaluate import merge_chains
+
+    primary = _chain()
+    near = _chain()
+    only = date(2026, 8, 11)
+    for c in near.contracts:
+        c.expiration = only
+    merged = merge_chains(primary, near)
+    assert only in {c.expiration for c in merged.contracts}
+    assert len(merged.contracts) > len(primary.contracts)
+
+
+def test_a_missing_near_chain_leaves_the_default_intact() -> None:
+    from app.research.evaluate import merge_chains
+
+    primary = _chain()
+    assert merge_chains(primary, None) is primary
+    assert merge_chains(None, primary) is primary
+
+
+def test_iv_rank_is_built_from_history_not_read_off_the_provider() -> None:
+    """`get_iv_context` supplies only the spot IV level; rank comes from joining
+    an IV history. Probed live, 8 of 8 symbols had a null provider rank and a
+    derivable one — so the evaluator scored NA_no_data on a dimension it could
+    have assessed. Both scan paths already do this join; this pins that the
+    evaluator's own inputs do too."""
+    from app.domain.market import Candle, PriceHistory
+    from app.domain.options import IVHistory
+    from app.engine.iv_context import build_iv_context
+
+    hist = IVHistory(symbol="AAA", ivs=[0.2 + i * 0.002 for i in range(60)], as_of=NOW)
+    px = PriceHistory(symbol="AAA", candles=[
+        Candle(ts=NOW, open=100, high=101, low=99, close=100 + i * 0.1, volume=1_000)
+        for i in range(60)
+    ])
+    built = build_iv_context("AAA", 0.30, NOW, iv_history=hist, price_history=px)
+    assert built.iv_rank is not None
+    # Modelled is labeled: which derivation produced the rank must be recorded.
+    assert built.iv_rank_source in ("iv_history", "hv_proxy")
+
+
+def test_the_iv_dimension_scores_once_rank_is_present() -> None:
+    """The payoff: with rank populated the dimension stops reporting a gap."""
+    before = dim_iv_context(IVContext(symbol="AAA", iv30=0.30, iv_rank=None, as_of=NOW))
+    after = dim_iv_context(IVContext(symbol="AAA", iv30=0.30, iv_rank=0.45,
+                                     iv_rank_source="iv_history", as_of=NOW))
+    assert before.verdict == Verdict.NOT_ASSESSED and before.score is None
+    assert after.verdict != Verdict.NOT_ASSESSED and after.score is not None
+
+
+def test_time_left_is_fractional_on_expiration_day() -> None:
+    """0DTE reachability is worthless if the heaviest dimension goes blank on it.
+
+    `prob_finish_above` returns None for days<=0 by design, so whole-day
+    arithmetic reported NO probability for every 0DTE structure the moment near
+    expiries became reachable.
+    """
+    from zoneinfo import ZoneInfo
+
+    from app.engine.trade_evaluator import years_to_expiry_days
+
+    et = ZoneInfo("America/New_York")
+    mid_session = datetime(2026, 8, 10, 11, 0, tzinfo=et)
+    left = years_to_expiry_days(date(2026, 8, 10), as_of=date(2026, 8, 10), now=mid_session)
+    assert 0 < left < 1
+    assert left == pytest.approx(5 / 24, abs=0.01)  # 11:00 -> 16:00 ET
+
+
+def test_after_the_close_there_is_genuinely_no_time_left() -> None:
+    from zoneinfo import ZoneInfo
+
+    from app.engine.trade_evaluator import years_to_expiry_days
+
+    after = datetime(2026, 8, 10, 16, 30, tzinfo=ZoneInfo("America/New_York"))
+    assert years_to_expiry_days(date(2026, 8, 10), as_of=date(2026, 8, 10), now=after) == 0.0
+
+
+def test_non_expiry_days_are_unchanged_whole_days() -> None:
+    """The fraction applies ONLY to the expiration session; every other horizon
+    keeps the whole-day arithmetic the rest of the rubric was built on."""
+    from app.engine.trade_evaluator import years_to_expiry_days
+
+    assert years_to_expiry_days(date(2026, 8, 14), as_of=date(2026, 8, 10), now=NOW) == 4.0
+    assert years_to_expiry_days(date(2026, 8, 10), as_of=date(2026, 8, 14), now=NOW) == -4.0
+
+
+def test_a_zero_dte_structure_now_reports_a_probability() -> None:
+    """The payoff, end to end."""
+    from zoneinfo import ZoneInfo
+
+    mid = datetime(2026, 8, 7, 11, 0, tzinfo=ZoneInfo("America/New_York"))
+    s, err = price_structure(
+        chain=_chain(), structure=StructureType.CALL_DEBIT_SPREAD,
+        expiration=date(2026, 8, 7), long_strike=100.0, short_strike=102.0,
+        as_of=AS_OF, now=mid,
+    )
+    assert err == "" and s is not None and s.dte == 0
+    assert s.probability_of_profit is not None and 0.0 < s.probability_of_profit < 1.0
+
+
+def test_a_zero_dte_structure_after_the_close_reports_no_probability() -> None:
+    """Absent stays absent: past the close there is no time left to model."""
+    from zoneinfo import ZoneInfo
+
+    after = datetime(2026, 8, 7, 17, 0, tzinfo=ZoneInfo("America/New_York"))
+    s, _ = price_structure(
+        chain=_chain(), structure=StructureType.CALL_DEBIT_SPREAD,
+        expiration=date(2026, 8, 7), long_strike=100.0, short_strike=102.0,
+        as_of=AS_OF, now=after,
+    )
+    assert s is not None and s.probability_of_profit is None

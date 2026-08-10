@@ -936,3 +936,89 @@ were caught by guards written into the checks themselves.
   `freeze/sd-scoring-2026.08-v4.1` is **not published**. Blocked on the owner —
   the pushing credential is scoped to `refs/heads/*`.
 - Credential rotation still incomplete (owner deferral, Entry 4).
+
+## Entry 9 — 2026-08-10 — HIMS research; three evaluator defects found by live use
+
+### What changed and why
+
+Owner asked whether there was a HIMS trade around tonight's earnings. Answering
+it against live FMP + Unusual Whales data exercised yesterday's trade evaluator
+on a real name for the first time and surfaced three defects in it. All three
+are fixed here; **none touches a guarded path** and the guarded-path diff against
+`935160d` is empty with all freeze controls green.
+
+| Defect | Effect | Fix |
+|---|---|---|
+| IV rank never joined | IV dimension reported `NA_no_data` on **8 of 8** symbols probed, while a rank was derivable from 251 history points | `gather_inputs` now builds the context through `build_iv_context`, the same join both scan paths use |
+| Chain fetch centred on 30 DTE | **SPY's shortest reachable expiry was 7 DTE** — the evaluator could not price the 0DTE trades it is most often asked about | horizon resolved first, its neighbourhood fetched via `get_option_chain_for_expirations`, unioned with the default chain (probe bounded to 8 dates) |
+| Whole-day time to expiry | `prob_finish_above` returns None for `days<=0`, so **every** 0DTE structure reported no probability — the heaviest dimension blank on the target use case | `years_to_expiry_days` returns the fraction of the session remaining on expiration day; 0.0 after the close, whole days otherwise |
+
+Verified live: SPY 0DTE 772/773 went from unpriceable → **grade C, 5/6, POP
+0.4665**; HIMS went from 5/6 → **6/6** with `iv_rank=0.4468` from `iv_history`.
+
+### Decisions taken, with reasoning
+
+1. **The provider's 30-DTE centring was left alone.** `_chain_expirations` lives
+   in `app/providers/unusual_whales/client.py`, a guarded path, and changing it
+   would change what the SCANNER sees — a model change under the freeze. The
+   evaluator instead composes existing public provider methods. Cost: extra
+   requests per evaluation, bounded at 8.
+2. **I initially mis-diagnosed the IV-rank gap as a scorer defect and said so.**
+   `iv_rank` IS a scored field (`scoring/components.py:123` abstains without it;
+   `data_quality.py:41` gates on it), and the raw provider returns null for every
+   symbol — which looked exactly like FINDING_01. It is not: `detection.py:417`
+   and `candidate_builder.py:117` both join an IV history through
+   `build_iv_context`, so production scoring has always had rank. **The gap was
+   entirely mine**, in the evaluator's own fetch path. Corrected to the owner
+   before any change was made. The near-miss is worth recording: the symptom of a
+   real freeze-ending finding and the symptom of a new consumer skipping a join
+   are identical from the provider call alone.
+3. **The 0DTE fractional-day fix was in scope, not scope creep.** Fix #2's stated
+   purpose was "the evaluator can price a 0DTE trade". Delivering reachability
+   while the probability dimension stayed blank would have satisfied the letter
+   and not the purpose.
+
+### Research findings recorded (no trade taken)
+
+- Earnings **2026-08-10 pm**, confirmed by both FMP and Robinhood — the owner's
+  premise had it later in the week.
+- Term structure steeply backwardated: **8/14 129% / 8/21 107% / 9/18 91%**,
+  `term_structure_slope −0.455`. Implied move 14.2%; our feed reproduced the
+  owner's Robinhood straddle to the cent ($4.41).
+- Six prior prints: mean |D+1| move **11.8%**, median 13.2% vs 14.2% implied.
+  **4 of 6 continued the D+1 direction through D+5.** n=6 on one symbol —
+  anecdote-grade, explicitly not evidence, and recorded as a hypothesis only.
+- Flow gave no directional edge: $2.01M, 26 calls / 24 puts, **zero sweeps**.
+- Every priceable structure graded **C or D**; the best carried a **40%
+  round-trip spread tax**. Recommendation was to take no position into the print,
+  which the owner accepted.
+- `docs/VRP_STAGE2_RESULT.md` already answers the short-vol side: execution cost
+  ≈$13.6/trade exceeds the harvestable premium. The earnings-specific
+  pre-registration (`docs/earnings_vrp_preregistration.md`, registered
+  2026-07-28) remains unrun — flagged that a discretionary trade tonight would
+  be trading ahead of it.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **I told the owner the IV-rank gap looked like a scorer-level defect before
+   confirming it.** The claim was wrong — the scanner performs the join and the
+   scorer has always received rank. I corrected it in the next message and before
+   touching any code, but the sequencing was backwards: the diagnosis should have
+   preceded the report. Recorded because "report gaps, don't approximate them"
+   applies to my own findings too, and an overstated finding against a frozen
+   scorer is expensive noise.
+
+Also noted, not a deviation: all research ran with `TURSO_DATABASE_URL=` and
+`TURSO_AUTH_TOKEN=` blanked, against a scratch sqlite file, following Entry 8's
+incident. Nothing was written to production.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1` unchanged; guarded-path diff vs `935160d`
+  empty; all freeze controls green. Evaluator `trade-eval-2026.08-v1`.
+- `docs/FREEZE_POINT.md` still carries its declared pending block — the v4.1 tag
+  is still unpublished (owner action, `refs/heads/*`-scoped credential).
+- Credential rotation still incomplete (owner deferral, Entry 4).
+- Environment-safety guard from Entry 8 still **unfixed**.

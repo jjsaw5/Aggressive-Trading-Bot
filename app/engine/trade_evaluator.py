@@ -196,6 +196,35 @@ def _marketable(long_leg: OptionContract, short_leg: OptionContract | None) -> f
     return round(long_leg.ask - short_leg.bid, 4)
 
 
+def years_to_expiry_days(expiration: date, *, as_of: date, now: datetime | None = None) -> float:
+    """Time to expiry in DAYS, fractional on the expiration day itself.
+
+    Whole days is right for every horizon except the one the user asks about
+    most. `prob_finish_above` returns None for `days <= 0` — deliberately, so a
+    degenerate input degrades rather than lies — which meant every 0DTE
+    structure reported no probability at all once near-dated expiries became
+    reachable. The remaining fraction of the session is a real measurement, and
+    the model handles it fine (0.3 days -> 0.493 on an ATM strike).
+
+    After the close on expiration day there is genuinely no time left, and 0.0
+    flows through to a `None` probability — which is the honest answer.
+    """
+    whole = (expiration - as_of).days
+    if whole != 0 or now is None:
+        return float(whole)
+    try:
+        from zoneinfo import ZoneInfo
+
+        now_et = now.astimezone(ZoneInfo("America/New_York"))
+    except Exception:  # noqa: BLE001 - no tz database: fall back to whole days
+        return 0.0
+    close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    remaining_h = (close - now_et).total_seconds() / 3600.0
+    if remaining_h <= 0:
+        return 0.0
+    return round(remaining_h / 24.0, 4)
+
+
 def price_structure(
     *,
     chain: OptionChain,
@@ -204,6 +233,7 @@ def price_structure(
     long_strike: float,
     short_strike: float | None,
     as_of: date,
+    now: datetime | None = None,
 ) -> tuple[PricedStructure | None, str]:
     """Price a specific structure off the live chain. Returns (priced, error)."""
     otype = OptionType.CALL if structure.is_bullish else OptionType.PUT
@@ -243,10 +273,13 @@ def price_structure(
     spot = chain.underlying_price
     iv = long_leg.implied_volatility
     dte = long_leg.dte(as_of)
+    # Fractional on expiration day — see `years_to_expiry_days`. Whole days
+    # would report NO probability at all for every 0DTE structure.
+    days_left = years_to_expiry_days(expiration, as_of=as_of, now=now)
     pop = None
-    if spot and spot > 0 and iv and iv > 0 and dte >= 0:
+    if spot and spot > 0 and iv and iv > 0 and days_left > 0:
         pop = probability_of_profit(
-            spot=spot, breakeven=breakeven, iv=iv, days=float(dte),
+            spot=spot, breakeven=breakeven, iv=iv, days=days_left,
             bullish=structure.is_bullish,
         )
 
@@ -264,7 +297,8 @@ def price_structure(
 
 
 def build_alternative(
-    *, chain: OptionChain, structure: StructureType, expiration: date, as_of: date
+    *, chain: OptionChain, structure: StructureType, expiration: date, as_of: date,
+    now: datetime | None = None,
 ) -> PricedStructure | None:
     """What the platform's own selector would pick at this expiry, unconstrained.
 
@@ -289,7 +323,7 @@ def build_alternative(
         priced, _ = price_structure(
             chain=chain, structure=structure, expiration=expiration,
             long_strike=choice.long_leg.strike, short_strike=choice.short_leg.strike,
-            as_of=as_of,
+            as_of=as_of, now=now,
         )
         return priced
 
@@ -298,7 +332,7 @@ def build_alternative(
         return None
     priced, _ = price_structure(
         chain=chain, structure=structure, expiration=expiration,
-        long_strike=pick.contract.strike, short_strike=None, as_of=as_of,
+        long_strike=pick.contract.strike, short_strike=None, as_of=as_of, now=now,
     )
     return priced
 
@@ -802,14 +836,15 @@ def evaluate(
     if long_strike is not None:
         proposed, err = price_structure(
             chain=inputs.chain, structure=structure, expiration=expiration,
-            long_strike=long_strike, short_strike=short_strike, as_of=as_of,
+            long_strike=long_strike, short_strike=short_strike, as_of=as_of, now=now,
         )
         if err:
             ev.errors["proposed"] = err
         ev.proposed = proposed
 
     ev.alternative = build_alternative(
-        chain=inputs.chain, structure=structure, expiration=expiration, as_of=as_of
+        chain=inputs.chain, structure=structure, expiration=expiration, as_of=as_of,
+        now=now,
     )
     if ev.alternative is None:
         ev.errors["alternative"] = (

@@ -187,6 +187,34 @@ not the same claim as a B over six.
 
 ---
 
+## 5a. Two joins the fetch path must not skip
+
+Both were found against live data after the feature shipped; both now carry
+regression tests.
+
+**IV rank is BUILT, not fetched.** `get_iv_context` returns only the spot IV
+level — probed live, **8 of 8 symbols had a null provider rank** and a derivable
+one from 251 history points. Rank and percentile come from joining an IV history
+through `build_iv_context`, which both scan paths
+(`shortduration/detection.py`, `engine/candidate_builder.py`) already do. The
+first version of `app/research/evaluate.py` did not, so the IV dimension
+reported `NA_no_data` on every symbol while the data sat one call away. This was
+*not* a scorer defect — the scanner was fine; the evaluator skipped the join.
+
+**Near-dated expiries need a targeted fetch.** `get_option_chain` selects the
+expirations NEAREST 30 DTE (`_chain_expirations(..., center_dte=30)`), so on a
+daily-expiry name the short-dated ones are sorted out of the window entirely:
+**SPY's shortest reachable expiry was 7 DTE**, which made the evaluator unable to
+price the 0DTE trades it is most often asked about. The horizon is now resolved
+first and its neighbourhood fetched directly via
+`get_option_chain_for_expirations`, then unioned with the default chain. The
+probe window is bounded (8 dates) because each candidate costs a provider
+request.
+
+Neither fix touches a guarded path. The provider's 30-DTE centring is left
+alone deliberately — changing it would change what the *scanner* sees, which is
+a model change under the freeze.
+
 ## 6. Horizon resolution
 
 Accepts `0d` / `3d` / `2w` / `45d` / `6m`, or an ISO date. Snapped to the nearest
@@ -254,6 +282,10 @@ nothing in this feature touches a guarded path.
   which is an assumption about the future, not a measurement of it.
 - **Marks are as-of the chain fetch.** The evaluator does not yet display quote
   age; the same staleness question raised about the scan boards applies here.
+- **Probability is fractional only on the expiration session.** On a 0DTE
+  structure the model uses the hours remaining to the 4pm ET close; after the
+  close there is no time left and the dimension correctly reports absent. Every
+  other horizon uses whole days.
 - **The alternative is only as good as the selector.** It inherits Amendment 2's
   behaviour, including the POP floor of 0.25 — so on a chain where nothing clears
   that floor, the contrast dimension reports a gap rather than a suggestion.

@@ -818,3 +818,142 @@ Both exclusions are counted and surfaced as scorecard warnings.
 - Credential rotation still incomplete (owner deferral, Entry 4).
 
 ---
+
+---
+
+## 2026-08-13 — Scheduled daily pre-market brief (automated)
+
+- **What changed and why:** Nothing in code or docs. This was the scheduled
+  `daily-market-breif` task producing the morning research report. Data pulled
+  read-only from the Robinhood connector and public web sources.
+- **PRs opened or merged:** None.
+- **Decisions taken:** None affecting the repo. No orders viewed, placed, or
+  modified; brokerage access used read-only (quotes, earnings calendar, option
+  quotes for expected-move estimates only).
+- **DEVIATIONS:** None.
+
+---
+
+## 2026-08-13 — Interactive follow-up: UW/FMP wired into the daily brief
+
+- **What changed and why:** Nothing in repo code. The `daily-market-breif`
+  scheduled task (outside this repo, `~/.claude/scheduled-tasks/`) was updated
+  to add Unusual Whales + FMP as data sources alongside Robinhood. A one-off
+  read-only supplement pull ran against UW (market tide, sector flow, flow
+  alerts, IV stats) and FMP (economic calendar) using keys from `.env`; keys
+  were read into shell variables only and never printed or logged.
+- **PRs opened or merged:** None.
+- **Decisions taken:** Docker env was down, so the repo's provider clients
+  could not run; the supplement called the same endpoints the clients use
+  (`app/providers/unusual_whales/client.py`, `app/providers/fmp/client.py`)
+  directly via curl. Documented in the task file as the standing fallback.
+- **DEVIATIONS:** None.
+
+---
+
+## 2026-08-13 (evening) — Personal trading playbook added
+
+- **What changed and why:** Created `docs/trading/PLAYBOOK.md` — the user's
+  personal discretionary trading playbook, distilled from today's live
+  session. Documentation only; explicitly scoped as unrelated to the frozen
+  scoring model and the capture window. No code changes.
+- **PRs opened or merged:** None.
+- **DEVIATIONS:** None.
+
+## 2026-08-14 — Scheduled daily pre-market brief (automated run, 9:05 AM ET)
+
+- **What changed and why:** Nothing in repo code. The `daily-market-breif`
+  scheduled task ran read-only pulls: Robinhood connector (indexes, quotes,
+  fundamentals, watchlist, earnings, SPY 0DTE ATM straddle), UW (market tide,
+  sector flow, SPY/QQQ greek exposure + per-strike, per-ticker flow alerts,
+  IV stats), FMP (economic calendar) via curl with keys read from `.env`
+  into shell variables only — never printed or logged. Brief delivered in
+  the session transcript.
+- **PRs opened or merged:** None.
+- **Decisions taken:** FMP sector-performance-snapshot returned empty (known
+  tier limitation) — labeled unavailable in the brief per the data-failure
+  rule. UW flow alerts carried zero same-day rows premarket; reported as
+  "populates intraday", not as absence of flow.
+- **DEVIATIONS:** None.
+
+---
+
+## 2026-08-14 — Live trading support session (interactive)
+
+- **What changed and why:** Appended the 2026-08-14 journal entry to
+  `docs/trading/PLAYBOOK.md` (documentation only). No code changes.
+  Brokerage access read-only throughout; Claude executed no orders.
+- **PRs opened or merged:** None.
+- **DEVIATIONS:** None.
+
+## 2026-08-15 — Scheduled daily brief (automated run, fired Saturday ~2:00 PM ET)
+
+- **What changed and why:** Nothing in repo code. The `daily-market-breif`
+  scheduled task fired on a Saturday (markets closed, no pre-market session),
+  so the run was adapted into a weekend edition: Friday 8/14 close recap,
+  weekend news, and the Mon 8/17 open setup. Read-only pulls: Robinhood
+  (indexes, ETF/watchlist quotes, earnings calendar, WMT 8/21 ATM straddle),
+  UW (SPY/QQQ greek exposure + per-strike, RDDT flow alerts), FMP (economic
+  calendar 8/17–8/21) via curl with keys read from `.env` into shell
+  variables only — never printed. Brief delivered in the session transcript.
+- **PRs opened or merged:** None.
+- **Decisions taken:** Ran as weekend edition rather than skipping or
+  producing a fictitious "pre-market" brief; gamma data labeled as Friday's
+  close positioning (stale by Monday). RDDT flagged in §6A (S&P 500
+  inclusion effective 8/18 open).
+- **DEVIATIONS:** None.
+
+## 2026-08-16 — Scheduled daily brief (automated run, fired Sunday ~8:17 PM ET)
+
+- **What changed and why:** Nothing in repo code. The `daily-market-breif`
+  task fired Sunday evening (second consecutive off-schedule weekend firing;
+  intended cadence is ~9:05 AM ET). Adapted into a Sunday-evening Monday
+  look-ahead: Friday 8/14 recap, weekend news, week-ahead calendar, RDDT
+  S&P 500 inclusion (effective 8/18 open, index MOC buy at Monday's close),
+  HD 8/21 ATM straddle expected move. Read-only pulls: Robinhood (indexes,
+  quotes, watchlist, earnings calendar, HD options), UW (SPY/QQQ GEX daily +
+  per-strike, watchlist flow alerts), FMP (econ calendar 8/17–8/21) via curl,
+  keys read from `.env` into shell variables only — never printed.
+- **PRs opened or merged:** None.
+- **Decisions taken:** Ran as Monday look-ahead rather than skipping; GEX
+  labeled as Friday-close positioning (stale by Monday open). Scheduling
+  anomaly surfaced to user in the brief with a recommendation to re-pin the
+  cron to 9:05 AM ET weekdays.
+- **DEVIATIONS:** None.
+
+## 2026-08-17 — Interactive session: SLS/WDC analysis + brief-pipeline hardening
+
+- **What changed and why:** No repo code. Two changes to the user's Claude
+  scheduled-task config (outside the repo), both user-approved this session:
+  (1) `daily-market-breif/SKILL.md` gained a mandatory hardened-curl rule
+  (`-sS --fail-with-body --retry 3 --retry-all-errors`, verify-before-parse,
+  failed fetch → `UNVERIFIED`, never "no alerts") after UW curls failed
+  silently three times over the weekend — transient connection-level drops
+  masked by `-s`; (2) task cron re-pinned `0 9 * * *` → `0 9 * * 1-5` —
+  the Sat/Sun odd-hour firings were missed-run catch-ups from a sleeping
+  machine, not cron drift.
+- **Analysis delivered (read-only):** SLS and WDC deep-dives via Robinhood +
+  UW (flow alerts, IV stats, GEX) with option cost/breakeven framing against
+  RISK_POLICY's $100/trade cap (WDC Sept calls $2.6k–$4.1k — do not fit;
+  SLS Sept 15C ~$130 — borderline; expiry-vs-catalyst mismatch flagged on
+  SLS Q4 readout). No orders placed or recommended; keys never printed.
+- **PRs opened or merged:** None.
+- **DEVIATIONS:** None.
+
+## 2026-08-17 (cont.) — UW endpoint expansion + /edge skill
+
+- **What changed and why:** (1) UW endpoint audit against the user's
+  "Unusual Whales Surface" artifact (207 paths); probed 10 candidates with the
+  hardened curl — 9 entitled, options-pulse 403. Notable data correction: SLS
+  short interest ~29.7% of float, DTC 5.9, borrow 10.7-22.6%/35k available —
+  upgraded from "NO SQUEEZE EVIDENCE (unverified)" to elevated-if-catalyst.
+  (2) Wired verified endpoints into `daily-market-breif/SKILL.md` (user-approved):
+  shorts/* mandatory for §5 squeeze checks, oi-change follow-through in §6A,
+  gex-levels cross-check in §0/§8, total-options-volume P/C in §1,
+  options-volume baselines, multi-leg spread check, FDA calendar; gated
+  endpoints listed as do-not-call. (3) New project skill `.claude/skills/edge/`
+  (/edge TICKER [DTE] [position]) — intraday direction-edge card + DTE-matched
+  monitor mode; read-only, no-advice framing, $100-cap risk box, NO EDGE as
+  first-class verdict.
+- **PRs opened or merged:** None (skill file uncommitted in working tree).
+- **DEVIATIONS:** None.

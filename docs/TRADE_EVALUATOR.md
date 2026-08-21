@@ -14,7 +14,8 @@ that failure mode. Every threshold below is checkable against
 ## 1. What this is, and why it is not the scanner
 
 The scanner asks **"what should I look at?"** and answers under this account's
-risk limits: $100 per trade, $300 aggregate heat, 4 concurrent positions.
+risk limits: $500 per trade, $3,750 aggregate heat, 4 concurrent positions
+(Amendment 4, 2026-08-12; previously $100 / $300).
 
 The evaluator asks **"here is a trade I am considering — what is wrong with
 it?"** and deliberately ignores all of that. You can hand it a $1,100 spread and

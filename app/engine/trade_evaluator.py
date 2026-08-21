@@ -1,6 +1,6 @@
 """Grade a trade the human proposes, with the account deliberately out of scope.
 
-The scanner asks "what should I look at, given $100 per trade and $300 of heat?"
+The scanner asks "what should I look at, given $500 per trade and $3,750 of heat?"
 This asks "here is a trade; what is wrong with it?" — no budget cap, no portfolio
 heat, no position count. The two are different questions and this module shares
 none of the account plumbing.

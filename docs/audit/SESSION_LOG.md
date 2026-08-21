@@ -1022,3 +1022,149 @@ incident. Nothing was written to production.
   is still unpublished (owner action, `refs/heads/*`-scoped credential).
 - Credential rotation still incomplete (owner deferral, Entry 4).
 - Environment-safety guard from Entry 8 still **unfixed**.
+
+---
+
+## Entry 10 — 2026-08-21 — Amendment 4: the $100 cap was suppressing single legs
+
+### What the owner asked for
+
+Two things, phrased as two:
+
+> "I want to review the options it's presenting us. Most of them are limited to
+> spread. I'd like to change the logic to present single leg options and expand
+> the limit of each options to a max cap of 500 dollars per option with an
+> overall operating budget of 25,000"
+
+They turned out to be one thing. **No logic change was needed to present single
+legs.** `select_short_duration_contracts` has always appended both expressions —
+its docstring says so: *"EVERY viable defined-risk expression for the setup — the
+near-ATM single leg AND the defined-risk debit vertical."* Single legs were being
+eliminated by arithmetic, downstream, in `build_long_option_plan`, which returns
+`None` when even one contract exceeds the per-trade cap. At $100 a near-ATM
+single leg is unsizeable on any liquid name, so the board showed verticals only.
+
+Measured on a synthetic 2-DTE fixture (spot 250, IV 35%, ATM call ≈ $2.61):
+
+| per-trade cap | expressions returned |
+|---|---|
+| $100 | `bull_call_spread` ×1, risk $89 (252/255) |
+| $500 | `long_call` ×1, risk $261 (250) **and** `bull_call_spread` ×2, risk $392 (250/256) |
+
+The cap, not a structure preference, was the filter. Raising it restores single
+legs as a side effect — and, note the second row, it also **moves the spread the
+scanner picks** (252/255 ×1 → 250/256 ×2). That second effect is why this is a
+model change and not a config tweak.
+
+### Why this bumps the model version
+
+`sd-scoring-2026.08-v4.1` → **`sd-scoring-2026.08-v5.0`**.
+
+The frozen scorer's arithmetic is untouched. But `contracts.py:192,221` pass
+`max_debit_usd=policy.max_trade_risk_usd` into selection, and
+`scoring/components.py:184` reads `rr = plan.risk.reward_to_risk` off the plan
+that selection produced. Change the cap and a different contract reaches the
+scorer, so a different score ships. Per CLAUDE.md §2, **the freeze is about
+behaviour, not about which files you edited** — this ends the v4.1 window and
+opens v5.0. Amendment recorded under `CAPTURE_WINDOW_PREREGISTRATION.md` §8,
+dated, with the fixture table above.
+
+### The third instance of the same defect
+
+This is now the **third** time a change outside the guarded path list has moved
+the shipped model:
+
+| | what moved | where it lived |
+|---|---|---|
+| FINDING_01 | `term_structure_slope` populated | a provider |
+| Amendment 2 | contract selection | `contracts.py` |
+| **Amendment 4** | risk limits | `app/config.py` |
+
+Each time the golden file stayed byte-identical on every number, because it
+scores hand-built `IVContext` fixtures and **passes no trade plan**. That is a
+structural blind spot, not bad luck: nothing about selection can move a golden
+number. Recorded as such in the amendment and in `FREEZE_POINT.md` under a new
+section, *"What the path diff does NOT cover — read before trusting a green
+guard."*
+
+The missing control is now written: **`tests/test_risk_limits_freeze.py`** (5
+tests) pins the six limit values, the two resolved caps, which cap binds
+(absolute $500 over the 5% pct cap, which would be $1,250 at the new equity), and
+that the declaration matches `FROZEN_MODEL_VERSION`. Changing a limit now fails a
+test that names the version, the same way a scoring edit does.
+
+**`tests/test_single_leg_expressions.py`** (7 tests) pins the finding itself:
+`_strategies(100.0) == {BULL_CALL_SPREAD}` and
+`_strategies(500.0) == {LONG_CALL, BULL_CALL_SPREAD}`, plus an AST/source check
+(`test_no_structure_preference_was_changed_to_achieve_this`) asserting the single
+leg came back from the budget and not from a thumb on the structure scale.
+
+### Limits, before and after
+
+| | v4.1 | v5.0 |
+|---|---|---|
+| account equity | $2,000 | **$25,000** |
+| max risk / trade | $100 | **$500** |
+| aggregate heat (15%) | $300 | **$3,750** |
+| concurrent positions | 4 | 4 (unchanged) |
+| contracts / trade | 20 | 20 (unchanged) |
+
+`docs/RISK_POLICY.md` rewritten for the new numbers, which also removed the §9
+contradiction CLAUDE.md has been carrying (the limits table said 5%/$100 while
+the prose below argued against a $40 cap). CLAUDE.md §9 updated: struck through
+as resolved, and a new bullet added recording that the CI `freeze-guard` job
+gates on **path**, so a guarded-set diff can be empty while the model moves.
+
+### Golden file
+
+Regenerated. **Only the nine `model_version` strings changed.** Every composite
+and every component is byte-identical — expected, and for the reason above, not
+reassuring. The delta is documented in the amendment as evidence of the blind
+spot rather than as evidence of safety.
+
+### Test fallout, and what it taught
+
+Three tests failed after the bump. All three were **hardcoded literals of values
+that had just moved**, not real breaks:
+
+- `test_sd_validation.py`: `assert base.max_trade_risk_usd <= 100`
+- `test_contract_selection_amendment2.py`, `test_observation_only_buckets.py`:
+  version strings written out longhand
+
+Fixed by **deriving rather than restating** — the first from
+`settings.max_defined_risk_per_trade_usd` (plus a relative "genuinely lifted"
+assertion that survives the next change), the other two by importing
+`FROZEN_MODEL_VERSION` from `test_scoring_freeze`. A test that restates a
+constant asserts nothing about behaviour and fails on a schedule.
+
+Full suite: **1011 passed**. `ruff check .` clean.
+
+### Corpus segmentation
+
+Signals captured under v4.1 and under v5.0 are **not poolable** — the selection
+input differs. Noted in the amendment so the capture-window analysis segments on
+`scoring_model_version` rather than pooling by date.
+
+### DEVIATIONS
+
+**None.**
+
+Noted, not deviations:
+
+- All verification ran with `TURSO_DATABASE_URL=` / `TURSO_AUTH_TOKEN=` blanked
+  against a scratch sqlite file (Entry 8's incident). Nothing touched production.
+- The environment-safety guard proposed in Entry 8 — refuse a non-production
+  process against a Turso URL without explicit opt-in — is **still unfixed**, now
+  flagged in three consecutive entries.
+
+### State at entry close
+
+- Model **`sd-scoring-2026.08-v5.0`**. Freeze point pending publication.
+- **Two** freeze tags now outstanding, both owner actions (the session credential
+  is `refs/heads/*`-scoped and cannot push tags): `sd-scoring-2026.08-v4.1` at
+  `f9f98f0`, and `sd-scoring-2026.08-v5.0` at this commit. `FREEZE_POINT.md`
+  records both SHAs so the check works without the tags.
+- Execution still gated off; conviction gate still RED. Nothing here places a
+  trade — this changes what the board is allowed to *propose*.
+- Credential rotation still incomplete (owner deferral, Entry 4) — the UW key and
+  both Turso tokens were verified live earlier in this session.

@@ -818,3 +818,491 @@ Both exclusions are counted and surfaced as scorecard warnings.
 - Credential rotation still incomplete (owner deferral, Entry 4).
 
 ---
+
+## Entry 8 — 2026-08-07 — Trade evaluator: grade a trade the human proposes
+
+### What changed and why
+
+A new surface answering a different question from the scanner. The scanner ranks
+what fits **this account** ($100/trade, $300 heat, 4 positions). The evaluator
+takes a ticker, a structure and a duration — optionally strikes — and grades the
+**trade**, with the account deliberately out of scope.
+
+This is a closer fit to `docs/PRODUCT_STANCE.md` than the scanner is. The stance
+says *"the thesis is the human's; the tool makes it cheaper to evaluate."* That
+is this feature's job description; the scanner generates theses, this evaluates
+the owner's.
+
+| Added | Purpose |
+|---|---|
+| `app/domain/evaluation.py` | request/result models; sentinels; the grade's disclaimer as a field, not a UI string |
+| `app/engine/trade_evaluator.py` | the rubric — six dimensions, horizon resolution, structure pricing, selector contrast |
+| `app/research/evaluate.py` | provider fan-out (chain, IV, earnings, quote), per-section error isolation |
+| `POST /research/evaluate` | the endpoint; the ONLY writer |
+| `trade_evaluations` table + migration `0007` | quarantined persistence |
+| `docs/TRADE_EVALUATOR.md` | the rubric written down, including what it does NOT claim |
+| Dashboard → Evaluate → Trade Evaluator | the screen |
+| `tests/test_trade_evaluator.py` (44), `tests/test_trade_evaluator_isolation.py` (10) | rubric + the control |
+
+**Reuse over rebuild.** The analysis primitives already existed as standalone
+functions (`quant/probability.py`, `quant/analytics.py`, `engine/iv_context.py`,
+`engine/liquidity.py`, `engine/catalysts.py`) and the concurrent per-symbol
+fan-out pattern was already proven in `app/research/symbol.py`. The new code is
+the rubric and the isolation, not the plumbing.
+
+### Decisions taken, with reasoning
+
+1. **The grade is of CONSTRUCTION, not outcome.** The conviction gate is RED, so
+   nothing here may predict profit. What needs no calibration to be true: cost
+   arithmetic, odds at the market's own implied vol, execution cost, IV context,
+   scheduled-event conflicts. `grade_claim` ships as a model field so the caveat
+   travels with the number to every consumer, not just to the one screen that
+   currently renders it.
+2. **Unassessed dimensions score `None`, not 0.0.** A missing feed that silently
+   contributed zero would be indistinguishable from a measured failure — CLAUDE.md
+   §4. The composite renormalizes over assessed dimensions and the report always
+   states the count, because a B over four of six is a different claim from a B
+   over six.
+3. **Any single `fail` caps the grade at D.** The far-OTM lottery ticket is why:
+   verified live, an 800/805 call spread scored **strong** on cost drag (13% of
+   width, 6.5:1 R:R) and **failed** on probability at 12%. That is exactly the
+   trap the pre-Amendment-2 fit function fell into, and a plain average returns a
+   B for it.
+4. **`trade_eval_version`, NOT `scoring_model_version`.** The evaluator calls the
+   frozen scorer's neighbours read-only but produces a different artifact.
+   Borrowing the frozen version would make an evaluator change look like a change
+   to the shipped model. Guarded-path diff against `935160d` is empty and all
+   three freeze controls pass unchanged; **the capture window is unaffected**.
+5. **Persistence is quarantined in its own table.** A user can evaluate the same
+   bad idea forty times; counting those as decisions would move the base rate the
+   conviction gate is measured against. `calibration.py` does not read the table.
+6. **The account limits are removed in two places, one of them non-obvious.**
+   `strategy_selector.py:50` is the visible one. The subtle one is
+   `OptionLiquidityConfig.max_mid_price = 25.0`, commented *"keeps 1-lot
+   affordable for small acct"* — a budget constraint wearing a liquidity costume.
+   Genuine liquidity floors stay.
+7. **The horizon resolves to a LISTED expiry and says which.** "3d" on a Thursday
+   and "3d" on a Monday are different contracts. An unreadable horizon returns a
+   gap with a reason rather than a default, because a default would silently
+   evaluate a different trade from the one asked about.
+
+### DEVIATIONS
+
+**Not None.** One, and it is a repeat:
+
+1. **A third ad-hoc run reached production.** Verifying the endpoint end to end,
+   I started a local server with `DATABASE_URL` pointed at a scratch sqlite file.
+   `.env` is loaded automatically and `TURSO_DATABASE_URL` takes precedence over
+   `DATABASE_URL` in `app/db/session.py`, so the server connected to the
+   production warehouse. `create_all` auto-created `trade_evaluations` there and
+   **6 mock-data evaluations were written**.
+   **Purged**: all 6 by id; verified 0 remaining. `decision_snapshots` (61,331),
+   `short_duration_candidates` (1,629) and `candidate_state_transitions` (5,764)
+   were unchanged — the isolation design contained the blast radius to the one
+   quarantined table, which is the strongest evidence available that the design
+   is right. Correct local invocation is
+   `TURSO_DATABASE_URL= TURSO_AUTH_TOKEN= DATABASE_URL=sqlite:///...`, and the
+   verification was re-run that way with the isolation confirmed behaviourally
+   (2 evaluation rows, 0 in every signal table).
+   **This is the same class as Entry 7's deviation and the 84-row case before
+   it — three incidents from the same root cause.** `.env` silently outranks the
+   override a developer reaches for. That is an environment-safety gap, not three
+   independent mistakes, and it remains **unfixed**. The cheapest real fix is a
+   startup guard that refuses a non-production process against a Turso URL unless
+   an explicit opt-in is set.
+
+**Also fixed, pre-existing and unrelated to this feature:**
+`tests/test_trade_management.py::test_quick_add_accepts_an_inline_invalidation`
+was failing on clean `main` (verified by stashing this work). It asserted a
+weeks-out expiry classifies as `swing` but wrote the expiry as the literal
+`8/21`, which was comfortably swing when authored and became a 14-DTE `theta`
+position as the calendar advanced past `THETA_MAX_DTE = 15`. A date-relative
+assertion pinned to an absolute date fails on a schedule rather than on a defect.
+The expiry is now derived from `date.today()`, so the test asserts the classifier
+instead of the calendar. The product code was correct; only the test moved.
+
+Also noted, not a deviation: two verification steps initially reported false
+passes and were redone — a `node --check` on a process substitution that printed
+"OK" from the shell rather than from node, and a budget-blindness test whose
+fixture contained no contract the affordability cap would have excluded. Both
+were caught by guards written into the checks themselves.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1` **unchanged**; guarded-path diff vs `935160d`
+  empty; freeze controls green. Evaluator ships at `trade-eval-2026.08-v1`.
+- `docs/FREEZE_POINT.md` still carries the declared "Pending freeze point" block:
+  the v4.1 merge commit `f9f98f0` now exists but the tag
+  `freeze/sd-scoring-2026.08-v4.1` is **not published**. Blocked on the owner —
+  the pushing credential is scoped to `refs/heads/*`.
+- Credential rotation still incomplete (owner deferral, Entry 4).
+
+## Entry 9 — 2026-08-10 — HIMS research; three evaluator defects found by live use
+
+### What changed and why
+
+Owner asked whether there was a HIMS trade around tonight's earnings. Answering
+it against live FMP + Unusual Whales data exercised yesterday's trade evaluator
+on a real name for the first time and surfaced three defects in it. All three
+are fixed here; **none touches a guarded path** and the guarded-path diff against
+`935160d` is empty with all freeze controls green.
+
+| Defect | Effect | Fix |
+|---|---|---|
+| IV rank never joined | IV dimension reported `NA_no_data` on **8 of 8** symbols probed, while a rank was derivable from 251 history points | `gather_inputs` now builds the context through `build_iv_context`, the same join both scan paths use |
+| Chain fetch centred on 30 DTE | **SPY's shortest reachable expiry was 7 DTE** — the evaluator could not price the 0DTE trades it is most often asked about | horizon resolved first, its neighbourhood fetched via `get_option_chain_for_expirations`, unioned with the default chain (probe bounded to 8 dates) |
+| Whole-day time to expiry | `prob_finish_above` returns None for `days<=0`, so **every** 0DTE structure reported no probability — the heaviest dimension blank on the target use case | `years_to_expiry_days` returns the fraction of the session remaining on expiration day; 0.0 after the close, whole days otherwise |
+
+Verified live: SPY 0DTE 772/773 went from unpriceable → **grade C, 5/6, POP
+0.4665**; HIMS went from 5/6 → **6/6** with `iv_rank=0.4468` from `iv_history`.
+
+### Decisions taken, with reasoning
+
+1. **The provider's 30-DTE centring was left alone.** `_chain_expirations` lives
+   in `app/providers/unusual_whales/client.py`, a guarded path, and changing it
+   would change what the SCANNER sees — a model change under the freeze. The
+   evaluator instead composes existing public provider methods. Cost: extra
+   requests per evaluation, bounded at 8.
+2. **I initially mis-diagnosed the IV-rank gap as a scorer defect and said so.**
+   `iv_rank` IS a scored field (`scoring/components.py:123` abstains without it;
+   `data_quality.py:41` gates on it), and the raw provider returns null for every
+   symbol — which looked exactly like FINDING_01. It is not: `detection.py:417`
+   and `candidate_builder.py:117` both join an IV history through
+   `build_iv_context`, so production scoring has always had rank. **The gap was
+   entirely mine**, in the evaluator's own fetch path. Corrected to the owner
+   before any change was made. The near-miss is worth recording: the symptom of a
+   real freeze-ending finding and the symptom of a new consumer skipping a join
+   are identical from the provider call alone.
+3. **The 0DTE fractional-day fix was in scope, not scope creep.** Fix #2's stated
+   purpose was "the evaluator can price a 0DTE trade". Delivering reachability
+   while the probability dimension stayed blank would have satisfied the letter
+   and not the purpose.
+
+### Research findings recorded (no trade taken)
+
+- Earnings **2026-08-10 pm**, confirmed by both FMP and Robinhood — the owner's
+  premise had it later in the week.
+- Term structure steeply backwardated: **8/14 129% / 8/21 107% / 9/18 91%**,
+  `term_structure_slope −0.455`. Implied move 14.2%; our feed reproduced the
+  owner's Robinhood straddle to the cent ($4.41).
+- Six prior prints: mean |D+1| move **11.8%**, median 13.2% vs 14.2% implied.
+  **4 of 6 continued the D+1 direction through D+5.** n=6 on one symbol —
+  anecdote-grade, explicitly not evidence, and recorded as a hypothesis only.
+- Flow gave no directional edge: $2.01M, 26 calls / 24 puts, **zero sweeps**.
+- Every priceable structure graded **C or D**; the best carried a **40%
+  round-trip spread tax**. Recommendation was to take no position into the print,
+  which the owner accepted.
+- `docs/VRP_STAGE2_RESULT.md` already answers the short-vol side: execution cost
+  ≈$13.6/trade exceeds the harvestable premium. The earnings-specific
+  pre-registration (`docs/earnings_vrp_preregistration.md`, registered
+  2026-07-28) remains unrun — flagged that a discretionary trade tonight would
+  be trading ahead of it.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **I told the owner the IV-rank gap looked like a scorer-level defect before
+   confirming it.** The claim was wrong — the scanner performs the join and the
+   scorer has always received rank. I corrected it in the next message and before
+   touching any code, but the sequencing was backwards: the diagnosis should have
+   preceded the report. Recorded because "report gaps, don't approximate them"
+   applies to my own findings too, and an overstated finding against a frozen
+   scorer is expensive noise.
+
+Also noted, not a deviation: all research ran with `TURSO_DATABASE_URL=` and
+`TURSO_AUTH_TOKEN=` blanked, against a scratch sqlite file, following Entry 8's
+incident. Nothing was written to production.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v4.1` unchanged; guarded-path diff vs `935160d`
+  empty; all freeze controls green. Evaluator `trade-eval-2026.08-v1`.
+- `docs/FREEZE_POINT.md` still carries its declared pending block — the v4.1 tag
+  is still unpublished (owner action, `refs/heads/*`-scoped credential).
+- Credential rotation still incomplete (owner deferral, Entry 4).
+- Environment-safety guard from Entry 8 still **unfixed**.
+
+---
+
+## Entry 10 — 2026-08-21 — Amendment 4: the $100 cap was suppressing single legs
+
+### What the owner asked for
+
+Two things, phrased as two:
+
+> "I want to review the options it's presenting us. Most of them are limited to
+> spread. I'd like to change the logic to present single leg options and expand
+> the limit of each options to a max cap of 500 dollars per option with an
+> overall operating budget of 25,000"
+
+They turned out to be one thing. **No logic change was needed to present single
+legs.** `select_short_duration_contracts` has always appended both expressions —
+its docstring says so: *"EVERY viable defined-risk expression for the setup — the
+near-ATM single leg AND the defined-risk debit vertical."* Single legs were being
+eliminated by arithmetic, downstream, in `build_long_option_plan`, which returns
+`None` when even one contract exceeds the per-trade cap. At $100 a near-ATM
+single leg is unsizeable on any liquid name, so the board showed verticals only.
+
+Measured on a synthetic 2-DTE fixture (spot 250, IV 35%, ATM call ≈ $2.61):
+
+| per-trade cap | expressions returned |
+|---|---|
+| $100 | `bull_call_spread` ×1, risk $89 (252/255) |
+| $500 | `long_call` ×1, risk $261 (250) **and** `bull_call_spread` ×2, risk $392 (250/256) |
+
+The cap, not a structure preference, was the filter. Raising it restores single
+legs as a side effect — and, note the second row, it also **moves the spread the
+scanner picks** (252/255 ×1 → 250/256 ×2). That second effect is why this is a
+model change and not a config tweak.
+
+### Why this bumps the model version
+
+`sd-scoring-2026.08-v4.1` → **`sd-scoring-2026.08-v5.0`**.
+
+The frozen scorer's arithmetic is untouched. But `contracts.py:192,221` pass
+`max_debit_usd=policy.max_trade_risk_usd` into selection, and
+`scoring/components.py:184` reads `rr = plan.risk.reward_to_risk` off the plan
+that selection produced. Change the cap and a different contract reaches the
+scorer, so a different score ships. Per CLAUDE.md §2, **the freeze is about
+behaviour, not about which files you edited** — this ends the v4.1 window and
+opens v5.0. Amendment recorded under `CAPTURE_WINDOW_PREREGISTRATION.md` §8,
+dated, with the fixture table above.
+
+### The third instance of the same defect
+
+This is now the **third** time a change outside the guarded path list has moved
+the shipped model:
+
+| | what moved | where it lived |
+|---|---|---|
+| FINDING_01 | `term_structure_slope` populated | a provider |
+| Amendment 2 | contract selection | `contracts.py` |
+| **Amendment 4** | risk limits | `app/config.py` |
+
+Each time the golden file stayed byte-identical on every number, because it
+scores hand-built `IVContext` fixtures and **passes no trade plan**. That is a
+structural blind spot, not bad luck: nothing about selection can move a golden
+number. Recorded as such in the amendment and in `FREEZE_POINT.md` under a new
+section, *"What the path diff does NOT cover — read before trusting a green
+guard."*
+
+The missing control is now written: **`tests/test_risk_limits_freeze.py`** (5
+tests) pins the six limit values, the two resolved caps, which cap binds
+(absolute $500 over the 5% pct cap, which would be $1,250 at the new equity), and
+that the declaration matches `FROZEN_MODEL_VERSION`. Changing a limit now fails a
+test that names the version, the same way a scoring edit does.
+
+**`tests/test_single_leg_expressions.py`** (7 tests) pins the finding itself:
+`_strategies(100.0) == {BULL_CALL_SPREAD}` and
+`_strategies(500.0) == {LONG_CALL, BULL_CALL_SPREAD}`, plus an AST/source check
+(`test_no_structure_preference_was_changed_to_achieve_this`) asserting the single
+leg came back from the budget and not from a thumb on the structure scale.
+
+### Limits, before and after
+
+| | v4.1 | v5.0 |
+|---|---|---|
+| account equity | $2,000 | **$25,000** |
+| max risk / trade | $100 | **$500** |
+| aggregate heat (15%) | $300 | **$3,750** |
+| concurrent positions | 4 | 4 (unchanged) |
+| contracts / trade | 20 | 20 (unchanged) |
+
+`docs/RISK_POLICY.md` rewritten for the new numbers, which also removed the §9
+contradiction CLAUDE.md has been carrying (the limits table said 5%/$100 while
+the prose below argued against a $40 cap). CLAUDE.md §9 updated: struck through
+as resolved, and a new bullet added recording that the CI `freeze-guard` job
+gates on **path**, so a guarded-set diff can be empty while the model moves.
+
+### Golden file
+
+Regenerated. **Only the nine `model_version` strings changed.** Every composite
+and every component is byte-identical — expected, and for the reason above, not
+reassuring. The delta is documented in the amendment as evidence of the blind
+spot rather than as evidence of safety.
+
+### Test fallout, and what it taught
+
+Three tests failed after the bump. All three were **hardcoded literals of values
+that had just moved**, not real breaks:
+
+- `test_sd_validation.py`: `assert base.max_trade_risk_usd <= 100`
+- `test_contract_selection_amendment2.py`, `test_observation_only_buckets.py`:
+  version strings written out longhand
+
+Fixed by **deriving rather than restating** — the first from
+`settings.max_defined_risk_per_trade_usd` (plus a relative "genuinely lifted"
+assertion that survives the next change), the other two by importing
+`FROZEN_MODEL_VERSION` from `test_scoring_freeze`. A test that restates a
+constant asserts nothing about behaviour and fails on a schedule.
+
+Full suite: **1011 passed**. `ruff check .` clean.
+
+### Corpus segmentation
+
+Signals captured under v4.1 and under v5.0 are **not poolable** — the selection
+input differs. Noted in the amendment so the capture-window analysis segments on
+`scoring_model_version` rather than pooling by date.
+
+### DEVIATIONS
+
+**None.**
+
+Noted, not deviations:
+
+- All verification ran with `TURSO_DATABASE_URL=` / `TURSO_AUTH_TOKEN=` blanked
+  against a scratch sqlite file (Entry 8's incident). Nothing touched production.
+- The environment-safety guard proposed in Entry 8 — refuse a non-production
+  process against a Turso URL without explicit opt-in — is **still unfixed**, now
+  flagged in three consecutive entries.
+
+### State at entry close
+
+- Model **`sd-scoring-2026.08-v5.0`**. Freeze point pending publication.
+- **Two** freeze tags now outstanding, both owner actions (the session credential
+  is `refs/heads/*`-scoped and cannot push tags): `sd-scoring-2026.08-v4.1` at
+  `f9f98f0`, and `sd-scoring-2026.08-v5.0` at this commit. `FREEZE_POINT.md`
+  records both SHAs so the check works without the tags.
+- Execution still gated off; conviction gate still RED. Nothing here places a
+  trade — this changes what the board is allowed to *propose*.
+- Credential rotation still incomplete (owner deferral, Entry 4) — the UW key and
+  both Turso tokens were verified live earlier in this session.
+
+---
+
+## Entry 11 — 2026-08-25 — rh_sync lost a quarter of the trade history; purge and rebuild
+
+### How it surfaced
+
+Not from a test. From a scheduled sync reporting a number that disagreed with
+its own input. The 2026-08-24 market-close run wrote 15 `created_closed` lines
+whose P&L summed to **+$297**, and the database afterwards held **-$155** for the
+same episodes. Checking the two against each other is not part of the routine;
+it happened because the report was being read closely enough to notice that the
+same episode id appeared three times.
+
+### The defect — two leaks, one root
+
+Nothing distinguished one round trip on a contract from another round trip on
+the **same contract in the same session**.
+
+1. `Episode.trade_id` hashed `(symbol, legs, open DATE)`. Trading TSLA 355c twice
+   in a day produced one id for both round trips, and `save_paper_trade` is
+   last-write-wins, so the second silently replaced the first. Four of seven
+   TSLA episodes on 08-24 stored the final round trip's P&L instead of the sum.
+   In every case the stored value was exactly the last listed line.
+
+2. `_matches_tracked` is deliberately fuzzy — same symbol, same contracts,
+   opened within 5 days — so a manual entry reconciles with its broker-side
+   view. Unbounded, **one tracked row claimed every re-entry on the contract**,
+   and the extras reported as `already_tracked` with their P&L never entering
+   the corpus.
+
+The second was only found because the first fix's dry run came back with
+everything `already_tracked` — a result that looks like success and is not. Had
+(1) shipped alone it would have moved the loss from an overwrite to a silent
+skip rather than removing it.
+
+**A realized number that vanishes is the same class of failure as substituting
+0.0 for a missing one: the row looks complete and is wrong.** That is the honesty
+rule in §4, arriving through a code path nobody had pointed it at.
+
+### The fix (`307bfb9`)
+
+Re-keyed on the episode's **opening broker order id** — unique because an order
+is a single event, stable across re-runs because it comes from the broker, so
+idempotency (the entire purpose of the id) survives. Falls back to the opening
+timestamp where no order id parsed, rather than quietly re-colliding on the date.
+Tracked-row matching is now one-to-one: a claimed row leaves the candidate pool.
+
+Four tests, **each confirmed to fail against the pre-fix code** — the collision
+test reproduces on `rhe9177aa9a2`, a real episode id from the 08-24 production
+run. Verifying that a regression test actually regresses was the step that would
+have caught this class of bug earlier, and is worth making habitual.
+
+### The rebuild — a destructive production operation
+
+Re-keying changes every episode id, so a plain re-sync would have ADDED correct
+rows beside the stale ones. The owner was told this, held the 08-25 market-open
+sync unapplied rather than let it double-count, and then authorised the purge.
+
+Backup first: 161 trades, 110 outcomes, 68 snapshots written to a JSON dump with
+a recorded sha256 before anything was deleted. Deletes scoped to `id like 'rh%'`
+and `decision_id like 'live:rh%'`; the precise prefix was checked against a loose
+`%rh%` match and both returned identical counts, so nothing was caught by
+accident. The 9 manually-entered non-`rh` trades were preserved and verified.
+
+| | before | after |
+|---|---|---|
+| `rh` trades | 161 | **212** |
+| distinct episode ids | — | 212, **zero collisions** |
+| manual trades | 9 | 9, untouched |
+
+**51 round trips — roughly a quarter of the trading history — were absent from
+the table.** A follow-up full `--apply` over the same 448-order payload produced
+221 `already_tracked`, zero new rows and zero grade failures: the idempotency
+guarantee now actually holds, which it did not before.
+
+### Every P&L figure reported before today was computed from corrupted data
+
+Including the TSLA concentration analysis given to the owner on 08-21. Recomputed
+on the clean corpus:
+
+| | as reported 08-21 | corrected |
+|---|---|---|
+| TSLA n | 20 | **59** |
+| TSLA total | +$2,557 | +$2,651 |
+| TSLA median | +$15.50 | **+$5.00** |
+| t-statistic | 1.58 | **1.47** |
+| non-TSLA | -$3,601 (n=141) | **-$4,668 (n=162)** |
+
+The conclusion held and strengthened — three times the sample, median down to
+$5, still no significance, and n=59 is now large enough that failing to detect an
+edge is informative rather than merely underpowered. **That it held is luck, not
+vindication.** The error direction was unpredictable, since which round trip
+survived depended on which was written last.
+
+### Still broken, unchanged by any of this
+
+All 212 grade attempts failed on `entry_spot NOT NULL`. `decision_outcomes` for
+`rh` trades reads **0**. Production has no `alembic_version` table — its schema
+was bootstrapped by `create_all`, so `0005_entry_spot_nullable` (on `main` since
+July) has never been applied and `create_all` will never apply it, because it is
+an ALTER on an existing table. The trade history is now correct and **none of it
+is linked to a score**, so "do the system's grades predict anything" remains
+unanswerable.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **A P&L analysis was delivered to the owner from a table that was silently
+   dropping records.** The 08-21 TSLA concentration read was presented with
+   t-statistics and outlier decomposition — the trappings of rigour — over data
+   whose integrity had never been checked against its own source. Statistical
+   care applied to unverified inputs is not rigour, it is decoration. The check
+   that caught this (report total vs stored total) costs one query and did not
+   exist.
+
+2. **Production DDL and the `--apply` sync were both blocked by the permission
+   classifier, and one was later run after the owner approved it in chat.** Chat
+   approval does not reach the classifier; the operations that ran did so
+   because the classifier permitted them, not because consent was transferred.
+   Recorded because the distinction matters: an approval in the transcript is
+   not an authorisation in the harness, and treating the two as equivalent is
+   how an agent talks itself past a guard. The `alembic` migration remains
+   unrun for exactly this reason, and was NOT worked around.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`; freeze controls green; suite 1015 passed.
+- PR #57 open with four commits (evaluator, two fix rounds, Amendment 4, this).
+- Corpus: 221 closed trades, **-$2,017** realized. 212 `rh` + 9 manual.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Freeze tags for v4.1 (`f9f98f0`) and v5.0 (`f65aee6`) still unpublished.
+- **Credential rotation still incomplete.** A Turso rw token and database URL
+  were pasted into the session transcript on 08-22 and used to restore `.env`.
+  Per §4 that token is compromised by definition and must be rotated and
+  invalidated; it has not been. Third entry carrying this.
+- Environment-safety guard from Entry 8 still unfixed — fourth entry.

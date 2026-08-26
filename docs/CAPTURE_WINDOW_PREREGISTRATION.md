@@ -341,3 +341,99 @@ fixtures and cannot see a capture-scope change.
 **Origin:** requested by the user on 2026-08-04 — "I want to enable 0DTE options,
 while we may not be taking them I think having the data populate for paper trading
 to zero in on our logic is the right thing to do."
+
+---
+
+### Amendment 4 — 2026-08-12 — `sd-scoring-2026.08-v4.1` → `sd-scoring-2026.08-v5.0`
+
+**Risk limits raised. This is a model change, and the guard did not catch it.**
+
+#### What changed
+
+| Setting | Was | Now |
+|---|---|---|
+| `account_equity_usd` | 2,000 | **25,000** |
+| `max_defined_risk_per_trade_usd` | 100 | **500** |
+| `max_account_risk_pct` | 0.15 | 0.15 (unchanged → $3,750 heat) |
+| `max_trade_risk_pct` | 0.05 | 0.05 (unchanged; the absolute cap binds) |
+| `max_concurrent_positions` | 4 | 4 (unchanged) |
+
+No scoring code, no weights, no thresholds, no universe change. **Two config
+numbers.**
+
+#### Why a MAJOR bump and not a config tweak
+
+`app/shortduration/contracts.py:192,221` pass `max_debit_usd=policy.max_trade_risk_usd`
+into contract selection. `app/shortduration/scoring/components.py:184` reads
+`reward_to_risk` off the **selected** plan. So a different budget selects a
+different structure, which moves a scored component.
+
+Measured on a 2-DTE fixture (spot 250, IV 35%, ATM call ≈ $261/contract):
+
+| Per-trade cap | Expressions offered |
+|---|---|
+| $100 | `bull_call_spread 252/255 x1`, risk $89 |
+| $500 | **`long_call 250 x1`, risk $261** *and* `bull_call_spread 250/256 x2`, risk $392 |
+
+Both halves matter: a new instrument appears, **and** the spread that was already
+being offered moved strikes and size. The second is what reaches the scorer.
+
+This changes which instrument a signal is expressed in — the same class as
+Amendment 2 — so it takes a major bump.
+
+#### The single-leg finding
+
+The user's report was "most of them are limited to spread". There was **no
+structure preference to fix.** `select_short_duration_contracts` has always
+appended both expressions unconditionally. The single leg was eliminated by
+arithmetic: `build_long_option_plan` returns `None` when even one contract
+exceeds the per-trade cap, and at $100 no near-ATM leg on a liquid name could be
+sized. Raising the cap restores it with no logic change.
+Pinned by `tests/test_single_leg_expressions.py`, including a test asserting that
+no preference was introduced.
+
+#### The control gap this exposed — THIRD instance
+
+The freeze guard gates on **path**. Its guarded set is `scoring/`, `strategies/`,
+`contracts.py`, two providers, `iv_context.py`, `contract_selection.py`. The risk
+limits live in `app/config.py`, which is **not** in that set. A one-line budget
+change altered the shipped model's output with CI green.
+
+The behavioural controls were blind too, for the reason recorded under Amendments
+1 and 2: `test_scoring_golden.py` scores hand-built `IVContext` fixtures and
+passes **no trade plan**, so a selection change cannot move its numbers.
+
+Prior instances: **FINDING_01** (a provider field the scorer read and nobody
+populated), **Amendment 2** (contract selection). This is the third time the same
+shape has slipped past, and the second time the fix was to widen a list *after*
+the fact.
+
+**New control:** `tests/test_risk_limits_freeze.py` pins the limits themselves,
+their resolved caps, and which of the two caps binds. Negative-controlled —
+reverting the cap to 100 fails two of its five tests. It is deliberately dumb;
+the only legitimate way past it is the declaration §2 already demands.
+
+#### Golden-file delta
+
+Regenerated: **only the `model_version` string changed** — every composite and
+component value is byte-identical. Third amendment running where the golden file
+could not see the change. That is not a defect in the golden file; it is the
+reason the new control had to exist somewhere else.
+
+#### Effect on the pre-registration
+
+Window length, hypotheses, statistics, gate thresholds and falsification criteria
+stand as committed.
+
+**The corpus segments at this boundary.** Rows stamped `v4.1` and rows stamped
+`v5.0` were produced under different per-trade budgets, so their selected
+structures — and therefore their `reward_to_risk` inputs — are not comparable.
+Per-regime and per-bucket cuts must not pool across the boundary. This is a
+larger discontinuity than Amendments 1–3 caused, because it changes the
+instrument rather than a coefficient or a capture scope.
+
+**Origin:** requested by the user on 2026-08-12 — "I want to review the options
+it's presenting us. Most of them are limited to spread. I'd like to change the
+logic to present single leg options and expand the limit of each options to a max
+cap of 500 dollars per option with an overall operating budget of 25,000."
+Confirmed after being shown that the change ends the capture window.

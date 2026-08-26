@@ -28,6 +28,7 @@ from app.db.models import (
     ShortDurationCandidateRow,
     ShortDurationTradeRow,
     TierMemberRow,
+    TradeEvaluationRow,
 )
 from app.db.session import SessionLocal
 from app.domain.candidates import TradeCandidate
@@ -634,3 +635,51 @@ def list_daily_regimes(limit: int = 1000) -> list:
             )
             for r in session.execute(stmt).scalars().all()
         ]
+
+
+# ---------------------------------------------------------------------------
+# Trade evaluations (on-demand grading of a human-proposed trade)
+#
+# These live in their OWN table and are never read by the calibration pipeline.
+# A user can evaluate the same idea repeatedly; counting those as decisions
+# would move the base rate the conviction gate is measured against.
+# ---------------------------------------------------------------------------
+
+
+def save_trade_evaluation(ev, evaluation_id: str) -> None:
+    """Persist one evaluation. Idempotent on evaluation_id."""
+    target = ev.proposed or ev.alternative
+    with SessionLocal() as session:
+        if session.get(TradeEvaluationRow, evaluation_id) is not None:
+            return
+        session.add(
+            TradeEvaluationRow(
+                evaluation_id=evaluation_id,
+                symbol=ev.symbol,
+                structure=ev.structure.value,
+                requested_horizon=ev.requested_horizon,
+                resolved_expiration=ev.resolved_expiration,
+                evaluated_at=ev.as_of,
+                # Absent stays absent: an evaluation that graded nothing stores
+                # NULL, not "F" and not 0.0.
+                grade=ev.grade or None,
+                composite=ev.composite,
+                dimensions_assessed=ev.dimensions_assessed,
+                probability_of_profit=target.probability_of_profit if target else None,
+                max_loss_usd=target.max_loss_usd if target else None,
+                graded=ev.graded,
+                evaluator_version=ev.evaluator_version,
+                payload=ev.model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+
+def list_trade_evaluations(limit: int = 50, symbol: str | None = None) -> list[dict]:
+    """Recent evaluations as raw payloads, newest first."""
+    with SessionLocal() as session:
+        stmt = select(TradeEvaluationRow)
+        if symbol:
+            stmt = stmt.where(TradeEvaluationRow.symbol == symbol.upper())
+        stmt = stmt.order_by(TradeEvaluationRow.evaluated_at.desc()).limit(limit)
+        return [r.payload for r in session.execute(stmt).scalars().all()]

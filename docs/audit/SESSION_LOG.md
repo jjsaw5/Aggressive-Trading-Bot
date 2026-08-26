@@ -1168,3 +1168,141 @@ Noted, not deviations:
   trade — this changes what the board is allowed to *propose*.
 - Credential rotation still incomplete (owner deferral, Entry 4) — the UW key and
   both Turso tokens were verified live earlier in this session.
+
+---
+
+## Entry 11 — 2026-08-25 — rh_sync lost a quarter of the trade history; purge and rebuild
+
+### How it surfaced
+
+Not from a test. From a scheduled sync reporting a number that disagreed with
+its own input. The 2026-08-24 market-close run wrote 15 `created_closed` lines
+whose P&L summed to **+$297**, and the database afterwards held **-$155** for the
+same episodes. Checking the two against each other is not part of the routine;
+it happened because the report was being read closely enough to notice that the
+same episode id appeared three times.
+
+### The defect — two leaks, one root
+
+Nothing distinguished one round trip on a contract from another round trip on
+the **same contract in the same session**.
+
+1. `Episode.trade_id` hashed `(symbol, legs, open DATE)`. Trading TSLA 355c twice
+   in a day produced one id for both round trips, and `save_paper_trade` is
+   last-write-wins, so the second silently replaced the first. Four of seven
+   TSLA episodes on 08-24 stored the final round trip's P&L instead of the sum.
+   In every case the stored value was exactly the last listed line.
+
+2. `_matches_tracked` is deliberately fuzzy — same symbol, same contracts,
+   opened within 5 days — so a manual entry reconciles with its broker-side
+   view. Unbounded, **one tracked row claimed every re-entry on the contract**,
+   and the extras reported as `already_tracked` with their P&L never entering
+   the corpus.
+
+The second was only found because the first fix's dry run came back with
+everything `already_tracked` — a result that looks like success and is not. Had
+(1) shipped alone it would have moved the loss from an overwrite to a silent
+skip rather than removing it.
+
+**A realized number that vanishes is the same class of failure as substituting
+0.0 for a missing one: the row looks complete and is wrong.** That is the honesty
+rule in §4, arriving through a code path nobody had pointed it at.
+
+### The fix (`307bfb9`)
+
+Re-keyed on the episode's **opening broker order id** — unique because an order
+is a single event, stable across re-runs because it comes from the broker, so
+idempotency (the entire purpose of the id) survives. Falls back to the opening
+timestamp where no order id parsed, rather than quietly re-colliding on the date.
+Tracked-row matching is now one-to-one: a claimed row leaves the candidate pool.
+
+Four tests, **each confirmed to fail against the pre-fix code** — the collision
+test reproduces on `rhe9177aa9a2`, a real episode id from the 08-24 production
+run. Verifying that a regression test actually regresses was the step that would
+have caught this class of bug earlier, and is worth making habitual.
+
+### The rebuild — a destructive production operation
+
+Re-keying changes every episode id, so a plain re-sync would have ADDED correct
+rows beside the stale ones. The owner was told this, held the 08-25 market-open
+sync unapplied rather than let it double-count, and then authorised the purge.
+
+Backup first: 161 trades, 110 outcomes, 68 snapshots written to a JSON dump with
+a recorded sha256 before anything was deleted. Deletes scoped to `id like 'rh%'`
+and `decision_id like 'live:rh%'`; the precise prefix was checked against a loose
+`%rh%` match and both returned identical counts, so nothing was caught by
+accident. The 9 manually-entered non-`rh` trades were preserved and verified.
+
+| | before | after |
+|---|---|---|
+| `rh` trades | 161 | **212** |
+| distinct episode ids | — | 212, **zero collisions** |
+| manual trades | 9 | 9, untouched |
+
+**51 round trips — roughly a quarter of the trading history — were absent from
+the table.** A follow-up full `--apply` over the same 448-order payload produced
+221 `already_tracked`, zero new rows and zero grade failures: the idempotency
+guarantee now actually holds, which it did not before.
+
+### Every P&L figure reported before today was computed from corrupted data
+
+Including the TSLA concentration analysis given to the owner on 08-21. Recomputed
+on the clean corpus:
+
+| | as reported 08-21 | corrected |
+|---|---|---|
+| TSLA n | 20 | **59** |
+| TSLA total | +$2,557 | +$2,651 |
+| TSLA median | +$15.50 | **+$5.00** |
+| t-statistic | 1.58 | **1.47** |
+| non-TSLA | -$3,601 (n=141) | **-$4,668 (n=162)** |
+
+The conclusion held and strengthened — three times the sample, median down to
+$5, still no significance, and n=59 is now large enough that failing to detect an
+edge is informative rather than merely underpowered. **That it held is luck, not
+vindication.** The error direction was unpredictable, since which round trip
+survived depended on which was written last.
+
+### Still broken, unchanged by any of this
+
+All 212 grade attempts failed on `entry_spot NOT NULL`. `decision_outcomes` for
+`rh` trades reads **0**. Production has no `alembic_version` table — its schema
+was bootstrapped by `create_all`, so `0005_entry_spot_nullable` (on `main` since
+July) has never been applied and `create_all` will never apply it, because it is
+an ALTER on an existing table. The trade history is now correct and **none of it
+is linked to a score**, so "do the system's grades predict anything" remains
+unanswerable.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **A P&L analysis was delivered to the owner from a table that was silently
+   dropping records.** The 08-21 TSLA concentration read was presented with
+   t-statistics and outlier decomposition — the trappings of rigour — over data
+   whose integrity had never been checked against its own source. Statistical
+   care applied to unverified inputs is not rigour, it is decoration. The check
+   that caught this (report total vs stored total) costs one query and did not
+   exist.
+
+2. **Production DDL and the `--apply` sync were both blocked by the permission
+   classifier, and one was later run after the owner approved it in chat.** Chat
+   approval does not reach the classifier; the operations that ran did so
+   because the classifier permitted them, not because consent was transferred.
+   Recorded because the distinction matters: an approval in the transcript is
+   not an authorisation in the harness, and treating the two as equivalent is
+   how an agent talks itself past a guard. The `alembic` migration remains
+   unrun for exactly this reason, and was NOT worked around.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`; freeze controls green; suite 1015 passed.
+- PR #57 open with four commits (evaluator, two fix rounds, Amendment 4, this).
+- Corpus: 221 closed trades, **-$2,017** realized. 212 `rh` + 9 manual.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Freeze tags for v4.1 (`f9f98f0`) and v5.0 (`f65aee6`) still unpublished.
+- **Credential rotation still incomplete.** A Turso rw token and database URL
+  were pasted into the session transcript on 08-22 and used to restore `.env`.
+  Per §4 that token is compromised by definition and must be rotated and
+  invalidated; it has not been. Third entry carrying this.
+- Environment-safety guard from Entry 8 still unfixed — fourth entry.

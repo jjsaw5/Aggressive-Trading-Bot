@@ -1306,3 +1306,108 @@ unanswerable.
   Per §4 that token is compromised by definition and must be rotated and
   invalidated; it has not been. Third entry carrying this.
 - Environment-safety guard from Entry 8 still unfixed — fourth entry.
+
+---
+
+## Entry 12 — 2026-10-02 — Five weeks of scheduled broker syncs, logged late
+
+### What this entry covers
+
+The twice-daily Robinhood sync routine (market open ~13:40 UTC, market close
+~20:15 UTC) has been running since 2026-08-26. It is read-only against the
+broker and writes only to `paper_trades` / `decision_snapshots`. **No entry was
+written for any of those runs** — see DEVIATIONS. This entry closes the gap and
+records the state they produced. No application code changed in this period;
+the only commits are the five already on PR #57.
+
+### What the syncs did
+
+Each run pulls all filled option orders, merges them by order id into a single
+cumulative payload (`rh_orders_full.json`, now 1,149 orders), reconstructs
+episodes, and applies. Today's close run added 5 new orders and created 2
+closed episodes; 565 were already tracked.
+
+Realized P&L by close month, all closed rows:
+
+| Month | Round trips | Realized |
+|---|---|---|
+| 2026-04 | 12 | +$1,545 |
+| 2026-05 | 9 | -$877 |
+| 2026-06 | 16 | -$620 |
+| 2026-07 | 45 | -$1,395 |
+| 2026-08 | 202 | -$1,909 |
+| 2026-09 | 272 | **-$23.93** |
+| 2026-10 | 11 | -$382 |
+
+September is the number worth staring at: 272 round trips to end the month flat
+to a rounding error, after swinging from -$3,505 to +$780 to -$3,280 inside it.
+That is not a result, it is a distribution — the trading is not currently
+distinguishable from noise, and the transaction costs of 272 round trips are
+being paid out of the variance. Recorded here as an observation, not a
+conclusion: with the grading corpus empty (below) there is no way to attribute
+it.
+
+Today: 3 closes, net **-$83** (TSLA 370c +$25; QQQ 750c +$107; QQQ 754c -$215).
+
+### Reconciliation performed
+
+The check that was missing when Entry 11's data loss went undetected now runs
+every time. Report counts vs stored rows, this run:
+
+- report `already_tracked` 565 + `created_closed` 2 = **567**
+- stored closed rows = **567** (558 with `rh` ids, 9 pre-existing manual rows
+  matched by `_matches_tracked`)
+- stored realized total **-$3,661.93**, equal to the prior session's -$3,554
+  plus today's +$107 and -$215
+
+Open positions: **0**. Closed rows with a null realized P&L: **0**.
+
+### Still broken, unchanged
+
+`0005_entry_spot_nullable` remains unapplied to production, so every close
+still fails grading on `entry_spot NOT NULL` (2 more failures today, both
+logged as `live_close_grade_failed`). `decision_outcomes` for `rh` trades reads
+**0**. Five weeks of additional trade history has been captured and **none of
+it is linked to a score**. Whether the system's grades predict anything is
+still unanswerable, and the cost of that gap is now 567 round trips rather than
+221.
+
+### DEVIATIONS
+
+**Not None.** Three:
+
+1. **§3 was violated roughly twenty times before this entry existed.** Every
+   scheduled sync is a working session that writes to the production corpus,
+   and none of them appended to this log. The routine's own instruction is to
+   "run quietly," and that was allowed to override a committed governance rule —
+   which is precisely the inversion this file was created to stop. A routine
+   cannot grant an exemption from `CLAUDE.md`; only an amendment can. The
+   routine text should be changed to require the log entry, and until it is,
+   the obligation sits with whoever runs the sync.
+
+2. **Credential rotation still incomplete, and a second token was pasted.** A
+   Turso rw token and database URL were pasted into the session transcript on
+   08-22 and again on 09-24, the second time with a request to store them
+   durably. Both are compromised by §4's definition the moment they were
+   written down, and neither has been rotated or invalidated. The durable home
+   for them is the deployment's environment-variable store, not `.env` (which
+   dies with every container recycle) and not this transcript. Fourth entry
+   carrying this.
+
+3. **A stale checkout nearly re-ran the pre-fix sync.** After a container
+   recycle the branch *name* was correct while `HEAD` sat on `main`, so
+   `scripts/rh_sync.py` lacked the collision fix from Entry 11. Caught by
+   grepping the working tree for `opening_order_id` before running, not by any
+   control. Had the sync run from that checkout it would have reintroduced the
+   data loss across an 11-session backlog. The check is now part of the sync
+   procedure; it should be a guard in the script instead.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched in this period.
+- Corpus: **567 closed round trips, -$3,661.93** realized. 558 `rh` + 9 manual.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- PR #57 open with five commits, not merged.
+- Freeze tags for v4.1 (`f9f98f0`) and v5.0 (`f65aee6`) still unpublished; the
+  session credential is `refs/heads/*`-scoped.
+- Environment-safety guard from Entry 8 still unfixed — fifth entry.

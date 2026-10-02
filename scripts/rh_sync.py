@@ -21,10 +21,18 @@ expiry). Sign convention throughout: net per share is debit > 0 / credit < 0
 at entry; at exit, credit received > 0 / debit paid < 0 — so realized P&L is
 always ``(exit - entry) * 100 * contracts``.
 
-Idempotent: episode ids are deterministic (``rh`` + hash of symbol, legs and
-open date), so re-runs — including the scheduled open/close sync — create
-nothing new. Unrecognized structures (e.g. rolls merged into one episode) are
-reported and skipped, never guessed at.
+Idempotent: episode ids are deterministic (``rh`` + hash of symbol, legs and the
+episode's OPENING ORDER ID), so re-runs — including the scheduled open/close
+sync — create nothing new. Unrecognized structures (e.g. rolls merged into one
+episode) are reported and skipped, never guessed at.
+
+The discriminator was the open *date* until 2026-08-24, which collided whenever
+the same contract was traded twice in one session; see ``Episode.trade_id``.
+Fixing it re-keys every episode, so ids written before that date do not match
+the ones this script now produces — a re-sync ADDS correct rows beside the old
+ones rather than replacing them. Purging the stale ``rh``-prefixed rows is a
+data decision, left to a human, and must happen in the same maintenance window
+as the re-sync or the corpus double-counts.
 
 Usage:
     python scripts/rh_sync.py --orders rh_orders.json          # dry-run report
@@ -132,8 +140,35 @@ class Episode:
         last = max(closing, key=lambda f: f.ts)
         return ExitReason.EXPIRY if last.effect == "expiry" else ExitReason.MANUAL
 
+    def opening_order_id(self) -> str:
+        """The broker order id of the episode's FIRST opening fill.
+
+        This is what makes two round trips on the same contract on the same day
+        distinguishable. It is stable across re-runs because it comes from the
+        broker, and it is unique because an order is a single event — so it
+        preserves idempotency while removing the collision.
+        """
+        opens = [f for f in self.fills if f.effect == "open"]
+        first = min(opens, key=lambda f: (f.ts, f.order_id))
+        return first.order_id
+
     def trade_id(self) -> str:
-        raw = f"{self.symbol}|{self.leg_key()}|{self.opened_at.date().isoformat()}"
+        """Deterministic per episode — NOT per (symbol, legs, day).
+
+        The date alone was the discriminator until 2026-08-24. Trading the same
+        contract twice in one session produced one id for both round trips, and
+        `save_paper_trade` is last-write-wins, so the second write silently
+        replaced the first: on 2026-08-24 four of seven TSLA episodes stored the
+        final round trip's P&L instead of the sum, understating the day by $452.
+        Losing a realized number is the same class of failure as substituting
+        0.0 for a missing one — the row looks complete and is wrong.
+
+        The opening order id restores uniqueness. Where it is absent (a fill
+        parsed without one) the opening timestamp carries the same information
+        at lower resolution, and is used instead of silently colliding again.
+        """
+        discriminator = self.opening_order_id() or self.opened_at.isoformat()
+        raw = f"{self.symbol}|{self.leg_key()}|{discriminator}"
         return "rh" + hashlib.sha1(raw.encode()).hexdigest()[:10]
 
 
@@ -292,6 +327,14 @@ def sync(orders_payload: dict, *, apply: bool = False) -> dict:
     report = {"created_closed": [], "created_open": [], "closed_in_place": [],
               "already_tracked": [], "split": [], "skipped": []}
 
+    # A tracked row may stand for exactly ONE episode. `_matches_tracked` is a
+    # fuzzy match (same contracts, opened within 5 days), so without this a
+    # second round trip on the same contract is absorbed by the first row and
+    # its realized P&L leaves the corpus silently — the same loss the
+    # date-keyed `trade_id` used to cause by overwriting, arriving by a
+    # different door. Claimed rows are withdrawn from the candidate pool.
+    claimed: set[str] = set()
+
     work = list(eps)
     while work:
         ep = work.pop(0)
@@ -299,12 +342,14 @@ def sync(orders_payload: dict, *, apply: bool = False) -> dict:
                  f"open {ep.opened_at.date()} entry {ep.entry_net():+.2f}"
                  + (f" -> exit {ep.exit_net():+.2f} ({ep.exit_reason().value})"
                     f" closed {ep.closed_at.date()}" if ep.is_closed() else " [OPEN]"))
-        if ep.trade_id() in by_id:
+        if ep.trade_id() in by_id and ep.trade_id() not in claimed:
             tracked = by_id[ep.trade_id()]
         else:
-            tracked = next((t for t in existing if _matches_tracked(ep, t)), None)
+            tracked = next((t for t in existing
+                            if t.id not in claimed and _matches_tracked(ep, t)), None)
 
         if tracked is not None:
+            claimed.add(tracked.id)
             if ep.is_closed() and tracked.status == PaperTradeStatus.OPEN:
                 # Broker says flat: close the tracked position with real fills.
                 if apply:

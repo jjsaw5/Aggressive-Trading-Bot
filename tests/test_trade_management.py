@@ -147,12 +147,24 @@ def test_recorded_thesis_without_a_mark_is_unevaluated_not_missing() -> None:
 
 # --- End to end ---------------------------------------------------------------
 def test_quick_add_accepts_an_inline_invalidation() -> None:
+    """A weeks-out expiry parses its invalidation AND lands in the swing regime.
+
+    The expiry is derived from today rather than written as a literal. It used to
+    read `8/21`, which was comfortably swing when this was written and silently
+    became a 14-DTE theta position as the calendar advanced past
+    `THETA_MAX_DTE` — a date-relative assertion pinned to an absolute date fails
+    on a schedule instead of on a defect.
+    """
+    from datetime import date, timedelta
+
     import app.main as m
     from app.db import repository
+    from app.services.position_import import THETA_MAX_DTE
 
+    exp = date.today() + timedelta(days=THETA_MAX_DTE + 30)
     client = TestClient(m.app)
     r = client.post("/positions/quick-add",
-                    json={"line": "TSLA 370/365p 8/21 @2.45 x1 inv 380"})
+                    json={"line": f"TSLA 370/365p {exp.month}/{exp.day} @2.45 x1 inv 380"})
     assert r.status_code == 200, r.text
     t = repository.get_paper_trade(r.json()["id"])
     try:

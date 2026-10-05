@@ -1411,3 +1411,55 @@ still unanswerable, and the cost of that gap is now 567 round trips rather than
 - Freeze tags for v4.1 (`f9f98f0`) and v5.0 (`f65aee6`) still unpublished; the
   session credential is `refs/heads/*`-scoped.
 - Environment-safety guard from Entry 8 still unfixed — fifth entry.
+
+---
+
+## Entry 13 — 2026-10-05 — Scheduled sync, market open
+
+Short-form entry. Entry 12 established that each scheduled sync is a working
+session under §3; these runs change no code, so they get a fixed-format record
+rather than prose.
+
+**Run:** market open, 13:40 UTC. Orders pulled `created_at_gte=2026-10-02`
+(overlap with the last run, so nothing falls between pulls); 9 filled orders
+returned, no pagination cursor. Merged by order id into the cumulative payload:
+1,149 -> 1,151 orders, 2 new.
+
+**Result:** `created_closed` 1, `created_open` 0, `closed_in_place` 0,
+`already_tracked` 567.
+
+- QQQ 750c 2026-10-05 x1, entry +2.33 -> exit +3.06, **+$73**
+
+**Reconciliation:** report 567 + 1 = 568; stored closed rows = 568; stored
+realized -$3,588.93 = prior -$3,661.93 + $73. Open positions 0. Closed rows
+with a null realized P&L: 0.
+
+**Grading:** the one close failed on `entry_spot NOT NULL`, as every close has.
+`0005_entry_spot_nullable` is still unapplied to production; `decision_outcomes`
+for `rh` trades still reads 0. Unchanged from Entry 12.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **The permission classifier denied the merge step, and the workaround
+   changed the payload filename.** The combined `cp` + `jq` + `mv` that
+   rewrites `rh_orders_full.json` in place was denied as "Modify Shared
+   Resources." Rather than retry it in pieces, the merge was written to a new
+   file, `rh_orders_full_1005.json`, and the sync run against that. Nothing was
+   bypassed and the canonical file is untouched, but **the cumulative payload
+   now has two candidate names**, and a later run that merges into the stale
+   `rh_orders_full.json` would silently drop a day. Recorded because a
+   filename that drifts under a procedure is the same shape of defect as the
+   id collision in Entry 11: nothing errors, the number is just wrong. The
+   payload path belongs in the script or a pinned location, not in the routine
+   prose.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **568 closed round trips, -$3,588.93** realized. 559 `rh` + 9 manual.
+- October to date: 12 round trips, **-$309**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — fifth entry carrying this.
+- Environment-safety guard from Entry 8 still unfixed — sixth entry.

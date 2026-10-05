@@ -1463,3 +1463,49 @@ for `rh` trades still reads 0. Unchanged from Entry 12.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — fifth entry carrying this.
 - Environment-safety guard from Entry 8 still unfixed — sixth entry.
+
+---
+
+## Entry 14 — 2026-10-05 — Scheduled sync, market close
+
+**Run:** market close, 20:16 UTC. Orders pulled `created_at_gte=2026-10-05`;
+4 filled orders returned, no pagination cursor. Merged by order id: 1,151 ->
+1,153 orders, 2 new.
+
+**Result:** `created_closed` 1, `created_open` 0, `closed_in_place` 0,
+`already_tracked` 568.
+
+- QQQ 751c 2026-10-05 x1, entry +2.93 -> exit +3.03, **+$10**
+
+**Day total:** 2 closes, **+$83** (QQQ 750c +$73 at open, QQQ 751c +$10).
+
+**Reconciliation:** report 568 + 1 = 569; stored closed rows = 569; stored
+realized -$3,578.93 = prior -$3,588.93 + $10. Open positions 0. Null realized
+P&L on a closed row: 0.
+
+**Grading:** the one close failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0. Unchanged.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **The payload filename chain grew a third link.** The in-place merge remains
+   denied by the permission classifier, so this run read
+   `rh_orders_full_1005.json` and wrote `rh_orders_full_1005c.json`. The denial
+   was not retried in pieces or through another tool. Entry 13 flagged this as
+   a silent-data-loss risk; it is now worse, because picking the base file
+   correctly depends on reading the directory listing and choosing the newest
+   name by hand. Two runs have now done that correctly, which is not a control.
+   The fix is unchanged: pin the payload path inside `scripts/rh_sync.py` so
+   the script, not the operator, resolves which file is current. Carrying this
+   forward until it is fixed or the classifier rule is granted.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **569 closed round trips, -$3,578.93** realized. 560 `rh` + 9 manual.
+- October to date: 13 round trips, **-$299**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — sixth entry.
+- Environment-safety guard from Entry 8 still unfixed — seventh entry.

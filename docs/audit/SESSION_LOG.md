@@ -1509,3 +1509,54 @@ unapplied; `decision_outcomes` for `rh` trades still 0. Unchanged.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — sixth entry.
 - Environment-safety guard from Entry 8 still unfixed — seventh entry.
+
+---
+
+## Entry 15 — 2026-10-06 — Scheduled sync, market open
+
+**Run:** market open, 13:40 UTC. Orders pulled
+`created_at_gte=2026-10-05T20:00:00Z` (overlapping the prior run's cut).
+1 filled order returned, no pagination cursor. Merged by order id: 1,153 ->
+1,154 orders, 1 new.
+
+**Result:** `created_closed` 0, `created_open` **1**, `closed_in_place` 0,
+`already_tracked` 569.
+
+- SPCX 177.5c exp 2026-10-09 x1, entry +2.82 — **still open**
+
+**First open position since the rebuild.** Realized P&L on the row is `NULL`,
+not `0.0`: the trade has no realized result yet, and §4 says absent stays
+absent. Nothing to report as a day P&L because nothing closed.
+
+**Risk check against `RISK_POLICY.md`** (post-Amendment 4 limits): defined risk
+$282 of the $500 per-trade cap; 1 of 4 concurrent positions; 1 of 20 contracts;
+aggregate heat $282 of $3,750. Within policy on all four. Recorded because this
+is the first entry where a live position existed to check.
+
+**Reconciliation:** closed rows unchanged at 569, realized -$3,578.93 —
+correct, since nothing closed. One open row, realized `NULL`. Null realized
+P&L on a *closed* row: 0.
+
+**Grading:** no close this run, so no grade attempt and no new
+`entry_spot NOT NULL` failure. The underlying gap is unchanged — `0005` still
+unapplied, `decision_outcomes` for `rh` trades still 0 — and this position will
+hit it when it closes.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, fourth link.** Still denied in place; this run
+   read `rh_orders_full_1005c.json` and wrote `rh_orders_full_1006.json`.
+   Unchanged in substance from Entries 13 and 14 — the base file is still
+   chosen by eye from a directory listing. Third run in a row relying on that.
+   Carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **569 closed round trips, -$3,578.93** realized; **1 open** (SPCX).
+- October to date: 13 closed round trips, **-$299**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — seventh entry.
+- Environment-safety guard from Entry 8 still unfixed — eighth entry.

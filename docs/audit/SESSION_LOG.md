@@ -1560,3 +1560,70 @@ hit it when it closes.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — seventh entry.
 - Environment-safety guard from Entry 8 still unfixed — eighth entry.
+
+---
+
+## Entry 16 — 2026-10-06 — Scheduled sync, market close; the Entry 11 fix fires on live data
+
+**Run:** market close, 20:16 UTC. Orders pulled `created_at_gte=2026-10-06`;
+8 filled orders returned, no pagination cursor. Merged by order id: 1,154 ->
+1,161 orders, 7 new.
+
+**Result:** `created_closed` 3, `created_open` 0, `closed_in_place` **1**,
+`already_tracked` 569.
+
+- SPY 778c 2026-10-06 x2, entry +1.53 -> exit +1.64, **+$22**
+- SPY 778c 2026-10-06 x2, entry +1.72 -> exit +2.74, **+$204**
+- SPY 781p 2026-10-06 x2, entry +1.01 -> exit +1.11, **+$20**
+- SPCX 177.5c (opened this morning, closed in place), +2.82 -> +2.85, **+$3**
+
+**Day total: 4 closes, +$249.**
+
+### The collision fix earned its keep today
+
+The first two rows above are **the same contract, the same quantity, the same
+day** — SPY 778c opened 13:43 and closed 14:29, then reopened 14:32 and closed
+15:02. This is precisely the shape that Entry 11 documented as silent data
+loss: under the pre-fix `trade_id`, keyed on `(symbol, legs, open date)`, both
+round trips hashed to one id and one row, and the second write overwrote the
+first. The day would have booked **+$204 instead of +$226** — the +$22 episode
+would have left the corpus with nothing erroring.
+
+They came back as two distinct ids (`rh9723cdff19`, `rha2bd5b1989`) carrying
++$22 and +$204 separately, because the id now includes the opening order id and
+because `sync()` lets a tracked row stand for exactly one episode. First time
+the fix has been exercised by live trading rather than by its unit tests;
+`tests/test_rh_sync.py::test_same_contract_traded_twice_in_one_day_gets_two_ids`
+was written against a real pre-fix collision, and the production path now
+agrees with it.
+
+**Reconciliation:** report 569 + 3 + 1 = 573; stored closed rows = 573; stored
+realized -$3,329.93 = prior -$3,578.93 + $249. Hand-computed day total from the
+raw fills (+22 +204 +20 +3) = +$249, equal to the stored sum. Open positions 0.
+Null realized P&L on a closed row: 0.
+
+**Risk check:** largest single exposure was the SPY 778c re-entry, 2 contracts
+at +1.72 = $344 defined risk, under the $500 cap. Positions were effectively
+sequential — SPCX closed 13:42 before SPY 778c opened 13:43 — so concurrency
+never exceeded 2 of 4, and contracts never exceeded 2 of 20. Within policy.
+
+**Grading:** all 4 closes failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0. The best trading day
+since the rebuild is therefore still unattributable to any score.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, fifth link.** `rh_orders_full_1006.json` ->
+   `rh_orders_full_1006c.json`. Unchanged in substance from Entries 13-15.
+   Fourth consecutive run choosing the base file by eye. Carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **573 closed round trips, -$3,329.93** realized; 0 open.
+- October to date: 17 round trips, **-$50** — recovered from -$299 on one day.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — eighth entry.
+- Environment-safety guard from Entry 8 still unfixed — ninth entry.

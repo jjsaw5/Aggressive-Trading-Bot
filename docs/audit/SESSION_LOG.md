@@ -1681,3 +1681,75 @@ P&L on a *closed* row: 0.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — ninth entry.
 - Environment-safety guard from Entry 8 still unfixed — tenth entry.
+
+---
+
+## Entry 18 — 2026-10-07 — Scheduled sync, market close
+
+**Run:** market close, 20:16 UTC. Orders pulled `created_at_gte=2026-10-07`;
+8 filled orders returned, no pagination cursor. Merged by order id: 1,162 ->
+1,169 orders, 7 new.
+
+**Result:** `created_closed` 3, `created_open` 0, `closed_in_place` 1,
+`already_tracked` 573.
+
+- QQQ 753p exp 10-07 x2, +2.37 -> +1.30, **-$214** (opened this morning)
+- QQQ 752c exp 10-07 x1, +2.99 -> +2.73, **-$26**
+- QQQ 754p exp 10-08 x1, +3.22 -> +2.69, **-$53**
+- QQQ 753c exp 10-07 x1, +2.41 -> +1.87, **-$54**
+
+**Day total: 4 closes, -$347.** All four losses. All four QQQ. All four opened
+and closed inside 72 minutes, 13:39 to 14:50, on strikes one or two points
+apart (752c, 753c, 753p, 754p).
+
+### What the shape of the day says
+
+This is the pattern Entry 12 described from the September aggregate, visible
+now in a single session: four round trips on the same underlying within an
+hour and a quarter, strikes clustered within two points, every one a loss. The
+directional bets contradicted each other — a 753 put and a 753 call, a 752 call
+and a 754 put — so the position was not expressing one thesis, it was
+re-expressing a different one every twenty minutes. The losses are small
+individually and that is the hazard: -$26 and -$53 do not feel like anything,
+and four of them plus the -$214 is -$347, which is 10% of the account's
+realized drawdown to date earned in 72 minutes.
+
+Recorded as an observation about the record, not advice about the strategy —
+the thesis is the human's and this tool does not pick trades. But the honest
+reading of the data is that today adds four more data points to the hypothesis
+that activity is being converted into cost, and none to any hypothesis about
+edge. With `decision_outcomes` still empty, there is no score attached to any
+of these to argue the other way.
+
+**Reconciliation:** report 573 + 3 + 1 = 577; stored closed rows = 577; stored
+realized -$3,676.93 = prior -$3,329.93 - $347. Hand-computed day total from the
+raw fills (-214 -26 -53 -54) = -$347, equal to the stored sum. Open positions
+0. Null realized P&L on a closed row: 0.
+
+**Risk check:** largest exposure was the morning's 753p at $474 (Entry 17);
+positions were sequential, so concurrency peaked at 1 of 4 and contracts at 2
+of 20. Within policy on every limit. Note that the limits are per-trade and
+per-position — **nothing in `RISK_POLICY.md` caps the number of round trips in
+a session or the cumulative cost of churn**, which is the exposure this day
+actually demonstrates.
+
+**Grading:** all 4 closes failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, seventh link.** `rh_orders_full_1007.json` ->
+   `rh_orders_full_1007c.json`. Sixth consecutive run choosing the base file by
+   eye. Unchanged; carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **577 closed round trips, -$3,676.93** realized; 0 open.
+- October to date: 21 round trips, **-$397** — gave back the +$249 of 10-06 and
+  more.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — tenth entry.
+- Environment-safety guard from Entry 8 still unfixed — eleventh entry.

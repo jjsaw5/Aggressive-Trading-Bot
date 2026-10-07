@@ -1627,3 +1627,57 @@ since the rebuild is therefore still unattributable to any score.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — eighth entry.
 - Environment-safety guard from Entry 8 still unfixed — ninth entry.
+
+---
+
+## Entry 17 — 2026-10-07 — Scheduled sync, market open
+
+**Run:** market open, 13:40 UTC. Orders pulled
+`created_at_gte=2026-10-06T20:00:00Z`; 1 filled order returned, no pagination
+cursor. Merged by order id: 1,161 -> 1,162 orders, 1 new.
+
+**Result:** `created_closed` 0, `created_open` **1**, `closed_in_place` 0,
+`already_tracked` 573.
+
+- QQQ 753p exp 2026-10-07 x2, entry +2.37 — **still open**
+
+Nothing closed, so there is no day P&L to report. The open row's realized P&L
+is `NULL`, not `0.0`.
+
+**Entry price came from the execution, not the order.** The order's limit
+`price` was 2.43 while the single execution filled at 2.37; the stored entry is
++2.37. Noted because the gap is the kind of thing that would quietly bias every
+cost figure if the importer read the wrong field, and this run confirms it does
+not.
+
+**Risk check:** 2 contracts at +2.37 = **$474 defined risk against the $500
+per-trade cap** — 95% of it, the tightest single position recorded in this log.
+Within policy, and not a breach, but worth naming: the headroom on this trade
+is $26, so a fill 14c worse would have exceeded the cap. Nothing in the system
+would have stopped it, because the brokerage connection is read-only and the
+limits bind the engine's own sizing, not the human's manual orders. 1 of 4
+concurrent, 2 of 20 contracts, $474 of $3,750 aggregate heat.
+
+**Reconciliation:** closed rows unchanged at 573, realized -$3,329.93 —
+correct, since nothing closed. One open row, realized `NULL`. Null realized
+P&L on a *closed* row: 0.
+
+**Grading:** no close this run, so no grade attempt. `0005` still unapplied;
+`decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, sixth link.** `rh_orders_full_1006c.json` ->
+   `rh_orders_full_1007.json`. Fifth consecutive run choosing the base file by
+   eye. Unchanged from Entries 13-16; carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **573 closed round trips, -$3,329.93** realized; **1 open** (QQQ 753p).
+- October to date: 17 closed round trips, **-$50**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — ninth entry.
+- Environment-safety guard from Entry 8 still unfixed — tenth entry.

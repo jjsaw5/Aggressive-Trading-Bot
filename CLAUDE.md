@@ -135,7 +135,17 @@ documents so the frozen design stays untouched.
 
 ## 9. Known issues
 
-- `docs/RISK_POLICY.md` contradicts itself: the limits table sets
+- ~~`docs/RISK_POLICY.md` contradicts itself: the limits table sets
   `MAX_TRADE_RISK_PCT` to 0.05 (= $100), while the "Why not 2%?" prose below
-  still argues against a $40 cap. The table matches the code. The prose is
-  stale. Not corrected unilaterally because it is a governing document.
+  still argues against a $40 cap.~~ **Resolved 2026-08-12** (Amendment 4). The
+  owner changed the limits deliberately (equity 2k -> 25k, per-trade 100 -> 500),
+  so the document was rewritten rather than left contradicting itself. The same
+  revision removed a second error nobody had noticed: the doc claimed the engine
+  "tries a single long option first, then falls back to a vertical spread" and
+  cited a function that does not exist.
+- **The freeze guard gates on PATH and the risk limits are not on it.** Amendment
+  4 changed the shipped model from `app/config.py` with CI green. Adding
+  `config.py` wholesale would fire on every unrelated setting, so the limits are
+  pinned behaviourally by `tests/test_risk_limits_freeze.py` instead. Third
+  instance of a model change arriving from outside the guarded list — see
+  `docs/FREEZE_POINT.md`, "What the path diff does NOT cover".

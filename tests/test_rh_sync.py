@@ -146,3 +146,140 @@ def test_infer_credit_verticals_and_straddle() -> None:
         == (StrategyType.LONG_STRADDLE, Direction.NEUTRAL)
     assert _infer([_leg(OptionType.CALL, 105.0, True), _leg(OptionType.PUT, 95.0, True)]) \
         == (StrategyType.LONG_STRANGLE, Direction.NEUTRAL)
+
+
+# --- episode identity ---------------------------------------------------------
+def test_same_contract_traded_twice_in_one_day_gets_two_ids() -> None:
+    """The 2026-08-24 defect: same-day re-entries collided into one id.
+
+    `trade_id` hashed (symbol, legs, open DATE). Two round trips on the same
+    contract on the same day therefore produced one id, and `save_paper_trade`
+    is last-write-wins — so the second round trip silently overwrote the first
+    and its realized P&L left the corpus. Four of seven TSLA episodes on
+    2026-08-24 were affected; the day was understated by $452.
+
+    A losing round trip that vanishes is indistinguishable from one that never
+    happened, which is the same failure as writing 0.0 for a missing price.
+    """
+    p = _payload(
+        _order("o1", "TSLA", [
+            ("buy", "open", "call", 355.0, "2026-08-24", 2.05, 1)], "2026-08-24T14:00:00Z"),
+        _order("o2", "TSLA", [
+            ("sell", "close", "call", 355.0, "2026-08-24", 3.40, 1)], "2026-08-24T15:00:00Z"),
+        # Re-entered the SAME strike and expiry later the same session.
+        _order("o3", "TSLA", [
+            ("buy", "open", "call", 355.0, "2026-08-24", 2.65, 1)], "2026-08-24T17:00:00Z"),
+        _order("o4", "TSLA", [
+            ("sell", "close", "call", 355.0, "2026-08-24", 2.25, 1)], "2026-08-24T18:00:00Z"),
+    )
+    eps = rh_sync.build_episodes(rh_sync.load_fills(p), as_of=date(2026, 8, 25))
+    assert len(eps) == 2, "two round trips, not one"
+
+    ids = {e.trade_id() for e in eps}
+    assert len(ids) == 2, f"same-day re-entry must not collide, got {ids}"
+
+    # Both round trips survive, and they net to the sum — not to the last one.
+    pnls = sorted(round((e.exit_net() - e.entry_net()) * 100, 2) for e in eps)
+    assert pnls == [-40.0, 135.0]
+    assert round(sum(pnls), 2) == 95.0
+
+
+def test_trade_id_is_stable_across_reruns() -> None:
+    """The fix must not cost idempotency — that is what the id is FOR.
+
+    Re-keying on the opening order id keeps the id a pure function of broker
+    data, so the scheduled open/close sync still creates nothing new on a
+    re-run. A discriminator drawn from wall-clock or row order would break this.
+    """
+    p = _payload(
+        _order("o1", "TSLA", [
+            ("buy", "open", "put", 352.5, "2026-08-24", 1.71, 2)], "2026-08-24T14:30:00Z"),
+        _order("o2", "TSLA", [
+            ("sell", "close", "put", 352.5, "2026-08-24", 3.82, 2)], "2026-08-24T19:30:00Z"),
+    )
+    first = rh_sync.build_episodes(rh_sync.load_fills(p), as_of=date(2026, 8, 25))[0]
+    again = rh_sync.build_episodes(rh_sync.load_fills(p), as_of=date(2026, 8, 25))[0]
+    assert first.trade_id() == again.trade_id()
+    # ...and re-running against a payload that has since grown more orders
+    # must not move an existing episode's id.
+    grown = _payload(*p["data"]["orders"], _order("o9", "AMD", [
+        ("buy", "open", "call", 200.0, "2026-09-19", 1.00, 1)], "2026-08-25T14:00:00Z"))
+    later = next(e for e in rh_sync.build_episodes(
+        rh_sync.load_fills(grown), as_of=date(2026, 8, 26)) if e.symbol == "TSLA")
+    assert later.trade_id() == first.trade_id()
+
+
+def test_id_falls_back_to_the_open_timestamp_when_no_order_id() -> None:
+    """Absent order id must not silently re-collide.
+
+    `Fill.order_id` defaults to "". If a payload ever parses without one, the
+    opening timestamp carries the same distinction at lower resolution — the
+    one thing that must not happen is quietly reverting to the date-only key.
+    """
+    mk = lambda ts, px, eff, side: rh_sync.Fill(  # noqa: E731
+        symbol="TSLA", ts=__import__("datetime").datetime.fromisoformat(ts),
+        option_type="call", strike=355.0,
+        expiration=date(2026, 8, 24), signed_qty=1.0 if side == "buy" else -1.0,
+        price=px, effect=eff, order_id="")
+    a = rh_sync.Episode(symbol="TSLA", fills=[
+        mk("2026-08-24T14:00:00+00:00", 2.05, "open", "buy"),
+        mk("2026-08-24T15:00:00+00:00", 3.40, "close", "sell")])
+    b = rh_sync.Episode(symbol="TSLA", fills=[
+        mk("2026-08-24T17:00:00+00:00", 2.65, "open", "buy"),
+        mk("2026-08-24T18:00:00+00:00", 2.25, "close", "sell")])
+    assert a.trade_id() != b.trade_id()
+
+
+def test_one_tracked_row_cannot_absorb_two_round_trips(monkeypatch) -> None:
+    """The second half of the same-day leak.
+
+    `_matches_tracked` is deliberately fuzzy — same symbol, same contracts,
+    opened within 5 days — so a manually-entered position still reconciles with
+    its broker-side view. Unbounded, that fuzziness lets ONE tracked row claim
+    every re-entry on the contract: the extra round trips report as
+    `already_tracked` and their realized P&L never enters the corpus. Fixing
+    `trade_id` alone would have moved the loss from an overwrite to a silent
+    skip rather than removing it.
+    """
+    p = _payload(
+        _order("o1", "TSLA", [
+            ("buy", "open", "call", 355.0, "2026-08-24", 2.05, 1)], "2026-08-24T14:00:00Z"),
+        _order("o2", "TSLA", [
+            ("sell", "close", "call", 355.0, "2026-08-24", 3.40, 1)], "2026-08-24T15:00:00Z"),
+        _order("o3", "TSLA", [
+            ("buy", "open", "call", 355.0, "2026-08-24", 2.65, 1)], "2026-08-24T17:00:00Z"),
+        _order("o4", "TSLA", [
+            ("sell", "close", "call", 355.0, "2026-08-24", 2.25, 1)], "2026-08-24T18:00:00Z"),
+    )
+    eps = rh_sync.build_episodes(rh_sync.load_fills(p), as_of=date(2026, 8, 25))
+    assert len(eps) == 2
+    # Pretend the FIRST round trip is already tracked; the second must not be
+    # swallowed by it.
+    already = rh_sync.episode_to_trade(eps[0])
+
+    class _Repo:
+        @staticmethod
+        def list_paper_trades(_n):
+            return [already]
+
+        @staticmethod
+        def save_paper_trade(_t):
+            raise AssertionError("dry-run must not write")
+
+    import app.db.repository as real
+    for name in ("list_paper_trades",):
+        monkeypatch.setattr(real, name, getattr(_Repo, name))
+
+    report = rh_sync.sync(p, apply=False)
+
+    # Exactly ONE episode reconciles against the tracked row. Which bucket it
+    # lands in depends on that row's status (here OPEN, so it closes in place);
+    # the load-bearing part is that it claims one episode, not both.
+    reconciled = report["already_tracked"] + report["closed_in_place"]
+    assert len(reconciled) == 1, reconciled
+    assert already.id in reconciled[0]
+
+    # The other round trip survives as its own trade, carrying its own P&L.
+    assert len(report["created_closed"]) == 1, report["created_closed"]
+    assert "pnl -40.00" in report["created_closed"][0]
+    assert already.id not in report["created_closed"][0]

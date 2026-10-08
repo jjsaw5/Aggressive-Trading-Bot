@@ -222,7 +222,15 @@ class Settings(BaseSettings):
     # only payoff. A MAJOR bump, not a point release — this changes which
     # instrument a signal is expressed in, not a coefficient. See
     # CAPTURE_WINDOW_PREREGISTRATION.md section 8, Amendment 2.
-    scoring_model_version: str = "sd-scoring-2026.08-v4.1"
+    # Amendment 4 (2026-08-12): the RISK LIMITS moved (equity 2k -> 25k,
+    # per-trade cap 100 -> 500). That is a model change, not a config tweak:
+    # shortduration/contracts.py passes `max_debit_usd=policy.max_trade_risk_usd`
+    # into selection, and scoring/components.py:184 reads `reward_to_risk` off
+    # the SELECTED plan — so a different budget selects a different structure and
+    # moves a scored component. Measured on a 2-DTE fixture, the chosen spread
+    # went 252/255 x1 -> 250/256 x2 and a long call appeared alongside it.
+    # Third instance of the FINDING_01 / Amendment 2 pattern. See §8, Amendment 4.
+    scoring_model_version: str = "sd-scoring-2026.08-v5.0"
     risk_policy_version: str = "sd-risk-2026.07-v1"
 
     # --- Display bands (presentation only — NOT scoring inputs) ---------------
@@ -246,6 +254,23 @@ class Settings(BaseSettings):
     # is better, so the polarity is inverted relative to POP.
     display_cost_drag_good: float = 0.15
     display_cost_drag_bad: float = 0.30
+
+    # --- Trade evaluator (on-demand grading of a HUMAN-proposed trade) --------
+    # Its own version, deliberately NOT `scoring_model_version`. The evaluator
+    # calls the frozen scorer's neighbours read-only but produces a different
+    # artifact answering a different question, and borrowing the frozen version
+    # would make a change to the evaluator look like a change to the shipped
+    # scoring model — exactly the confusion the freeze exists to prevent.
+    # Bumping this does NOT end the capture window; the freeze controls in
+    # `tests/test_scoring_freeze.py` and `tests/test_scoring_golden.py` are the
+    # authority on that and are untouched by anything under this heading.
+    trade_eval_version: str = "trade-eval-2026.08-v1"
+    # Persist evaluations to their OWN table for later validation. Never writes
+    # to `decision_snapshots` — the capture corpus has been polluted twice by
+    # code that persisted as a side effect, and `tests/test_trade_evaluator_
+    # isolation.py` pins the separation.
+    trade_eval_persist: bool = True
+
     scoring_0dte_weights: dict[str, float] = Field(
         default_factory=lambda: {
             "price_structure": 22, "market_alignment": 15, "relvol_momentum": 15,
@@ -305,12 +330,18 @@ class Settings(BaseSettings):
     short_duration_scan_1_5dte_seconds: int = 900  # 15 min
 
     # --- Account / risk policy ---
-    # Defaults are the "aggressive but defined-risk" profile: 5%/trade, 15%
-    # account. This aligns the % cap with the $100 absolute per-trade cap and
-    # makes the mega-cap universe tradeable with defined-risk spreads. A $2k
-    # account cannot size these spreads at a 2% ($40) cap. Tighten via env for a
-    # more conservative stance (and pair it with a lower-priced universe).
-    account_equity_usd: float = 2_000.0
+    # Defaults are the "aggressive but defined-risk" profile. The ABSOLUTE
+    # per-trade cap (max_defined_risk_per_trade_usd) is what binds, not the
+    # percentage: min(25_000 * 0.05, 500) = 500. Tighten via env for a more
+    # conservative stance.
+    #
+    # Amendment 4 (2026-08-12): equity 2_000 -> 25_000, per-trade 100 -> 500.
+    # At $100 a near-ATM SINGLE LEG could not be sized at one contract on any
+    # liquid name (a 2-DTE $250 underlying prices its ATM call near $261), so
+    # `build_long_option_plan` returned None and the board showed spreads only.
+    # The cap, not a structure preference, was suppressing single legs.
+    # This is a MODEL CHANGE — see the note on scoring_model_version.
+    account_equity_usd: float = 25_000.0
     # Realistic round-trip costs applied when a decision is resolved to a P&L, so
     # the outcome ledger stores NET (not gross) — a picker that looks good gross can
     # be underwater net. commission is per-contract per-leg per-transaction (open +
@@ -341,7 +372,7 @@ class Settings(BaseSettings):
     max_account_risk_pct: float = 0.15
     max_trade_risk_pct: float = 0.05
     max_concurrent_positions: int = 4
-    max_defined_risk_per_trade_usd: float = 100.0
+    max_defined_risk_per_trade_usd: float = 500.0  # Amendment 4; binds over the 5% pct cap
     max_contracts_per_trade: int = 20  # concentration / fill-risk cap
 
     # --- Database ---

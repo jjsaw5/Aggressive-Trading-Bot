@@ -45,7 +45,15 @@ _STRATEGIES = _APP / "shortduration" / "strategies"
 # regenerated golden file and tests/test_contract_selection_amendment2.py.
 # This constant moves ONLY alongside such a declaration — that is the whole
 # point of the test below.
-FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v4.1"
+# Amendment 4 (2026-08-12): v4.1 -> v5.0. The RISK LIMITS moved (equity
+# 2_000 -> 25_000, per-trade cap 100 -> 500). Not a coefficient change and not a
+# scoring-code change — `shortduration/contracts.py` feeds
+# `policy.max_trade_risk_usd` into selection as `max_debit_usd`, and
+# `scoring/components.py:184` reads `reward_to_risk` off the SELECTED plan, so a
+# different budget selects a different structure and moves a scored component.
+# MAJOR bump: it changes which instrument a signal is expressed in.
+# Declared with a dated §8 amendment and tests/test_risk_limits_freeze.py.
+FROZEN_MODEL_VERSION = "sd-scoring-2026.08-v5.0"
 
 # Modules Phase 1 introduced. None of them may be reachable from the scorer.
 CAPTURE_ONLY_MODULES = {

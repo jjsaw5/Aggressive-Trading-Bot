@@ -1810,3 +1810,59 @@ P&L on a *closed* row: 0.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — eleventh entry.
 - Environment-safety guard from Entry 8 still unfixed — twelfth entry.
+
+---
+
+## Entry 20 — 2026-10-08 — Scheduled sync, market close
+
+**Run:** market close, 20:16 UTC. Orders pulled `created_at_gte=2026-10-08`;
+2 filled orders returned, no pagination cursor. Merged by order id: 1,170 ->
+1,171 orders, 1 new.
+
+**Result:** `created_closed` 0, `created_open` 0, `closed_in_place` **1**,
+`already_tracked` 577.
+
+- QQQ 754p exp 10-08 x1, +2.06 -> +0.82, **-$124**
+
+**Day total: 1 close, -$124.**
+
+**The re-entry noted in Entry 19 resolved, and it lost more than the original.**
+Option id `75f3e055` — QQQ 754p — has now been traded twice: -$53 on 10-07
+(+3.22 -> +2.69), then -$124 on 10-08 (+2.06 -> +0.82). The second attempt was
+entered at a 36% lower premium and lost 60% of it, against 16% lost on the
+first. Two episodes, two distinct rows, **-$177 total on one contract.**
+
+Entry 19 said no judgement would be recorded until there was data; there is now
+exactly one more data point, which is not data. Recorded as the factual pair,
+not as a finding: n=2 on a single contract supports no inference, and the
+registries that would let it support one are still empty.
+
+**Reconciliation:** report 577 + 1 = 578; stored closed rows = 578; stored
+realized -$3,800.93 = prior -$3,676.93 - $124. Hand-computed from the raw fills
+((0.82 - 2.06) x 1 x 100) = -$124, equal to the stored value. Open positions 0.
+Null realized P&L on a closed row: 0.
+
+**Risk check:** 1 contract at +2.06 = $206, within the $500 cap; 1 of 4
+concurrent; 1 of 20 contracts. Within policy.
+
+**Grading:** the close failed on `entry_spot NOT NULL` — 1 failure logged for
+`rh98131d1435`. `0005` still unapplied; `decision_outcomes` for `rh` trades
+still 0.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, ninth link.** `rh_orders_full_1008.json` ->
+   `rh_orders_full_1008c.json`. Eighth consecutive run choosing the base file
+   by eye. Unchanged; carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **578 closed round trips, -$3,800.93** realized; 0 open.
+- October to date: 22 round trips, **-$521**. The month's only profitable day
+  remains 10-06 (+$249); 10-07 (-$347) and 10-08 (-$124) have more than undone it.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — twelfth entry.
+- Environment-safety guard from Entry 8 still unfixed — thirteenth entry.

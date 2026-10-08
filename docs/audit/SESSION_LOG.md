@@ -1753,3 +1753,60 @@ unapplied; `decision_outcomes` for `rh` trades still 0.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — tenth entry.
 - Environment-safety guard from Entry 8 still unfixed — eleventh entry.
+
+---
+
+## Entry 19 — 2026-10-08 — Scheduled sync, market open
+
+**Run:** market open, 13:40 UTC. Orders pulled
+`created_at_gte=2026-10-07T20:00:00Z`; 1 filled order returned, no pagination
+cursor. Merged by order id: 1,169 -> 1,170 orders, 1 new.
+
+**Result:** `created_closed` 0, `created_open` **1**, `closed_in_place` 0,
+`already_tracked` 577.
+
+- QQQ 754p exp 2026-10-08 x1, entry +2.06 — **still open**
+
+Nothing closed, so no day P&L. The open row's realized P&L is `NULL`, not
+`0.0`. Entry came from the execution (+2.06), not the order limit (+2.09).
+
+**This is a re-entry on the exact contract that lost yesterday.** Option id
+`75f3e055-f9d3-4c6a-b2de-e34ffc414725` — QQQ 754p expiring 10-08 — was opened
+at +3.22 and closed at +2.69 for **-$53** on 10-07 (row `rhe8a5131227`,
+Entry 18). It has been bought again at +2.06. The new row is `rh98131d1435`,
+a distinct id, which is the correct behaviour: the two episodes share symbol,
+legs and contract but differ in opening order, so neither overwrites the other.
+Worth noting as a second independent confirmation of the Entry 11 fix, this
+time across a day boundary rather than within one session.
+
+No judgement recorded about re-entering the same strike a day later at a lower
+premium — that is the human's thesis, and the data to evaluate it does not
+exist while `decision_outcomes` is empty. Noted only so the pair is traceable
+when it does.
+
+**Risk check:** 1 contract at +2.06 = $206 defined risk of the $500 cap; 1 of
+4 concurrent; 1 of 20 contracts; $206 of $3,750 aggregate heat. Within policy.
+
+**Reconciliation:** closed rows unchanged at 577, realized -$3,676.93 —
+correct, since nothing closed. One open row, realized `NULL`. Null realized
+P&L on a *closed* row: 0.
+
+**Grading:** no close this run, so no grade attempt. `0005` still unapplied;
+`decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, eighth link.** `rh_orders_full_1007c.json` ->
+   `rh_orders_full_1008.json`. Seventh consecutive run choosing the base file
+   by eye. Unchanged; carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **577 closed round trips, -$3,676.93** realized; **1 open** (QQQ 754p).
+- October to date: 21 closed round trips, **-$397**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — eleventh entry.
+- Environment-safety guard from Entry 8 still unfixed — twelfth entry.

@@ -1866,3 +1866,70 @@ still 0.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — twelfth entry.
 - Environment-safety guard from Entry 8 still unfixed — thirteenth entry.
+
+---
+
+## Entry 21 — 2026-10-13 — Scheduled sync, market close; four quiet runs preceding
+
+**Runs covered.** This entry closes out five firings: 10-09 open and close,
+10-12 open and close, and 10-13 open all returned **zero filled orders** and
+wrote nothing. No entry was made for those because nothing changed and no
+decision was taken — a read that finds nothing is not a working session, and
+logging it twice a day would bury the entries that carry information. Recorded
+here so the gap between Entry 20 and this one is a stated fact rather than a
+hole. The 10-09 open run additionally re-ran the sync against the unchanged
+payload and confirmed 0/0/0 against all 578 rows.
+
+**This run:** market close, 20:16 UTC. Orders pulled
+`created_at_gte=2026-10-13`; 2 filled orders returned, no pagination cursor.
+Merged by order id: 1,171 -> 1,173 orders, 2 new.
+
+**Result:** `created_closed` 1, `created_open` 0, `closed_in_place` 0,
+`already_tracked` 578.
+
+- QQQ 745c exp 10-13 x1, +0.83 -> +0.07, **-$76**
+
+**Day total: 1 close, -$76.** Both legs landed in this run because the position
+opened at 13:56, after the 13:41 market-open sync — the morning run saw nothing
+and correctly reported nothing. Worth noting the window: a position opened and
+closed between two syncs is still captured, because the payload is cumulative
+and episodes are reconstructed from fills rather than from what each run
+happens to see.
+
+**The exit was +0.07 on an 0DTE call.** Entry at +0.83, held just under six
+hours to expiry day's close, sold for 8% of premium. This is the shape where
+the cost question is sharpest: the position was almost certainly worthless by
+the time it was closed, and the $7 recovered is within the spread of what it
+cost to transact. Stated as an observation about this fill, not a claim about
+the strategy — with `decision_outcomes` empty there is still nothing to test it
+against.
+
+**Reconciliation:** report 578 + 1 = 579; stored closed rows = 579; stored
+realized -$3,876.93 = prior -$3,800.93 - $76. Hand-computed from the raw fills
+((0.07 - 0.83) x 1 x 100) = -$76, equal to the stored value. Open positions 0.
+Null realized P&L on a closed row: 0.
+
+**Risk check:** 1 contract at +0.83 = $83 defined risk, well inside the $500
+cap; 1 of 4 concurrent; 1 of 20 contracts. Within policy.
+
+**Grading:** the close failed on `entry_spot NOT NULL` — 1 failure logged.
+`0005` still unapplied; `decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** One:
+
+1. **Payload filename chain, tenth link.** `rh_orders_full_1008c.json` ->
+   `rh_orders_full_1013c.json`. The four quiet runs did not extend the chain
+   because none of them wrote a payload. Ninth write-run choosing the base file
+   by eye. Unchanged since Entry 13; carrying forward.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched.
+- Corpus: **579 closed round trips, -$3,876.93** realized; 0 open.
+- October to date: 23 round trips, **-$597**. One profitable day (10-06,
+  +$249) against five losing ones.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — thirteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — fourteenth entry.

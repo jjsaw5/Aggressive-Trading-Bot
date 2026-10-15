@@ -2028,3 +2028,80 @@ the authority, or drop the numbers from §5 entirely and let it point at
 - **Robinhood connector unavailable this run** — reported to the owner once.
 - Credential rotation still outstanding — fourteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — fifteenth entry.
+
+---
+
+## Entry 23 — 2026-10-15 — Container recycled; recovery, and a compromised credential restored again
+
+**No trading to record.** Robinhood returned **zero** filled orders since the
+10-13 close, so nothing was synced. The corpus is unchanged and verified
+against the database directly: 579 closed, -$3,876.93, 0 open, last close
+`2026-10-13 19:35:55`. This entry exists for the recovery work and the decision
+inside it, not for any trade.
+
+**The container was recycled between the 13:40 and 20:15 firings.** Casualties:
+
+- `.env` gone — no database credentials, so no sync could have been written.
+- Scratchpad emptied — the cumulative order payload (`rh_orders_full_*.json`,
+  1,173 orders) is **destroyed**. It was never anything but a cache; it is
+  rebuildable from the broker, and the database is the system of record.
+- Python dependencies gone.
+
+The checkout survived at `395e7ca` with the collision fix present (2
+occurrences) and 23 log entries — so unlike this morning, the tree was sound.
+
+### Interpreter drift — the routine's own command would have failed
+
+`pip install -e .` installed into **Python 3.13**, while `python` and `python3`
+both resolve to **3.11.17**, which has no `sqlalchemy`. The routine says to run
+`python scripts/rh_sync.py`; that command would have died on
+`ModuleNotFoundError` with nothing synced. Used `python3.13` explicitly.
+
+This is the same class of problem as the payload filename chain: the procedure
+names a thing (`python`, `rh_orders_full.json`) that is not pinned to what it
+means, so it keeps meaning something different after each recycle. Noted
+because it will recur, and because a routine that silently cannot run is worse
+than one that visibly cannot.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **A credential known to be compromised was written to `.env` for the third
+   time.** The Turso token restored this run is the one pasted into a session
+   transcript on 09-24. §4 is unambiguous: a key written down anywhere but a
+   secret store "is already compromised — rotate it, do not reason about who
+   might have seen it." It has not been rotated, and I restored it rather than
+   stopping, because the owner's standing instruction of 09-24 was to keep
+   these credentials available and the sync cannot reach the database without
+   them. The value was not printed, echoed, committed, or placed in any
+   artifact; `.env` is `chmod 600` and `git check-ignore` confirms it is
+   ignored and untracked. **That care does not make the token uncompromised.**
+   Every recycle re-creates this choice, and each one is another session where
+   the honest answer is that the fix was deferred. The fix is two owner
+   actions, neither of which an agent can take: rotate the token
+   (`turso db tokens invalidate` / `create`), and put the new one in the
+   deployment's environment-variable store so it survives a recycle and never
+   needs restoring from a transcript again. **Fourteenth entry carrying this.**
+
+2. **The run depended on reconstructing state from conversation context.**
+   `.env` was restored from a value held in this session's context, and the
+   pull window (`created_at_gte=2026-10-14`) was chosen from the knowledge that
+   the account was flat at the 10-13 close. The window choice was then
+   *verified* against the database before use (`open = 0`), which is the right
+   order and is why it is safe. But if this session had been compacted past
+   those facts, neither would have been recoverable, and the routine has no
+   instruction for that case. Recorded so the dependency is visible: the
+   scheduled sync is not currently self-contained.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Checkout `395e7ca`; collision fix verified present; 23 entries before this one.
+- Corpus: **579 closed round trips, -$3,876.93** realized; 0 open. Unchanged.
+- October to date: 23 round trips, **-$597**.
+- Cumulative order payload cache **destroyed**; rebuildable from the broker.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction from Entry 22 **unresolved** —
+  awaiting the owner, since §5 is a governing document.
+- Environment-safety guard from Entry 8 still unfixed — sixteenth entry.

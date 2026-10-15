@@ -155,7 +155,12 @@ def test_dotted_versions_are_parsed_for_degradation(version: str, degraded: bool
 def test_the_configured_model_version_is_the_amended_one() -> None:
     from app.config import settings
 
-    assert settings.scoring_model_version == "sd-scoring-2026.08-v4.1"
+    # Imported, not restated. This file had its own copy of the version
+    # string; Amendment 4 made that the THIRD copy to update by hand, so it
+    # now reads the single pin in test_scoring_freeze.py.
+    from tests.test_scoring_freeze import FROZEN_MODEL_VERSION
+
+    assert settings.scoring_model_version == FROZEN_MODEL_VERSION
 
 
 def test_suspended_and_observation_only_are_disjoint() -> None:

@@ -1933,3 +1933,98 @@ cap; 1 of 4 concurrent; 1 of 20 contracts. Within policy.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — thirteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — fourteenth entry.
+
+---
+
+## Entry 22 — 2026-10-15 — A stale checkout caught before it ran; CLAUDE.md §5 contradicts the risk policy
+
+**No sync ran.** The Robinhood MCP server was unavailable this firing — four
+ToolSearch queries returned no `get_option_orders` — so no orders were pulled
+and nothing was written to the corpus. Per the routine's own instruction this
+is reported to the owner once and not repeated while nothing changes.
+
+Two findings, both caught before they could do damage, neither of them about
+trading.
+
+### 1. The checkout had silently reverted to `main`, and the sync would have corrupted data
+
+The working tree was at **`f9f98f0`** — the merge of PR #56 — while the branch
+*name* was still `claude/options-trading-platform-cl6v83` and `origin` carried
+all the work at `040a453`. Concretely, in that tree:
+
+- `scripts/rh_sync.py` contained **zero** occurrences of `opening_order_id`:
+  the Entry 11 collision fix was absent.
+- `app/config.py` read `v4.1`, equity $2,000, per-trade cap $100 — Amendment 4
+  gone.
+- `docs/audit/SESSION_LOG.md` ended at **Entry 7**. Entries 8 through 21 did
+  not exist.
+
+**Had the sync run from that tree it would have re-introduced the data loss**
+across every episode since 10-08, overwriting same-contract round trips exactly
+as described in Entry 11. Fast-forwarded to `040a453` and re-verified: fix
+present (2 occurrences), config at v5.0 / $25,000, 22 entries in the log.
+
+This is the **third** occurrence of this exact failure in this session —
+Entry 12 recorded it as a deviation and said it "should be a guard in the
+script instead." It still is not. What caught it this time was not a control
+either: it was noticing that the governance file re-read at session start had
+reverted to its pre-Amendment-4 text. That is luck wearing the costume of
+diligence. `scripts/rh_sync.py` should refuse to run when the tree lacks its
+own fix — a one-line assertion on a marker it must contain — and the check
+should not depend on anyone reading a diff.
+
+### 2. CLAUDE.md §5 still carries the pre-Amendment-4 limits
+
+`docs/RISK_POLICY.md`, which CLAUDE.md §8 names as **the** authority for hard
+limits, says: per-trade $500, aggregate heat $3,750, equity $25,000.
+**CLAUDE.md §5 says `$100 max risk per trade · $300 aggregate account heat`.**
+
+Amendment 4 (`f65aee6`) did edit CLAUDE.md — it rewrote §9 to record that the
+old self-contradiction was resolved — and left §5's summary numbers stale in
+the same commit. So the amendment that fixed one document contradicting itself
+created a new contradiction between two documents, one of them the governance
+file, and it has stood since 2026-08-12.
+
+This is not academic. Under §5's numbers, positions logged as "within policy"
+in this log were breaches: **$474** on 10-07 (Entry 17) and **$344** on 10-06
+(Entry 16), each against a $100 cap. Under RISK_POLICY.md they are fine. My
+risk checks in Entries 15-21 cited $500/$3,750 — the authority's numbers, which
+I believe is the correct reading of §8 — but I did not notice until today that
+§5 disagreed, and a reader checking compliance against the governance file
+would have reached the opposite verdict on two positions.
+
+**Not corrected here.** §5 is a governing document and the repo's own precedent
+(the former §9 note) is that these are not edited unilaterally. The fix is one
+line and the owner should make it: either update §5 to `$500 / $3,750` to match
+the authority, or drop the numbers from §5 entirely and let it point at
+`RISK_POLICY.md`, which is the only way a summary cannot go stale again.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **A scheduled run proceeded for 13 firings on an unverified assumption.**
+   Every sync since Entry 12 began with a manual `grep -c opening_order_id`,
+   and every one passed, which is exactly why today's failure was survivable.
+   But the grep is a habit in a transcript, not a control in the repository: it
+   lives nowhere, nothing enforces it, and the moment a run skips it the data
+   loss returns silently. Recorded as a deviation rather than a success because
+   "I remembered to check" is the same category of governance failure as the
+   uncommitted session-log rule this file was created to prevent.
+
+2. **A compliance claim was repeated six times without checking it against the
+   governance file.** See finding 2. The numbers I used were the authority's
+   and I stand by them, but I asserted "within policy" in Entries 15, 17, 18,
+   19, 20 and 21 while the file that states the policy said otherwise, and I
+   had read that file at the start of every one of those sessions.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No scoring-path file touched. No code changed.
+- Checkout restored to `040a453`; collision fix verified present.
+- Corpus unchanged: **579 closed round trips, -$3,876.93** realized; 0 open.
+- October to date: 23 round trips, **-$597**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- **Robinhood connector unavailable this run** — reported to the owner once.
+- Credential rotation still outstanding — fourteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — fifteenth entry.

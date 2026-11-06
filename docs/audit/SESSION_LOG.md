@@ -2105,3 +2105,84 @@ than one that visibly cannot.
 - `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction from Entry 22 **unresolved** —
   awaiting the owner, since §5 is a governing document.
 - Environment-safety guard from Entry 8 still unfixed — sixteenth entry.
+
+---
+
+## Entry 24 — 2026-11-06 — Trading resumes after seventeen quiet sessions
+
+**Runs covered.** Every firing from 10-14 open through 11-06 open — **34
+consecutive scheduled runs** — returned zero filled orders and wrote nothing.
+No entry was made for any of them, for the reason stated in Entry 21: a read
+that finds nothing is not a working session. Recorded here so the gap between
+Entry 23 and this one is a stated fact. Checkout, `.env` and dependencies were
+verified present on every run.
+
+**This run:** market close, 20:16 UTC. Orders pulled
+`created_at_gte=2026-10-14`; 2 filled orders returned, no pagination cursor.
+
+**Result:** `created_closed` 1, `created_open` 0, `closed_in_place` 0.
+
+- QQQ 674c exp 11-06 x1, +0.30 -> +0.79, **+$49**
+
+**Day total: 1 close, +$49.** First trade since 10-13 — a 24-day pause.
+
+### The reconciliation was weaker this run, and that is worth naming
+
+The cumulative order payload was destroyed with the container (Entry 23), so
+this run passed **only the day's slice**, not the whole history. The report
+therefore read `already_tracked (0)`: with no history in the payload there was
+nothing for the script to recognise, and the usual check — report counts
+against stored rows — could not run. What was checked instead:
+
+- the account was **flat** before the window (`open = 0`, last close
+  `2026-10-13 19:35:55`), verified against the database *before* the pull, so
+  no episode can straddle the boundary and a windowed payload is complete;
+- stored closed rows moved 579 -> **580**, exactly the one episode created;
+- stored realized moved -$3,876.93 -> **-$3,827.93**, a delta of **+$49**,
+  equal to the hand computation from the raw fills ((0.79 - 0.30) x 1 x 100).
+
+That is a sound check, but it is a different one, and it only works because the
+account happened to be flat. **With an open position at the window boundary a
+sliced payload could mis-book an episode**, and nothing in the procedure would
+catch it. The cumulative payload was load-bearing and its loss is not yet
+repaired; the fix remains the one named in Entry 13 — pin the payload inside
+`scripts/rh_sync.py` so the script owns it, rather than a filename that dies
+with the container.
+
+**Risk check:** 1 contract at +0.30 = **$30** defined risk, the smallest
+position in this log; 1 of 4 concurrent; 1 of 20 contracts. Within policy on
+`RISK_POLICY.md`'s numbers. `CLAUDE.md` §5's stale numbers ($100 / $300) would
+also pass this one, so the contradiction from Entry 22 does not bite here —
+**it is still unresolved.**
+
+**Grading:** the close failed on `entry_spot NOT NULL`, as all 580 have.
+`0005` still unapplied; `decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **The run's reconciliation could not use the report, only the stored delta.**
+   See above. Not a failure of this run — the substitute check is valid given
+   verified flatness — but the stronger check is gone until the payload is
+   restored or the script owns it, and a future run may not be so lucky in its
+   boundary conditions.
+
+2. **The payload-filename defect, first recorded in Entry 13, has now caused a
+   loss of capability rather than a near miss.** Eight entries have carried it
+   forward as a hazard. The container recycle made it concrete: the cumulative
+   file is gone, so the report-vs-stored check that caught the Entry 11 data
+   loss no longer runs. Carrying forward, now with an actual cost rather than a
+   hypothetical one.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **580 closed round trips, -$3,827.93** realized; 0 open.
+- November to date: 1 round trip, **+$49**.
+- Cumulative order payload: **still destroyed**; syncs are running on windowed
+  slices validated against database flatness.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction (Entry 22) **unresolved**.
+- Credential rotation still outstanding — fifteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — seventeenth entry.

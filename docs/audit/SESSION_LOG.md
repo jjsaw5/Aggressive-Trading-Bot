@@ -2186,3 +2186,91 @@ also pass this one, so the contradiction from Entry 22 does not bite here —
 - `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction (Entry 22) **unresolved**.
 - Credential rotation still outstanding — fifteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — seventeenth entry.
+
+---
+
+## Entry 25 — 2026-11-09 — Four round trips, all profitable; the §5 contradiction now bites
+
+**Run:** market close, 20:15 UTC. Orders pulled `created_at_gte=2026-11-07`;
+8 filled orders returned, no pagination cursor.
+
+**Result:** `created_closed` 4, `created_open` 0, `closed_in_place` 0.
+
+- QQQ 672c exp 11-09 x1, +0.71 -> +1.05, **+$34**
+- QQQ 672c exp 11-09 x1, +1.08 -> +1.44, **+$36**
+- SPY 748c exp 11-09 x1, +1.32 -> +1.82, **+$50**
+- QQQ 676c exp 11-09 x1, +1.65 -> +1.82, **+$17**
+
+**Day total: 4 closes, +$137.** All four winners — the first day in this log
+with no losing round trip at n >= 4.
+
+### The collision fix fired again, and this time ten seconds apart
+
+QQQ 672c (option id `a9f2ffe7-7522-4d14-b374-755db96b3760`) was closed at
+14:33:36 and reopened at **14:33:46** — ten seconds later — then closed again
+at 14:40:06. Under the pre-fix `trade_id` both round trips hashed to one row
+and the day would have booked **+$103 instead of +$137**. They came back as
+`rh239813352f` and `rh853b1af3b1`, separate rows with separate P&L. Second
+live within-session confirmation (after 10-06), third counting the across-day
+case on 10-08.
+
+### Risk check — and the governance contradiction is no longer academic
+
+Positions were sequential; concurrency never exceeded 1 of 4, contracts 1 of 20.
+Defined risk per trade, from the execution prices: $71, $108, $132, $165.
+
+Against `docs/RISK_POLICY.md` ($500 cap): **all within policy.**
+Against `CLAUDE.md` §5's stale text ($100 cap): **three of the four are
+breaches** — $108, $132 and $165.
+
+Entry 22 recorded this contradiction and said it was not academic. Today it
+decides the verdict on most of a day's trading. I am reporting against
+RISK_POLICY.md, which §8 names as the authority for hard limits, and I believe
+that is the correct reading — but a reader checking compliance against the
+governance file would conclude three breaches occurred, and both readings
+cannot be right. **This needs the owner's one-line fix**, as described in
+Entry 22: set §5 to $500 / $3,750, or delete the numbers from §5 and let it
+point at `RISK_POLICY.md`.
+
+**Reconciliation.** Same substitute as Entry 24, for the same reason (the
+cumulative payload is still destroyed, so `already_tracked` read 0):
+
+- account **flat** before the window — `open = 0`, last close
+  `2026-11-06 14:47:45` — verified against the database before the pull, so no
+  episode can straddle the boundary;
+- stored closed rows 580 -> **584**, exactly the four episodes created;
+- stored realized -$3,827.93 -> **-$3,690.93**, a delta of **+$137**, equal to
+  the hand sum from the raw fills (+34 +36 +50 +17).
+
+**Grading:** all 4 closes failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0. The best day in the
+log by win rate is therefore attached to no score at all.
+
+### DEVIATIONS
+
+**Not None.** Two:
+
+1. **Reconciliation still runs on the weaker check.** As Entry 24: verified
+   flatness plus stored delta, not report-vs-stored. Valid here because the
+   account was flat, and today it was flat twice over — but this is the second
+   consecutive run depending on that luck. The payload fix named in Entry 13
+   is now nine entries old.
+
+2. **A compliance verdict was reported under one document while another
+   governing document contradicts it.** See above. I did not change either
+   file, and I believe the authority's reading is right, but the honest
+   statement is that today's risk check has two answers and the repository has
+   not chosen between them.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **584 closed round trips, -$3,690.93** realized; 0 open.
+- November to date: 5 round trips, **+$186**.
+- Cumulative order payload: **still destroyed**; syncs run on windowed slices
+  validated against database flatness.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved and now
+  load-bearing**.
+- Credential rotation still outstanding — sixteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — eighteenth entry.

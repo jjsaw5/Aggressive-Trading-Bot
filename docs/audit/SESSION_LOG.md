@@ -2274,3 +2274,58 @@ log by win rate is therefore attached to no score at all.
   load-bearing**.
 - Credential rotation still outstanding — sixteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — eighteenth entry.
+
+---
+
+## Entry 26 — 2026-11-10 — Scheduled sync, market close
+
+**Run:** market close, 20:15 UTC. Orders pulled `created_at_gte=2026-11-10`;
+2 filled orders returned, no pagination cursor.
+
+**Result:** `created_closed` 1, `created_open` 0, `closed_in_place` 0.
+
+- NVDA 165p exp 11-11 x1, +1.75 -> +1.99, **+$24**
+
+**Day total: 1 close, +$24.** Both legs landed in this run — the position
+opened at 15:56, after the 13:40 market-open sync, which correctly reported
+nothing. First NVDA trade in the corpus since 2026-04.
+
+**Reconciliation.** Same substitute as Entries 24-25 (cumulative payload still
+destroyed, so `already_tracked` read 0):
+
+- account **flat** before the window — `open = 0`, last close
+  `2026-11-09 15:49:06` — verified against the database before the pull;
+- stored closed rows 584 -> **585**, exactly the one episode;
+- stored realized -$3,690.93 -> **-$3,666.93**, a delta of **+$24**, equal to
+  the hand computation from the raw fills ((1.99 - 1.75) x 1 x 100).
+
+**Risk check:** 1 contract at +1.75 = **$175** defined risk; 1 of 4 concurrent;
+1 of 20 contracts. Within `RISK_POLICY.md`'s $500 cap. **Against `CLAUDE.md`
+§5's stale $100 this is a breach** — the second consecutive session where the
+two governing numbers disagree about the verdict. Reported against
+`RISK_POLICY.md` per §8.
+
+**Grading:** the close failed on `entry_spot NOT NULL`. `0005` still unapplied;
+`decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** Two, both unchanged and both carried forward:
+
+1. **Reconciliation on the weaker check** — verified flatness plus stored
+   delta, not report-vs-stored. Third consecutive run. The payload fix from
+   Entry 13 is ten entries old.
+
+2. **Two governing documents give different compliance verdicts** on this
+   day's single position, as on four of 11-09's. Entry 22 named the fix; it is
+   one line and it is the owner's.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **585 closed round trips, -$3,666.93** realized; 0 open.
+- November to date: 6 round trips, **+$210**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
+- Credential rotation still outstanding — seventeenth entry.
+- Environment-safety guard from Entry 8 still unfixed — nineteenth entry.

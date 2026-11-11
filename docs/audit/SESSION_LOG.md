@@ -2329,3 +2329,99 @@ two governing numbers disagree about the verdict. Reported against
 - `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
 - Credential rotation still outstanding — seventeenth entry.
 - Environment-safety guard from Entry 8 still unfixed — nineteenth entry.
+
+---
+
+## Entry 27 — 2026-11-11 — A stop-triggered exit is recorded as `manual`
+
+**Run:** market close, 20:16 UTC. Orders pulled `created_at_gte=2026-11-11`;
+6 filled orders returned, no pagination cursor.
+
+**Result:** `created_closed` 3, `created_open` 0, `closed_in_place` 0.
+
+- QQQ 685p exp 11-11 x1, +2.12 -> +1.47, **-$65**
+- QQQ 683p exp 11-11 x1, +1.64 -> +0.95, **-$69**
+- QQQ 701c exp 11-13 x1, +0.92 -> +2.28, **+$136**
+
+**Day total: 3 closes, +$2.**
+
+### New finding: the exit label is wrong, not merely absent
+
+The 701c exit was **not** a manual sell. The broker order carries
+`trigger: "stop"`, `stop_price: 2.30`, `type: "limit"`, `time_in_force: "gtc"`
+— a stop-limit resting order, placed 15 minutes before it filled at 2.28. The
+corpus records its `exit_reason` as **`manual`**.
+
+The cause is in `scripts/rh_sync.py::Episode.exit_reason`, which is two lines:
+
+    return ExitReason.EXPIRY if last.effect == "expiry" else ExitReason.MANUAL
+
+`ExitReason` already defines `STOP_LOSS`, `PROFIT_TARGET`, `TIME_STOP` and
+`INVALIDATION`. The importer can emit only two of the six, so every
+non-expiry exit in all **588** rows reads `manual`, whatever actually closed
+it. The broker has been supplying `trigger` and `stop_price` the whole time;
+nothing reads them.
+
+**This is a §4 violation, and of the worse kind.** "Absent stays absent"
+forbids substituting a value for a missing measurement; here a *definite and
+incorrect* value is asserted where the truth was available in the source. A
+reader of this corpus cannot ask "do stop exits do better than discretionary
+ones" — not because the data is missing, but because it is uniformly
+mislabelled. That is the same shape as FINDING_01: a field that exists, is
+populated in the payload, and is never read.
+
+Note also that `STOP_LOSS` would itself be the wrong label here: the stop sat
+at 2.30 against a 0.92 entry, so it was protecting a gain, not limiting a
+loss. The honest fix is not to guess among the existing values but to record
+what the broker said — the trigger type — and leave the strategic
+interpretation unasserted. **Not fixed in this run:** it is a change to the
+importer, and although §2 permits grading-integrity work during the freeze, I
+am not editing the sync script without the owner's go-ahead. Flagged for a
+decision.
+
+**Also of note, with no weight claimed:** the two losers were held about one
+minute and about 25 minutes and were same-day expiries; the winner was a
+2-day expiry held 2h43m and exited by a resting stop. n=3. That is an
+observation about today, not a finding.
+
+**Reconciliation.** Same substitute as Entries 24-26:
+
+- account **flat** before the window — `open = 0`, last close
+  `2026-11-10 17:17:38`;
+- stored closed rows 585 -> **588**, exactly the three episodes;
+- stored realized -$3,666.93 -> **-$3,664.93**, delta **+$2**, equal to the
+  hand sum from the raw fills (-65 -69 +136).
+
+**Risk check:** defined risk $212, $164, $92; sequential, so 1 of 4 concurrent
+and 1 of 20 contracts throughout. Within `RISK_POLICY.md`'s $500 cap. Against
+`CLAUDE.md` §5's stale $100, **two of three are breaches** — third consecutive
+session where the two documents disagree.
+
+**Grading:** all 3 closes failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** Three:
+
+1. **588 rows carry an `exit_reason` that is asserted rather than observed.**
+   See above. Found today only because an unusual order type appeared in the
+   payload; it has been true of every row since the corpus began, and no
+   control would have surfaced it.
+
+2. **Reconciliation on the weaker check** — verified flatness plus stored
+   delta. Fourth consecutive run. Entry 13's payload fix is eleven entries old.
+
+3. **Two governing documents give different compliance verdicts**, third
+   session running. Entry 22 named the one-line fix.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **588 closed round trips, -$3,664.93** realized; 0 open.
+- November to date: 9 round trips, **+$212**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
+- **New:** `exit_reason` fidelity defect, awaiting an owner decision.
+- Credential rotation still outstanding — eighteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — twentieth entry.

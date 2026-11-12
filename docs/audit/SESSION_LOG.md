@@ -2425,3 +2425,97 @@ unapplied; `decision_outcomes` for `rh` trades still 0.
 - **New:** `exit_reason` fidelity defect, awaiting an owner decision.
 - Credential rotation still outstanding — eighteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — twentieth entry.
+
+---
+
+## Entry 28 — 2026-11-12 — Busiest day since October; a position expiring today left open
+
+**Run:** market close, 20:15 UTC. Orders pulled `created_at_gte=2026-11-12`;
+12 filled orders returned, no pagination cursor.
+
+**Result:** `created_closed` 5, `created_open` **2**, `closed_in_place` 0.
+
+- NVDA 165c exp 11-13 x1, +1.87 -> +2.15, **+$28**
+- SPY 757c exp 11-12 x1, +2.56 -> +1.76, **-$80**
+- NVDA 177.5c exp 11-13 x1, +0.44 -> +0.35, **-$9**
+- SPY 756p exp 11-12 x1, +1.84 -> +0.52, **-$132**
+- SPY 762c exp 11-12 x1, +0.52 -> +0.81, **+$29**
+
+**Day realized: 5 closes, -$164.** Two positions remain open, both with
+realized P&L `NULL`:
+
+- NVDA 140p exp 11-13 x1, entry +2.30
+- SPY 763c exp **11-12** x1, entry +1.08
+
+### The SPY 763c is a problem the corpus cannot currently resolve
+
+It was opened at 16:09 on **its own expiration date** and no closing fill
+exists. Whatever happened to it — expired worthless, or assigned — happened
+outside the order feed this sync reads. `rh_sync` reconstructs episodes from
+fills; an expiry is not a fill. `Episode.exit_reason` does have `EXPIRY`, and
+it keys off `last.effect == "expiry"`, so the importer can represent it — but
+only if something feeds it an expiry event, and the order endpoint does not.
+
+So this row will sit `open` with `NULL` realized P&L indefinitely unless a
+later pull supplies an expiry record. **That is the correct state for now** —
+absent stays absent, and inventing a -$108 loss because the contract probably
+expired worthless is exactly what §4 forbids. But it is a gap that will
+quietly accumulate: every expiring-day position closed by expiry rather than
+by a sell leaves a permanently open row. Flagged to watch on the next run; if
+no expiry event arrives, the gap needs a named sentinel rather than silence.
+
+### Risk check — both documents again, and today the aggregate differs too
+
+Positions overlapped today, for the first time in this log's recent history.
+Peak concurrency was **3 of 4**, between 14:52 and 14:54 (NVDA 140p $230 +
+SPY 757c $256 + NVDA 177.5c $44). Largest single position: **$256**.
+
+| | per-trade | aggregate heat | concurrent |
+|---|---|---|---|
+| observed | $256 | $530 | 3 |
+| `RISK_POLICY.md` | $500 — **ok** | $3,750 — **ok** | 4 — **ok** |
+| `CLAUDE.md` §5 | $100 — **breach** | $300 — **breach** | 4 — ok |
+
+Until today the two documents disagreed only about per-trade risk. Now the
+aggregate-heat numbers disagree as well, because positions actually overlapped.
+Reported against `RISK_POLICY.md` per §8. Fourth consecutive session carrying
+this.
+
+**Reconciliation:**
+
+- account **flat** before the window — `open = 0`, last close
+  `2026-11-11 17:50:29`;
+- stored closed rows 588 -> **593**, exactly the five closed episodes;
+- stored realized -$3,664.93 -> **-$3,828.93**, delta **-$164**, equal to the
+  hand sum from the raw fills (+28 -80 -9 -132 +29);
+- two open rows, realized `NULL` on both; closed rows with null realized: 0.
+
+**Grading:** all 5 closes failed on `entry_spot NOT NULL`. `0005` still
+unapplied; `decision_outcomes` for `rh` trades still 0.
+
+### DEVIATIONS
+
+**Not None.** Four:
+
+1. **An expiring-day position is open with no mechanism to close it.** See
+   above. Correct as recorded, but unresolvable from the order feed alone.
+
+2. **`exit_reason` is still asserted rather than observed** (Entry 27) — all 5
+   of today's closes read `manual`, unverified. Awaiting an owner decision.
+
+3. **Reconciliation on the weaker check** — verified flatness plus stored
+   delta. Fifth consecutive run; Entry 13's payload fix is twelve entries old.
+
+4. **Two governing documents disagree on compliance**, now on two limits
+   rather than one.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **593 closed round trips, -$3,828.93** realized; **2 open**.
+- November to date: 14 closed round trips, **+$48**.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
+- `exit_reason` fidelity defect **unresolved**.
+- Credential rotation still outstanding — nineteenth entry.
+- Environment-safety guard from Entry 8 still unfixed — twenty-first entry.

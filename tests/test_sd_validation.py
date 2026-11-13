@@ -194,9 +194,13 @@ def test_paper_unconstrained_lifts_risk_cap(monkeypatch) -> None:
     from app.shortduration.risk import short_duration_policy
 
     base = short_duration_policy(DTECategory.ZERO_DTE)
-    assert base.max_trade_risk_usd <= 100  # normal: tight cap
+    # Derived, not a literal: this read `<= 100` and broke when Amendment 4
+    # moved the cap to 500. The claim is 'the normal cap is the CONFIGURED
+    # one', not 'the normal cap is $100'.
+    assert base.max_trade_risk_usd <= settings.max_defined_risk_per_trade_usd
 
     monkeypatch.setattr(settings, "short_duration_paper_unconstrained", True, raising=False)
     lifted = short_duration_policy(DTECategory.ZERO_DTE)
     assert lifted.max_trade_risk_usd >= 1_000_000
+    assert lifted.max_trade_risk_usd > base.max_trade_risk_usd * 100  # genuinely lifted
     assert lifted.max_contracts_per_trade == 1

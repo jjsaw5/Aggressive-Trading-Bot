@@ -172,6 +172,37 @@
     .attn { border-left: 4px solid var(--red); }
     .today-list td { padding: 7px 10px; }
     .ghost-icon { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 6px 10px; }
+    /* Trade evaluator. The grade is deliberately NOT the biggest thing on the
+       page — the dimension cards are, because the grade is a summary of them and
+       a lone letter reads as a verdict the tool is not entitled to give. */
+    .grade { font-size: 34px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+    .gradebox { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .vpill { font-size: 10px; padding: 2px 8px; border-radius: 999px; text-transform: uppercase;
+             letter-spacing: .04em; border: 1px solid var(--border); }
+    .v-strong { color: var(--green); border-color: var(--green); }
+    .v-acceptable { color: var(--green); }
+    .v-weak { color: #d97706; border-color: #d97706; }
+    .v-fail { color: var(--red); border-color: var(--red); }
+    .v-not_assessed { color: var(--muted); }
+    .dim h4 { margin: 0 0 2px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+    .dim .head { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+    /* table-layout:fixed so a long fact (a "what has to happen" sentence, a
+       threshold note) WRAPS inside the card instead of running past its edge —
+       a clipped number is a number the reader cannot check. */
+    /* table-layout:fixed + an explicit white-space override so a long fact (a
+       "what has to happen" sentence, a threshold note) WRAPS inside the card
+       instead of running past its edge. The global `td { white-space: nowrap }`
+       is right for the dense boards and wrong here; a clipped threshold is a
+       number the reader cannot check the verdict against. */
+    .dim table { width: 100%; table-layout: fixed; }
+    .dim td { padding: 3px 0; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+    .dim td.fk { color: var(--muted); width: 40%; padding-right: 12px; }
+    .dim .fn { color: var(--muted); font-size: 11px; }
+    .card.dim { overflow-x: hidden; }
+    .evalform { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .evalform input, .evalform select { padding: 7px 9px; }
+    .evalform input.k { width: 96px; }
+    .claim { border-left: 3px solid var(--muted); padding: 8px 12px; color: var(--muted); font-size: 12px; }
   </style>
 </head>
 <body>
@@ -205,6 +236,8 @@
       <button data-view="sd/events">Event Calendar</button>
       <button data-view="sd/performance">Performance</button>
       <button data-view="sd/config">Configuration</button>
+      <div class="nlabel">Evaluate</div>
+      <button data-view="eval/trade">Trade Evaluator</button>
       <div class="nlabel">Tracking</div>
       <button data-view="core/history">History</button>
     </nav>
@@ -293,6 +326,11 @@
     };
 
     const fmt = (v, d = 2) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
+    // Thousands separators WITHOUT toLocaleString: `tests/test_dashboard_timezone.py`
+    // bans every zero-argument toLocale* call, and rightly so — a regex cannot tell
+    // a number call from a date one, and the date case renders in the viewer's zone.
+    const grp = (n) => (n === null || n === undefined) ? "—"
+      : String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     const pct = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(0) + "%";
     const cls = (v) => v > 0 ? "pos" : v < 0 ? "neg" : "";
     // Broker-aligned play names (match Robinhood's order-ticket labels).
@@ -306,7 +344,12 @@
 
     let state = { scanId: null, candidates: [], tab: "candidates", expandedPos: new Set(),
                   section: "core", sdTab: "command", sdDetail: null, search: null, addPosOpen: false,
-                  histMonth: null, histSource: "live", histDay: null, sdDeadOpen: {} };
+                  histMonth: null, histSource: "live", histDay: null, sdDeadOpen: {},
+                  // Trade evaluator: the form persists across renders so a failed
+                  // run does not make you retype the trade.
+                  evalForm: { symbol: "", structure: "call_debit_spread", horizon: "",
+                              long_strike: "", short_strike: "" },
+                  evalResult: null };
 
     // Live auto-refresh: poll while a live view is open (Ops/Positions, or the
     // Short-Duration command center / positions).
@@ -1784,10 +1827,167 @@
           ${eventsCard}${recentCard}</div>`;
     }
 
+    // --- Trade evaluator: grade a trade YOU propose ---------------------------
+    // Deliberately a different surface from the scanner. The scanner ranks what
+    // fits the account; this prices whatever you hand it and says what is wrong
+    // with it. The grade is a summary of the dimension cards below it, never a
+    // standalone verdict — see docs/TRADE_EVALUATOR.md.
+    const STRUCTURES = [
+      ["call_debit_spread", "Call debit spread"],
+      ["put_debit_spread", "Put debit spread"],
+      ["long_call", "Long call"],
+      ["long_put", "Long put"],
+    ];
+
+    function evalForm() {
+      const e = state.evalForm;
+      const opts = STRUCTURES.map(([v, l]) =>
+        `<option value="${v}"${e.structure === v ? " selected" : ""}>${l}</option>`).join("");
+      const spread = e.structure.endsWith("_spread");
+      return `<div class="card"><h3>Evaluate a trade</h3>
+        <div class="evalform">
+          <input id="evSym" type="text" placeholder="Ticker" maxlength="8" class="k" value="${esc(e.symbol)}" />
+          <select id="evStruct">${opts}</select>
+          <input id="evHorizon" type="text" class="k" placeholder="3d / 2w / 45d" value="${esc(e.horizon)}" />
+          <input id="evLong" type="text" class="k" placeholder="Long strike" value="${esc(e.long_strike)}" />
+          ${spread ? `<input id="evShort" type="text" class="k" placeholder="Short strike" value="${esc(e.short_strike)}" />` : ""}
+          <button id="evRun">Evaluate</button>
+        </div>
+        <div class="muted" style="margin-top:8px">
+          Strikes are optional — leave them blank and the tool builds the best structure it can
+          at that expiry and grades that. Fill them in to grade YOUR structure and see it
+          contrasted against the selector's pick. Your account limits are not applied here.
+        </div></div>`;
+    }
+
+    function dimCard(d) {
+      const cls = "v-" + d.verdict;
+      const facts = (d.facts || []).map(f => `<tr>
+        <td class="fk">${esc(f.label)}</td>
+        <td><div>${esc(f.value)}</div>${f.note ? `<div class="fn">${esc(f.note)}</div>` : ""}</td>
+      </tr>`).join("");
+      // An unmeasured dimension shows its sentinel, never a blank or a zero.
+      const body = d.verdict === "not_assessed"
+        ? `<div class="muted">${esc(d.headline)}</div>
+           <div class="pill" style="margin-top:6px">${esc(d.unavailable || "NA_unresolved")}</div>`
+        : `<div class="head">${esc(d.headline)}</div><table><tbody>${facts}</tbody></table>`;
+      return `<div class="card dim">
+        <h4>${esc(d.label)} <span class="vpill ${cls}">${esc(d.verdict.replace("_", " "))}</span></h4>
+        ${body}</div>`;
+    }
+
+    function structCard(title, s, note) {
+      if (!s) return `<div class="card"><h3>${esc(title)}</h3><div class="muted">${esc(note || "None.")}</div></div>`;
+      const legs = s.legs.map(l => `<tr>
+        <td>${l.action === "buy" ? "Buy" : "Sell"} ${l.option_type} ${l.strike}</td>
+        <td class="num">${l.mid == null ? "—" : "$" + fmt(l.mid)}</td>
+        <td class="num muted">${l.delta == null ? "—" : "Δ" + fmt(l.delta)}</td>
+        <td class="num muted">${l.open_interest == null ? "—" : "OI " + grp(l.open_interest)}</td>
+      </tr>`).join("");
+      const st = (k, v) => `<div class="stat"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+      return `<div class="card"><h3>${esc(title)}</h3>
+        <table><tbody>${legs}</tbody></table>
+        <div class="report-head" style="margin-top:10px">
+          ${st("Debit", "$" + fmt(s.net_debit_per_share))}
+          ${st("Max loss", "$" + fmt(s.max_loss_usd, 0))}
+          ${st("Max profit", s.max_profit_usd == null ? "uncapped" : "$" + fmt(s.max_profit_usd, 0))}
+          ${st("Break-even", s.breakeven == null ? "—" : "$" + fmt(s.breakeven))}
+          ${st("POP (modelled)", s.probability_of_profit == null ? "NA_no_data" : pct(s.probability_of_profit))}
+          ${st("Expiry", s.expiration + " (" + s.dte + "d)")}
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:11px">
+          Greeks are ${esc(s.greeks_source)} — no provider supplies them.</div>
+      </div>`;
+    }
+
+    async function renderEvaluator() {
+      const form = evalForm();
+      const r = state.evalResult;
+      if (!r) {
+        return form + `<div style="height:14px"></div>
+          <div class="empty">Enter a ticker, a structure and a duration to evaluate a trade.</div>`;
+      }
+      const gradeCls = { A: "pos", B: "pos", C: "warn", D: "neg", F: "neg" }[r.grade] || "muted";
+      const assessed = `${r.dimensions_assessed} of ${r.dimensions_total} dimensions assessed`;
+      const head = `<div class="card"><div class="gradebox">
+          <span class="grade ${gradeCls}">${r.grade || "—"}</span>
+          <div>
+            <div style="font-size:15px"><strong>${esc(r.symbol)}</strong> ·
+              ${esc((STRUCTURES.find(s => s[0] === r.structure) || [, r.structure])[1])} ·
+              ${r.resolved_expiration || "—"}</div>
+            <div class="muted">${assessed}${r.composite == null ? "" : " · composite " + fmt(r.composite, 2)}
+              · graded: the ${r.graded === "proposed" ? "structure you supplied" : "structure the tool built"}</div>
+            <div class="muted">${esc(r.horizon_note)}</div>
+          </div>
+        </div></div>
+        <div style="height:10px"></div>
+        <div class="claim">${esc(r.grade_claim)}</div>`;
+
+      const dims = `<div class="autogrid">${(r.dimensions || []).map(dimCard).join("")}</div>`;
+      const structs = `<div class="autogrid">
+        ${structCard("Your structure", r.proposed, "You did not supply strikes — the tool built the structure below instead.")}
+        ${structCard("What the selector would pick", r.alternative, r.errors && r.errors.alternative ? r.errors.alternative : "No structure cleared the selector's floors at this expiry.")}
+      </div>`;
+
+      const imps = (r.improvements || []).map(i => `<tr>
+        <td class="fk">${esc(i.dimension.replace("_", " "))}</td>
+        <td><div>${esc(i.suggestion)}</div>${i.impact ? `<div class="fn">${esc(i.impact)}</div>` : ""}</td>
+      </tr>`).join("");
+      const impCard = `<div class="card dim"><h3>What would make it better</h3>
+        ${imps ? `<table><tbody>${imps}</tbody></table>`
+               : '<div class="muted">Nothing flagged — no dimension scored weak or worse.</div>'}</div>`;
+
+      const errs = Object.entries(r.errors || {});
+      const errCard = errs.length ? `<div class="card"><h3>Gaps</h3><table><tbody>${
+        errs.map(([k, v]) => `<tr><td class="fk">${esc(k)}</td><td class="fn">${esc(v)}</td></tr>`).join("")
+      }</tbody></table></div>` : "";
+
+      return form + `<div style="height:14px"></div>${head}
+        <div style="height:14px"></div>${dims}
+        <div style="height:14px"></div>${structs}
+        <div style="height:14px"></div>${impCard}
+        ${errs.length ? '<div style="height:14px"></div>' + errCard : ""}
+        <div class="muted" style="margin-top:12px;font-size:11px">
+          Evaluated ${etDateTime(r.as_of)} · ${esc(r.evaluator_version)}</div>`;
+    }
+
+    async function runEvaluation() {
+      const num = (id) => {
+        const el = $(id);
+        if (!el) return null;
+        const v = el.value.trim();
+        if (!v) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const f = state.evalForm;
+      f.symbol = ($("#evSym").value || "").trim().toUpperCase();
+      f.structure = $("#evStruct").value;
+      f.horizon = ($("#evHorizon").value || "").trim();
+      f.long_strike = $("#evLong") ? ($("#evLong").value || "").trim() : "";
+      f.short_strike = $("#evShort") ? ($("#evShort").value || "").trim() : "";
+      if (!f.symbol || !f.horizon) { toast("Ticker and duration are both required.", "warn"); return; }
+      const body = { symbol: f.symbol, structure: f.structure, horizon: f.horizon };
+      const ls = num("#evLong"), ss = num("#evShort");
+      if (ls != null) body.long_strike = ls;
+      if (ss != null) body.short_strike = ss;
+      $("#evRun").disabled = true;
+      $("#evRun").textContent = "Evaluating…";
+      try {
+        state.evalResult = await api("POST", "/research/evaluate", body);
+        await render();
+      } catch (e) {
+        showErr(e);
+        $("#evRun").disabled = false;
+        $("#evRun").textContent = "Evaluate";
+      }
+    }
+
     async function render() {
       showErr(null);
       try {
         if (state.search) { $("#view").innerHTML = await renderSymbolReport(state.search); return; }
+        if (state.section === "eval") { $("#view").innerHTML = await renderEvaluator(); return; }
         if (state.section === "today") { $("#view").innerHTML = await renderToday(); return; }
         if (state.section === "short") { $("#view").innerHTML = await renderSd(); return; }
         if (state.tab === "candidates") $("#view").innerHTML = renderCandidates();
@@ -1811,6 +2011,7 @@
     function setView(id, { fromHash = false } = {}) {
       const [sec, tab] = id.split("/");
       if (sec === "today") state.section = "today";
+      else if (sec === "eval") state.section = "eval";
       else if (sec === "sd") { state.section = "short"; state.sdTab = tab; state.sdDetail = null; }
       else { state.section = "core"; state.tab = tab; }
       state.search = null;
@@ -1823,6 +2024,7 @@
     }
     function currentViewId() {
       if (state.section === "today") return "today";
+      if (state.section === "eval") return "eval/trade";
       if (state.section === "short") return "sd/" + state.sdTab;
       return "core/" + state.tab;
     }
@@ -1882,6 +2084,25 @@
       const d = e.target.closest ? e.target.closest("details[data-dead]") : null;
       if (d) state.sdDeadOpen[d.dataset.dead] = d.open;
     }, true);
+
+    // Trade evaluator: run on click or Enter, and re-render the form when the
+    // structure changes so the short-strike field appears/disappears with it.
+    $("#view").addEventListener("click", (e) => {
+      if (e.target.closest("#evRun")) { e.preventDefault(); runEvaluation(); }
+    });
+    $("#view").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.closest(".evalform")) { e.preventDefault(); runEvaluation(); }
+    });
+    $("#view").addEventListener("change", (e) => {
+      if (!e.target.closest("#evStruct")) return;
+      state.evalForm.structure = e.target.value;
+      // Keep whatever is already typed; only the field set changes.
+      state.evalForm.symbol = ($("#evSym").value || "").trim().toUpperCase();
+      state.evalForm.horizon = ($("#evHorizon").value || "").trim();
+      state.evalForm.long_strike = $("#evLong") ? $("#evLong").value.trim() : "";
+      state.evalForm.short_strike = $("#evShort") ? $("#evShort").value.trim() : "";
+      render();
+    });
 
     $("#view").addEventListener("click", async (e) => {
       const actBtn = e.target.closest("button[data-act]");

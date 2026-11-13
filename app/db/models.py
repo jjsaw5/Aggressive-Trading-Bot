@@ -253,3 +253,37 @@ class ShortDurationTradeRow(Base, TimestampMixin):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     realized_pnl_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class TradeEvaluationRow(Base, TimestampMixin):
+    """An on-demand grade of a HUMAN-proposed trade.
+
+    Deliberately a separate table from `decision_snapshots`. These rows are not
+    signals the system generated and must never join the calibration corpus: a
+    user can evaluate the same bad idea forty times, and counting those as
+    decisions would corrupt the base rate the conviction gate is measured on.
+    Kept so the grades can one day be validated against outcomes on their own
+    terms — which is the only route by which this feature stops being
+    UNCALIBRATED.
+    """
+
+    __tablename__ = "trade_evaluations"
+    __table_args__ = (Index("ix_eval_symbol_created", "symbol", "created_at"),)
+
+    evaluation_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    structure: Mapped[str] = mapped_column(String(24), nullable=False)
+    requested_horizon: Mapped[str] = mapped_column(String(16), nullable=False)
+    resolved_expiration: Mapped[date | None] = mapped_column(Date, nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Nullable throughout: an evaluation that could assess nothing is a real
+    # result and must be representable without an `or 0.0` (CLAUDE.md §4).
+    grade: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    composite: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dimensions_assessed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    probability_of_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_loss_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which structure the dimensions describe: "proposed" or "alternative".
+    graded: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    evaluator_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)

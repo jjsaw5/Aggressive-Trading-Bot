@@ -2519,3 +2519,100 @@ unapplied; `decision_outcomes` for `rh` trades still 0.
 - `exit_reason` fidelity defect **unresolved**.
 - Credential rotation still outstanding — nineteenth entry.
 - Environment-safety guard from Entry 8 still unfixed — twenty-first entry.
+
+---
+
+## Entry 29 — 2026-11-13 — The expired position is resolved by evidence, and the corpus now asserts something false
+
+**Runs covered.** The 13:40 market-open firing could not run: the Robinhood
+MCP server failed to connect (503, then a connect timeout). Reported to the
+owner; no data was pulled and nothing was written. The connector recovered for
+the 20:15 close firing, which this entry covers.
+
+**This run:** no filled orders on 11-13. **No new trades.** The work of this
+run was resolving the open-position gap flagged in Entry 28.
+
+### What happened to the SPY 763c
+
+Entry 28 recorded `rh1f648ce680` (SPY 763c, expired 11-12) as `open` with
+`NULL` realized P&L, because it was opened on its expiration date and no
+closing fill existed. That was the right call on the evidence then available.
+More evidence is now available, and it resolves the question:
+
+- `get_option_positions` (nonzero): the contract is **absent** — only NVDA
+  140p remains open.
+- `get_option_positions` for `0ce7ec16-...`: **quantity 0.0000**, average
+  price 108.0000, and `pending_exercise_quantity`, `pending_assignment_quantity`
+  and `pending_expiration_quantity` **all 0** — the event has fully settled.
+- `get_equity_positions`: **no SPY shares** of any quantity, and
+  `shares_pending_from_options_events` is 0 across the account.
+- `get_option_orders` since 11-12: **no closing fill** for this contract.
+
+A long call that is auto-exercised delivers 100 shares. No SPY shares exist
+and none are pending. No sell-to-close order exists. The contract is gone and
+settled. The reading consistent with all four observations is that it
+**expired worthless**, realizing the full premium paid: **-$108**.
+
+### The corpus now asserts something false
+
+This changes the nature of the row. On 11-12 it said `open` and that was true.
+Today it still says `open`, and the position is **not open** — the broker shows
+quantity zero and the event settled. `status = open` has gone from an accurate
+statement to an incorrect one, and `realized_pnl_usd = NULL` has gone from
+"not yet known" to "known and not recorded."
+
+Leaving it is therefore not the neutral choice I treated it as in Entry 28.
+It is the same defect as the `exit_reason` problem in Entry 27: a definite
+value asserted where the truth is available. The difference is that here the
+truth became available only after the fact.
+
+**I have not corrected the row.** Two reasons, and the second is the binding
+one:
+
+1. The -$108 is an inference, not an observation. It is a strong inference —
+   four independent checks agree and no alternative fits — but `rh_sync` has
+   never written a P&L it did not read from a fill, and the first one should
+   not be written by hand in a sync session.
+2. Hand-patching a production row would make it indistinguishable from an
+   importer-written row. If the number is to go in, it should go in through
+   code that records how it was derived, so a later reader can tell an
+   observed fill from a reconstructed expiry.
+
+**The owner's decision.** Either correct this row now and accept the
+provenance gap, or teach `rh_sync` to resolve expiries from position state —
+`ExitReason.EXPIRY` already exists and `Episode.exit_reason` already keys off
+`last.effect == "expiry"`, so the importer needs a source of expiry events,
+not a new concept. The second is the real fix and it generalizes; this will
+happen again every time a position is held to expiry.
+
+### DEVIATIONS
+
+**Not None.** Four:
+
+1. **A scheduled run was lost to a connector outage** while two positions were
+   open and at or past expiry. Nothing was missed permanently — the close run
+   recovered it — but the morning run could not see state it was responsible
+   for watching.
+
+2. **One corpus row now asserts `open` for a position that is closed**, and
+   holds `NULL` where the result is derivable. Documented above rather than
+   silently patched; awaiting the owner.
+
+3. **`exit_reason` still asserted rather than observed** (Entry 27).
+
+4. **Two governing documents still disagree** on the risk limits (Entry 22).
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus: **593 closed round trips, -$3,828.93** realized; **2 rows marked
+  open**, of which **one is known to be closed** (SPY 763c, expired worthless,
+  -$108 unrecorded).
+- Genuinely open: **NVDA 140p exp 11-13**, 1 contract, entry +2.30, **expiring
+  today** — its own resolution will land in the same gap unless closed by a
+  sell.
+- November to date: 14 closed round trips, **+$48** as recorded; **+$-60** if
+  the SPY expiry were booked.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — twentieth entry.
+- Environment-safety guard from Entry 8 still unfixed — twenty-second entry.

@@ -2616,3 +2616,110 @@ happen again every time a position is held to expiry.
 - Grading corpus for broker-synced trades: **empty**, pending `0005`.
 - Credential rotation still outstanding — twentieth entry.
 - Environment-safety guard from Entry 8 still unfixed — twenty-second entry.
+
+---
+
+## Entry 30 — 2026-11-16 — Both open rows are now false, and the corpus understates realized losses by $338
+
+**Environment.** The checkout had reverted to `f9f98f0` (main) **for the fourth
+time in this session's history**, and the container had been recycled: the
+collision fix was absent (0 occurrences), `.env` was gone, dependencies were
+gone, and the log ended at Entry 7. Caught the same way as Entry 22 — the
+governance file re-read at session start was the pre-Amendment-4 text.
+Fast-forwarded to `5400083`, reinstalled dependencies, restored `.env`
+(`chmod 600`, gitignored, untracked, value not printed). Verified before any
+sync: fix present, 30 entries, database reachable.
+
+**This run:** no filled orders since 11-12. **No new trades.**
+
+### Both rows marked `open` are now known to be closed
+
+`get_option_positions(nonzero=true)` returns **an empty list**. The account
+holds no option positions at all. The NVDA 140p resolved exactly as the SPY
+763c did, and by the same four checks:
+
+| check | SPY 763c (exp 11-12) | NVDA 140p (exp 11-13) |
+|---|---|---|
+| in nonzero positions | absent | absent |
+| position record | qty 0, all `pending_*` 0 | qty 0, all `pending_*` 0 |
+| equity side | no SPY shares, none pending | no NVDA shares, none pending |
+| closing fill | none | none |
+
+A long call auto-exercised delivers shares; a long put auto-exercised creates a
+short stock position. Neither exists, nothing is pending, and no sell order was
+placed. Both **expired worthless**, realizing the full premium paid:
+
+- SPY 763c: **-$108**
+- NVDA 140p: **-$230**
+- **Total unrecorded: -$338**
+
+### The size of the misstatement
+
+| | recorded | actual |
+|---|---|---|
+| closed round trips | 593 | 595 |
+| realized | **-$3,828.93** | **-$4,166.93** |
+| rows marked open | 2 | 0 |
+
+The corpus understates realized losses by **$338 — 8.8% of the recorded
+total** — and asserts `open` for two positions that do not exist. November
+reads **+$48** as recorded and **-$290** in fact: the sign is wrong, not just
+the magnitude.
+
+This is no longer a footnote about a gap. It is a material misstatement of the
+system's own track record, in the direction of flattery, and it will persist
+and grow until the importer can resolve expiries.
+
+### Why I still have not written the numbers in
+
+Unchanged from Entry 29, and I want the reasoning on the record rather than
+restated as a conclusion:
+
+- The -$108 and -$230 are inferences. Strong ones — four independent checks
+  each, no alternative consistent with the evidence — but `rh_sync` has never
+  written a realized P&L it did not read from a fill.
+- A hand-patched row is indistinguishable from an importer-written one. The
+  value of this corpus is that a reader can tell where a number came from;
+  typing two numbers into production would spend that.
+- The routine that fires these sessions authorizes syncing filled orders and
+  reporting. It does not authorize reconstructing expiries, and no human has
+  been present in any of these runs to extend it.
+
+**What the fix is.** `ExitReason.EXPIRY` exists; `Episode.exit_reason` already
+branches on `last.effect == "expiry"`. The importer needs a source of expiry
+events — `get_option_positions` supplies exactly the signal used above — plus
+a provenance marker distinguishing a reconstructed expiry from an observed
+fill. §2 permits this: it is data persistence and grading integrity, not
+scoring. It is the owner's call to make, and the cost of not making it is now
+quantified above.
+
+### DEVIATIONS
+
+**Not None.** Four:
+
+1. **Fourth silent checkout reversion.** Caught by noticing the governance
+   file's text, not by any control. The guard asked for in Entry 12 and
+   restated in Entry 22 still does not exist. Every sync continues to depend on
+   a manual `grep` that lives in a transcript.
+
+2. **The corpus materially misstates its own results** by $338, and two rows
+   assert a status that is false. Documented, quantified, not patched.
+
+3. **A compromised credential was restored for the fourth time.** Same token,
+   same reasoning as Entry 23, same conclusion: care in handling does not make
+   it uncompromised, and rotation plus a move to the environment's variable
+   store remain owner actions.
+
+4. **`exit_reason` still asserted rather than observed** (Entry 27).
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Checkout `5400083`; collision fix verified present; 30 entries before this one.
+- Corpus as recorded: **593 closed, -$3,828.93**; 2 rows marked open.
+- Corpus in fact: **595 closed, -$4,166.93**; 0 open. Delta **-$338**.
+- Broker: **no option positions held.**
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
+- Credential rotation still outstanding — twenty-first entry.
+- Environment-safety guard from Entry 8 still unfixed — twenty-third entry.

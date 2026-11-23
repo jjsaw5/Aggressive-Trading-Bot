@@ -8,10 +8,17 @@ selection prices probability, not only payoff)
 
 ## Pending freeze point
 
-**`sd-scoring-2026.08-v4.1`** (Amendment 3 — 0DTE moves from suspended to
-observation-only) is **merged-pending**. Its commit does not exist until the PR
-merges, so the established point above is still v4.0 and CI correctly compares
-against it.
+**`sd-scoring-2026.08-v5.0`** (Amendment 4 — risk limits raised: equity 2k -> 25k,
+per-trade cap 100 -> 500) is **merged-pending**. Its commit does not exist until
+the PR merges, so the established point above is still v4.0 and CI correctly
+compares against it.
+
+**Two points are now outstanding, not one.** Amendment 3's v4.1 merged at short
+commit `f9f98f0`, but its tag was never published — the pushing credential is
+scoped to `refs/heads/*` — so the header was never promoted past v4.0. v5.0 now
+queues behind it. Publishing both tags is an owner action; until then the
+established point legitimately lags the configured model by two amendments and
+this section is the record of that.
 
 This section exists so the gap between "the configured model" and "the recorded
 freeze point" is a DECLARED state rather than an accident.
@@ -21,8 +28,20 @@ while the Model/Tag/Commit lines above continue to describe the point that
 actually exists. Deliberately contains **no** `freeze/` tag string and **no**
 40-hex SHA, so the machine-read parse still resolves v4.0.
 
-**On merge:** promote this to the header, move v4.0 into Superseded, and publish
-the tag at the new merge commit.
+**On merge:** promote to the header, move superseded points into the table below,
+and publish the tag at each merge commit.
+
+### What the path diff does NOT cover — read before trusting a green guard
+
+Amendment 4 changed the shipped model from `app/config.py`, which is **not** in
+the guarded set and never will be sensibly (it holds every unrelated setting too).
+The guarded path list therefore cannot be the only control. The risk limits are
+pinned behaviourally instead, by `tests/test_risk_limits_freeze.py`.
+
+That is the third time a model change arrived from outside the list — provider
+fields (FINDING_01), contract selection (Amendment 2), risk limits (Amendment 4).
+Treat a green `freeze-guard` job as evidence about PATHS only.
+
 
 > **The first line of this file is machine-read.** CI parses the first
 > `freeze/...` string and the first 40-hex SHA out of this document. Both were

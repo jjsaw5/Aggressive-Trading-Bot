@@ -236,4 +236,9 @@ def test_the_thresholds_are_the_ones_the_amendment_recorded() -> None:
 def test_the_model_version_records_the_amendment() -> None:
     from app.config import settings
 
-    assert settings.scoring_model_version == "sd-scoring-2026.08-v4.1"
+    # Imported, not restated. This file had its own copy of the version
+    # string; Amendment 4 made that the THIRD copy to update by hand, so it
+    # now reads the single pin in test_scoring_freeze.py.
+    from tests.test_scoring_freeze import FROZEN_MODEL_VERSION
+
+    assert settings.scoring_model_version == FROZEN_MODEL_VERSION

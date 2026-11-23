@@ -2723,3 +2723,89 @@ quantified above.
 - `CLAUDE.md` §5 vs `RISK_POLICY.md` contradiction **unresolved**.
 - Credential rotation still outstanding — twenty-first entry.
 - Environment-safety guard from Entry 8 still unfixed — twenty-third entry.
+
+---
+
+## Entry 31 — 2026-11-23 — A $535 position, 88 days out: the authoritative risk cap is breached
+
+**Run:** market close, 20:15 UTC. Orders pulled `created_at_gte=2026-11-23`;
+1 filled order returned, no pagination cursor. The 13:40 market-open firing
+found nothing — the order filled at 14:59, after it.
+
+**Result:** `created_closed` 0, `created_open` **1**, `closed_in_place` 0.
+
+- NVDA 205c exp **2027-02-19** x1, entry +5.35 — **open**, realized `NULL`
+
+### This breaches the per-trade cap that actually binds
+
+`docs/RISK_POLICY.md` line 16: `MAX_DEFINED_RISK_PER_TRADE_USD` = **500**,
+annotated "Hard $ ceiling — **this is what binds**", and pinned by
+`tests/test_risk_limits_freeze.py::test_the_absolute_cap_is_what_binds`.
+`app/config.py` agrees.
+
+Defined risk on this position is **1 x 5.35 x 100 = $535**. That is **$35 over
+the authoritative cap, a 7% overshoot.**
+
+Every risk check in Entries 15 through 28 concluded "within `RISK_POLICY.md`,
+breach of `CLAUDE.md` §5" — the stale summary was the only document being
+exceeded. **This is the first position in this log that breaches the limit both
+documents' authority agrees on.** There is nothing to interpret here: $535 >
+$500 under the governing document, under `config.py`, and under §5's $100.
+
+The engine did not place it and could not have: §1 keeps brokerage access
+read-only and the limits bind the engine's own sizing, not manual orders. The
+system has no mechanism to prevent this and never claimed one. But the limit
+is stated in `RISK_POLICY.md` as a hard ceiling on risk per trade, not on
+engine-generated risk per trade, and I am recording it as exceeded.
+
+### It is also not a short-duration trade
+
+Expiry **2027-02-19** is **88 days out**. This product is, per §1 and
+`PRODUCT_STANCE.md`, a "defined-risk cost and probability calculator for
+**short-duration** options". The capture window, the scoring model
+(`sd-scoring-2026.08-v5.0`), the `short_duration_*` tables and the 0DTE
+amendment are all built around days, not quarters.
+
+The position is recorded faithfully — `rh_sync` stores the expiration it was
+given and asserts nothing about duration — but it sits outside the domain
+every calibration question in this repository is scoped to. If positions like
+this become common, "does the system's scoring predict anything" needs
+restating, because the scorer has never been asked about an 88-day contract.
+Noted as a fact about the trade, not an objection to it: the thesis is the
+human's.
+
+Also recorded: `market_hours` reads `equity_options_extended_hours` — filled
+outside regular session. First such fill in the corpus.
+
+**Reconciliation:** closed rows unchanged at **593**, realized
+**-$3,828.93** — correct, nothing closed. Open rows now **3**, all with
+realized `NULL`. Closed rows with null realized: 0.
+
+**Grading:** no close, so no grade attempt. `0005` still unapplied.
+
+### DEVIATIONS
+
+**Not None.** Four:
+
+1. **A position exceeds `RISK_POLICY.md`'s hard per-trade ceiling by $35.**
+   First unambiguous breach in this log. Recorded, not actionable by this
+   system — brokerage access is read-only by design.
+
+2. **Two of the three rows marked open are known to be closed** (Entry 30):
+   SPY 763c -$108 and NVDA 140p -$230, $338 unrecorded. Unchanged, now in its
+   eighth day. Corpus in fact: 595 closed, -$4,166.93.
+
+3. **`exit_reason` still asserted rather than observed** (Entry 27).
+
+4. **`CLAUDE.md` §5 still contradicts `RISK_POLICY.md`** (Entry 22). Moot for
+   this position, which breaches both, but unresolved.
+
+### State at entry close
+
+- Model `sd-scoring-2026.08-v5.0`. No code changed. No scoring-path file touched.
+- Corpus as recorded: **593 closed, -$3,828.93**; **3 rows open**.
+- Corpus in fact: **595 closed, -$4,166.93**; **1 genuinely open** (NVDA 205c).
+- Live exposure: **$535**, over the $500 cap; 1 of 4 concurrent.
+- Grading corpus for broker-synced trades: **empty**, pending `0005`.
+- Credential rotation still outstanding — twenty-second entry.
+- Environment-safety guard from Entry 8 still unfixed — twenty-fourth entry.
